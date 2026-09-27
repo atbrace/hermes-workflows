@@ -1,6 +1,6 @@
 """on_skip:'prune' (2026-09-23): a false `when` on a prune gate commits `skipped`; nodes
 whose deps are ALL skipped are skipped (terminal, non-failure); a join with a live dep
-runs; run ends `done`. Default `pass` keeps the old behaviour (arm still runs). Also:
+runs; run ends `done`. Omitted on_skip defaults to prune; explicit pass lets the arm run. Also:
 validator grammar, read-model counts, blocked_by vocabulary, amend preview, and the
 door's version-skew guard (runner_exit.reason == 'done' is terminal even if the door's
 read model predates a status).
@@ -93,14 +93,27 @@ rec = json.loads((r / "nodes" / "escalate.json").read_text())
 check("pruned record is efp-stamped (replay-skip law)", rec.get("efp") == wfcommon.efp(byid, byid["escalate"]))
 check("runner_exit.json reason done", (st["runner_exit"] or {}).get("reason") == "done")
 
-# ---- 4. default pass: same graph without on_skip -> arm still runs (documented behaviour) ----
-graph2 = [dict(n, **({} if n["type"] != "gate" else {})) for n in graph]
-for n in graph2:
-    n.pop("on_skip", None)
-r2 = fresh("20990101-000001-pass", graph2)
-run_runner(r2)
-S2 = {k: v["status"] for k, v in wfcommon.run_state(r2)["nodes"].items()}
-check("pass (default): skipped gate commits done and its arm still runs", S2.get("hold") == "done" and S2.get("escalate") == "done", str(S2))
+# ---- 4. omitted on_skip prunes; explicit pass keeps the opt-in arm ----
+for policy in (None, "pass"):
+    graph2 = [dict(n) for n in graph]
+    for n in graph2:
+        if n["type"] == "gate":
+            if policy is None:
+                n.pop("on_skip", None)
+            else:
+                n["on_skip"] = policy
+    r2 = fresh(f"20990101-000001-{policy or 'default'}", graph2)
+    run_runner(r2)
+    S2 = {k: v["status"] for k, v in wfcommon.run_state(r2)["nodes"].items()}
+    ev2 = [json.loads(l) for l in (r2 / "events.jsonl").read_text().splitlines()]
+    expected = policy or "prune"
+    check(f"human false when {expected}: saved status, event, arm and mixed join",
+          S2.get("hold") == ("skipped" if expected == "prune" else "done")
+          and S2.get("escalate") == ("skipped" if expected == "prune" else "done")
+          and S2.get("join") == "done"
+          and any(e.get("event") == "gate.skipped" and e.get("node") == "hold"
+                  and e.get("on_skip") == expected for e in ev2)
+          and ((r2 / "logs" / "escalate.a0.log").exists() == (expected == "pass")), str(S2))
 
 # ---- 5. amend preview + blocked_by know 'skipped' ----
 pv = wfcommon.amend_preview(r, graph)

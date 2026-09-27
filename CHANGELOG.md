@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.11 — 2026-09-27 — false when-gate defaults to prune (decorative-gate footgun closed)
+
+- A false `gate.when` with omitted `on_skip` now prunes the gate and exclusively dependent descendants in both human and wait-gate paths; `gate.skipped` reports `prune` to match the saved status. Explicit `pass` still permits the arm, and explicit `prune` is unchanged (fb e4c98f6e550e3a90). This does not change explicit `on_skip:"pass"` in existing graphs, including `library/fb-fix.json` before publish.
+
+## 1.0.10 — 2026-09-27 — child work dir is writable under HERMES_WRITE_SAFE_ROOT
+
+- A child's advertised durable work dir (`<run>/work/<node>[.<i>]`) is now
+  writable when the runner's env carries a non-empty `HERMES_WRITE_SAFE_ROOT`:
+  the runner appends the child's OWN work dir (nothing wider — never the run dir,
+  `run/work`, or `$HERMES_HOME/workflows`). Unset/empty is left exactly as
+  inherited (unrestricted). Previously children silently lost artifact writes
+  (fb 625a3241cfcc9dee). Moots 2c639b96 (fb-fix children could not write
+  findings). The TMPDIR half of ea743553 is untouched.
+
 ## 1.0.9 — 2026-09-27 — amend keeps committed routes only where they replay
 
 - amend keeps committed nodes' baked routes only where the node replay-skips;

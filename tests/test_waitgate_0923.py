@@ -161,13 +161,22 @@ proc.wait(timeout=15)
 check(time.time() - t0 < 6, f"stop honoured within the park loop ({time.time()-t0:.1f}s, not 30s)")
 check(wfcommon.run_state(run)["nodes"]["b"]["status"] == "pending", "downstream did not run after stop")
 
-# --- (7) `when` still governs a wait gate ---
-g = {"name": "whenskip", "nodes": [
-    {"id": "a", "type": "agent", "goal": "OK"},
-    {"id": "hold", "type": "gate", "after": ["a"], "when": "out.a.missing == 'x'", "wait": {"wait_s": 30}},
-    {"id": "b", "type": "agent", "after": ["hold"], "goal": "OK"}]}
-run = mkrun("whenskip", g)
-t0 = time.time(); runner(run); dt = time.time() - t0
-check(any(e["event"] == "gate.skipped" for e in events(run)) and dt < 10, f"false when skips a wait gate without parking ({dt:.1f}s)")
+# --- (7) false `when` on a wait gate prunes by default; explicit pass opts out ---
+for policy in (None, "pass"):
+    gate = {"id": "hold", "type": "gate", "after": ["a"], "when": "out.a.missing == 'x'", "wait": {"wait_s": 30}}
+    if policy is not None:
+        gate["on_skip"] = policy
+    g = {"name": "whenskip", "nodes": [
+        {"id": "a", "type": "agent", "goal": "OK"}, gate,
+        {"id": "b", "type": "agent", "after": ["hold"], "goal": "OK"}]}
+    run = mkrun(f"whenskip-{policy or 'default'}", g)
+    t0 = time.time(); runner(run); dt = time.time() - t0
+    expected = policy or "prune"
+    statuses = {k: v["status"] for k, v in wfcommon.run_state(run)["nodes"].items()}
+    check(any(e["event"] == "gate.skipped" and e.get("on_skip") == expected for e in events(run))
+          and statuses["hold"] == ("skipped" if expected == "prune" else "done")
+          and statuses["b"] == ("skipped" if expected == "prune" else "done")
+          and ((run / "logs" / "b.a0.log").exists() == (expected == "pass")) and dt < 10,
+          f"false when on wait gate {expected} saves and emits consistent policy, without parking ({dt:.1f}s)")
 
 print(f"ALL PASS ({ok})")

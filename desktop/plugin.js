@@ -854,10 +854,11 @@ function NodeCard({ runId, def, st, gate, selected, owner, events }) {
           'button',
           {
             type: 'button',
-            onClick: () => {
-              const cur = $selNode.get()
-              $selNode.set(cur && cur.runId === runId && cur.nodeId === def.id ? null : { runId, nodeId: def.id })
-            },
+            // Toggle from the `selected` prop GraphView already passes — the
+            // SDK atom is set/useValue only; a read via .get() throws inside
+            // the handler and the click dies silently (non-stack nodes never
+            // opened the panel). Never call .get() on an atom.
+            onClick: () => $selNode.set(selected ? null : { runId, nodeId: def.id }),
             className: 'w-full cursor-pointer px-2 py-1.5 text-left transition-colors hover:text-foreground',
             children: [
               box(

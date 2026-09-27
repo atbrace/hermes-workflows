@@ -1,7 +1,7 @@
 ---
 name: workflow
 description: "Workflow fan-out audit and census: run agent graphs"
-version: 1.0.9
+version: 1.0.11
 metadata:
   hermes:
     tags: [workflows, fan-out, audit, census, orchestration]
@@ -17,7 +17,7 @@ Build `{ "name": "check", "nodes": [{"id":"inspect","type":"agent","goal":"Inspe
 
 Independent tasks: put them in separate nodes or one `fanout` with `items` (per-item `goal` optional; the node goal prefixes each item). `quorum` (optional) races: once N succeed, the rest are cancelled. Put shared settings — schema, budgets, reasoning, provider/model, a context preamble — in a graph-level `defaults` block once, not on every node; `shape:recon|build|review|publish` sizes budgets from measured presets. A constant travels as an `echo` node, never an agent spawn. Set `model` per node only when needed: an unset model uses the seat default, including fan-outs. A configured tier, alias, or literal is a request, not a guarantee of provider availability. Inspect the returned routing table and check errors before trusting execution. Use an explicit `provider` with a nonempty `model` when routing is needed; do not change persistent model preferences just to make a graph work.
 
-For a decision, a `gate` with `question` and `options` holds; present it to the owner and pass their answer with `release`. A decorative gate gets `hold_timeout` + `default_option` and releases itself; with `hold_timeout` alone it logs `gate.expired` and keeps holding. Machine waits use `gate.wait`. A false `gate.when` without `on_skip:"prune"` skips the QUESTION but still lets the arm run. For mutually exclusive arms, use two complementary gate predicates with `on_skip:"prune"`; see [grammar](references/grammar.md). `when` belongs on gates: agent predicates and other unknown fields are rejected before write/spawn. The tested `approve-publish` and `branch-on-verdict` examples demonstrate branching.
+For a decision, a `gate` with `question` and `options` holds; present it to the owner and pass their answer with `release`. A decorative gate gets `hold_timeout` + `default_option` and releases itself; with `hold_timeout` alone it logs `gate.expired` and keeps holding. Machine waits use `gate.wait`. A false `gate.when` prunes the gate and its exclusively dependent arm by default, including machine-wait gates. Explicit `on_skip:"pass"` skips only the gate question and lets descendants run; use it only deliberately. For mutually exclusive arms, use two complementary gate predicates (the default prunes false arms); see [grammar](references/grammar.md). `when` belongs on gates: agent predicates and other unknown fields are rejected before write/spawn. The tested `approve-publish` and `branch-on-verdict` examples demonstrate branching.
 
 ## Run and handoff
 

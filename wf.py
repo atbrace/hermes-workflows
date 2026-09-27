@@ -80,6 +80,8 @@ CONTRACT = ("Finish your answer with ONE fenced ```json block holding your resul
 # write-first authoring rule). Rendered into the GOAL half, before '## Inputs':
 # the fan-out law holds everything from '## Inputs' onward identical across
 # items, and this line carries a per-item absolute path (test_inputs_0923).
+# When a safe root is in force (HERMES_WRITE_SAFE_ROOT non-empty), run_child makes
+# this dir writable: it appends the child's OWN work dir, nothing wider (fb 625a3241).
 WORK_DIR_NOTE = ("Your working directory {WORK_DIR} is durable; write your artifact "
                  "there first and append as you go.")
 
@@ -878,6 +880,13 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                HERMES_WF_STEER_NODE=str(node["id"]),
                HERMES_WF_STEER_SPAWN=str(spawn_no),
                HERMES_WF_RUN_ID=run.name)
+    # fb 625a3241: WORK_DIR_NOTE advertises wd as durable; under a safe root it must
+    # also be writable. Append the child's OWN dir only; unset/'' = unrestricted in
+    # core, so leave it exactly as inherited (setting it would newly restrict).
+    wd = str(child_work_dir(run, node, index))
+    sr = os.environ.get("HERMES_WRITE_SAFE_ROOT")
+    if sr:
+        env["HERMES_WRITE_SAFE_ROOT"] = sr + os.pathsep + wd
     t0 = time.time()
     logf = open(lp, "w", encoding="utf-8", errors="replace")
     log_created = time.time()   # the file's own creation stamp: never counts as activity
@@ -894,7 +903,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                         "error_class": "cancelled", "ms": 0}
             proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, env=env, text=True,
-                                    cwd=str(child_work_dir(run, node, index)),
+                                    cwd=wd,
                                     start_new_session=True)  # own pgid: a timeout kill can
             meta["_procs"][f"{node['id']}:{id(proc)}"] = proc  # never reach runner/siblings
     except OSError as e:
@@ -1786,8 +1795,8 @@ def main(run_id):
                     rec = {"gate": "skipped", "when": gate.get("when"), "_def": efp(rs.byid, gate)}
                     (run / "gates").mkdir(exist_ok=True)   # 5c37b19: a deleted gates/ degrades
                     (run / "gates" / f"{gate['id']}.json").write_text(json.dumps(rec))   # to a recreate, not a runner kill
-                    save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip") == "prune" else "done", "output": rec})
-                    log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "pass"))
+                    save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip", "prune") == "prune" else "done", "output": rec})
+                    log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "prune"))
                     continue
                 res = park_gate(run, run_id, gate, rs.byid, consume_markers)
                 if res == "stopped": return "stopped"
@@ -1801,8 +1810,8 @@ def main(run_id):
                 rec = {"gate": "skipped", "when": gate.get("when"), "_def": efp(rs.byid, gate)}
                 (run / "gates").mkdir(exist_ok=True)   # 5c37b19: a deleted gates/ degrades
                 (run / "gates" / f"{gate['id']}.json").write_text(json.dumps(rec))   # to a recreate, not a runner kill
-                save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip") == "prune" else "done", "output": rec})
-                log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "pass"))
+                save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip", "prune") == "prune" else "done", "output": rec})
+                log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "prune"))
                 continue
             log(run, "gate.held", node=gate["id"], question=gate.get("question"),
                 options=gate.get("options"), context=gate.get("context"))
