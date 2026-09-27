@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Serial bounded suite with durable per-case logs and atomic exit ledger."""
+"""Serial bounded suite with durable per-case logs and atomic exit ledger.
+
+The ledger resets per run: exits.json reports the CURRENT pass only.
+"""
 import json
 import os
 import subprocess
@@ -9,7 +12,13 @@ root = Path(sys.argv[1]).resolve()
 out = Path(sys.argv[2]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 ledger = out / 'exits.json'
-rows = json.loads(ledger.read_text()) if ledger.exists() else []
+# fb 3d2175e9cd75d2a1: a suite run reports the CURRENT pass only — reset the
+# ledger at start instead of appending to a stale dir's rows. Durability is
+# kept: the per-case atomic tmp+os.replace write below persists progress.
+rows = []
+tmp = ledger.with_suffix('.tmp')
+tmp.write_text('[]\n')
+os.replace(tmp, ledger)
 py = sorted((root / 'tests').glob('test_*.py'))
 js = sorted((root / 'tests').glob('test_*.mjs'))
 cases = [[sys.executable, str(p)] for p in py] + [['node', '--experimental-strip-types', str(p)] for p in js]

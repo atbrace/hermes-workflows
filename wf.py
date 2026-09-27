@@ -467,6 +467,47 @@ def _harvest_death(out, schema):
     return {"output": parsed,
             "harvest": {"declared_status": declared if isinstance(declared, str) and declared else None}}
 
+def _cancel_evidence(run, nid, index, lp):
+    """a2d7f664: honest evidence for a quorum-straggler cancel. Snapshot of the
+    child's output state AT THE CANCEL INSTANT — spawn-log bytes (the same
+    _child_spoke primitive; bytes, not a bool, so the reason carries the
+    measurement) plus the file count in the child's durable work dir.
+    Returns (suffix, snapshot dict): suffix ' — no output on disk at quorum
+    moment' when the child had NOTHING (empty spawn log, empty work dir), else
+    ' — had output at quorum moment (log N bytes, workdir M files)'. A vanished
+    log/work dir reads as 0 bytes / 0 files (OSError is honest absence, never a
+    fabricated size)."""
+    n_bytes = 0
+    try:
+        n_bytes = lp.stat().st_size
+    except (OSError, AttributeError):
+        pass
+    n_files = 0
+    try:
+        n_files = sum(1 for f in child_work_dir(run, {"id": nid}, index).rglob("*") if f.is_file())
+    except OSError:
+        pass
+    if n_bytes == 0 and n_files == 0:
+        return " — no output on disk at quorum moment", {"log_bytes": 0, "work_files": 0}
+    return (f" — had output at quorum moment (log {n_bytes} bytes, workdir {n_files} files)"), \
+           {"log_bytes": n_bytes, "work_files": n_files}
+
+def _harvest_cancelled(out, schema, run, nid, index):
+    """a2d7f664 harvest-at-cancel: the cancelled class was deliberately excluded
+    from _harvest_death (its docstring), so a quorum straggler that had ALREADY
+    flushed a valid fenced answer died silently uncounted. This gives cancelled
+    its OWN harvest pass over the child's capture: a committed/parsable output
+    contributes its harvest to the attempt record (node_facts.attempts_log reads
+    the per-item records). It must NEVER flip the cancelled classification or
+    the quorum math: the caller keeps error_class 'cancelled' (excluded from
+    failure math, still not merged), and _harvest_death's own gate holds — a
+    FENCED block that parses to a dict and validates, else None."""
+    hv = _harvest_death(out, schema)
+    if hv is not None:
+        log(run, "item.harvested_at_cancel", node=nid, index=index,
+            declared_status=(hv.get("harvest") or {}).get("declared_status"))
+    return hv
+
 def _tool_progress(run, skey, out):
     """Tool-progress evidence for the #5 bounded retry: True only when the
     dead attempt's state.db row EXPLICITLY carried tool_call_count > 0 — the
@@ -744,8 +785,17 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
     if fo_cancel is not None and fo_cancel.is_set() and was_alive:
         # quorum straggler: WE observed the live orphan die to _cancel_stragglers'
         # group kill (a child already dead at entry is classified from its capture).
-        return {"status": "failed", "error": "cancelled: quorum already met",
-                "error_class": "cancelled", "raw": (out or "")[-2000:], "ms": ms, **evd}
+        # a2d7f664: same evidence + harvest-at-cancel as the run_child site — the
+        # capture freezes at the kill, so the snapshot is honest to the quorum
+        # moment; error_class/quorum math unchanged.
+        suffix, snap = _cancel_evidence(run, nid, index, lp)
+        hv = _harvest_cancelled(out, schema, run, nid, index)
+        rec = {"status": "failed", "error": "cancelled: quorum already met" + suffix,
+               "error_class": "cancelled", "raw": (out or "")[-2000:], "ms": ms,
+               "cancel_evidence": snap, **evd}
+        if hv:
+            rec.update(hv)
+        return rec
     if errs is not None:
         return {"status": "failed", "error": f"adopted child answer failed schema validation: {errs}",
                 "error_class": "schema", "output": parsed, "raw": (out or "")[-2000:],
@@ -957,8 +1007,20 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         if (rc or 0) < 0 and not timed_out and not early_death:
             # signal-killed by the runner itself with no stop pending = a fan-out
             # straggler killed at quorum (#12). Not a failure of the child's making.
-            return {"status": "failed", "error": "cancelled: quorum already met", "error_class": "cancelled",
-                    "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
+            # a2d7f664: never blind — the capture is frozen by the SIGKILL, so the
+            # snapshot is faithful to the quorum moment; and a straggler that had
+            # already flushed a valid fenced answer keeps its harvest (the cancelled
+            # class was excluded from _harvest_death — this is cancelled's own pass;
+            # classification and quorum math untouched, error_class stays cancelled).
+            suffix, snap = _cancel_evidence(run, node["id"], index, lp)
+            hv = _harvest_cancelled(out, schema, run, node["id"], index)
+            rec = {"status": "failed", "error": "cancelled: quorum already met" + suffix,
+                   "error_class": "cancelled",
+                   "raw": (out or "")[-2000:], "ms": ms, "final": final_reply,
+                   "cancel_evidence": snap, **sk, **evd}
+            if hv:
+                rec.update(hv)
+            return rec
         if tclass == "cap_exhausted":
             hv = _harvest_death(out, schema)   # #4: every cap death that "said so precisely" keeps its answer
             if hv:
@@ -1210,6 +1272,14 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
             def _cancel_stragglers():
                 # queued items check fo_cancel before launch; in-flight children of
                 # THIS node (registry key "<node_id>:<id(proc)>") get SIGKILLed.
+                # a2d7f664: the kill itself stays unconditional (A5 opt-in intact —
+                # every live child flushes a banner, so a size-gate would gut it),
+                # but it is no longer BLIND: SIGKILL freezes the child's capture at
+                # the quorum moment, so both cancel classifiers (run_child +
+                # _adopt_child) compute _cancel_evidence over the frozen spawn log
+                # and the durable work dir and append it to the death reason —
+                # 'no output on disk at quorum moment' vs 'had output at quorum
+                # moment (log N bytes, workdir M files)'. Never cancel silently.
                 fo_cancel.set()
                 with meta["_procs_lock"]:
                     for k, p in list(meta["_procs"].items()):

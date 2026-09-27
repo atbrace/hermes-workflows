@@ -123,6 +123,45 @@ r = mk("c3-quorum-all", G, "quorum-all")
 t0 = time.time(); out = wf("c3-quorum-all"); dt = time.time() - t0
 check("#12c explicit quorum=ALL still waits for every item", dt >= 20 and out.startswith("WORKFLOW_DONE"), f"{dt:.1f}s {out[-100:]}")
 
+# ---- a2d7f664: the quorum cancel never fires blind. Same quorum shape, two
+# stragglers: QSLEEP (silent — log 0 bytes, work dir empty) vs QFLUSH+QSLEEP
+# (flushed a valid fenced answer, then kept cooking). The death reason must
+# state the output-state snapshot; the flushed one also carries its harvest.
+G = [{"id": "fan", "type": "agent",
+      "fanout": {"items": ["fast1", "fast2", "QSLEEP 25 silent", "QFLUSH QSLEEP 25 flushed"],
+                 "goal": "{item}", "quorum": 2}}]
+r = mk("c3-quorum-evidence", G, "quorum-evidence")
+t0 = time.time(); out = wf("c3-quorum-evidence"); dt = time.time() - t0
+rec = json.loads((r / "nodes/fan.json").read_text())
+res = (rec.get("output") or {}).get("all_results") or []
+by_err = {x.get("item"): x for x in res if x.get("error_class") == "cancelled"}
+check("a2d7f664 both stragglers cancelled, node done (quorum math untouched)",
+      rec.get("status") == "done" and len(by_err) == 2 and dt < 25,
+      json.dumps({"status": rec.get("status"), "n": len(by_err), "dt": round(dt, 1)}))
+silent = by_err.get("QSLEEP 25 silent") or {}
+flushed = by_err.get("QFLUSH QSLEEP 25 flushed") or {}
+check("a2d7f664 silent straggler reason names 'no output on disk at quorum moment'",
+      "no output on disk at quorum moment" in (silent.get("error") or ""),
+      json.dumps(silent)[:260])
+check("a2d7f664 silent straggler snapshot carries log_bytes=0/work_files=0",
+      silent.get("cancel_evidence") == {"log_bytes": 0, "work_files": 0},
+      json.dumps(silent.get("cancel_evidence")))
+check("a2d7f664 flushed straggler reason names 'had output at quorum moment' with measurements",
+      "had output at quorum moment" in (flushed.get("error") or "")
+      and (flushed.get("cancel_evidence") or {}).get("log_bytes", 0) > 0,
+      json.dumps(flushed)[:260])
+check("a2d7f664 harvest-at-cancel: flushed straggler keeps its fenced answer as harvest output",
+      isinstance((flushed.get("output") or {}).get("result"), str)
+      and (flushed.get("harvest") or {}).get("declared_status") in (None, "ok", "done"),
+      json.dumps({"out": flushed.get("output"), "hv": flushed.get("harvest")})[:260])
+check("a2d7f664 cancelled stays excluded from failure math (failed_items=0, cancelled_items=2)",
+      (rec.get("output") or {}).get("failed_items") == 0
+      and (rec.get("output") or {}).get("cancelled_items") == 2,
+      json.dumps(rec.get("output"))[:200])
+check("a2d7f664 harvest-at-cancel event logged",
+      any(e["event"] == "item.harvested_at_cancel" and e.get("node") == "fan" for e in events(r)),
+      json.dumps([e["event"] for e in events(r)][-8:]))
+
 # ---- #14a: door validation ----
 bad = {"nodes": [{"id": "g", "type": "gate", "question": "q", "options": ["a", "b"],
                   "default_option": "zzz", "hold_timeout": 5}]}

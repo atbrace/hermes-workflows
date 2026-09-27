@@ -155,7 +155,7 @@ WORKFLOW_PARAMS = {
         "graph_path": {"type": "string", "description": "run/save/amend: absolute path to a caller-supplied local regular UTF-8 JSON graph file (max 1 MiB, no final symlink). Choose exactly one of graph, graph_path, or run's from / save's run_id. Validated before any write or spawn."},
         "graph": {
             "type": "object",
-            "description": "For run/amend: {name, nodes:[...], defaults:{schema, timeout, max_turns, reasoning, provider, model, context}} where `defaults` fills agent node keys the author left unset (explicit node keys always win; defaults.context is the shared preamble prepended once to each agent's own context) and where node = {id, type:'agent'|'gate'|'echo', after:[node ids], goal, context, schema (json-schema for child output), model, provider (optional explicit Hermes provider paired with model; passed as --provider; when unset it is INHERITED from a provider-qualified model alias/tier), toolsets, max_turns, timeout (s wall-clock kill, default 900), shape (recon|build|review|publish — fills max_turns/timeout from the measured p95 census presets when the author left them unset; explicit keys win), run_budget (s, child's own budget), reasoning (a hermes reasoning effort: none|minimal|low|medium|high|xhigh|max|ultra — passed to the child as --reasoning; levels are validated PER ROUTE at the door against the resolved (provider, model) route's supported set, with the supported list and nearest level in the error — no silent downgrade), inputs:['<ancestor>' | '<ancestor>.<dotted.path>', ...] (inject a committed upstream output into the prompt as a labelled json block under '## Inputs'; unresolvable ref fails the node at spawn; DIRECT parents from `after` are auto-injected capped at 8KB with a truncation marker — use inputs only to pick a dotted path or a non-parent ancestor; a parent listed in both appears once), fanout:{items | items_from:'<node_id>.<dotted.path>', goal (OPTIONAL template; an item's own `goal` key overrides it — when items carry their own goals the shared node goal prefixes each item prompt, so no placeholder template is ever needed), schema, quorum (default = majority, floor(n/2)+1; once quorum is reached the remaining stragglers are cancelled with error_class 'cancelled' and excluded from the failure math)}} — agent node. A provider requires a non-empty model; model aliases and literal IDs are preserved (tiers resolve explicitly, and a matching provider/model prefix is removed for the CLI). Run/amend responses include requested/resolved provider/model routes. Gate node: {id, type:'gate', after, question, options, context, when (bounded expr: out.<node>.<dotted.path> with == != > >= < <=, and/or/not, parens; malformed when is rejected at run/amend validation and holds the gate at fire — never a silent skip), wait:{wait_s, until_argv:[fixed argv, no shell], every_s (default 60), timeout_s (default 3600)} (machine-answered gate: parks the run at zero tokens — wait_s alone = timer; until_argv re-runs until exit 0; timeout → gate fails; its last stdout/stderr tail is the gate's output, usable via inputs). A human release pre-empts a park), on_skip:'pass'|'prune' (with when: prune commits the gate `skipped` and every node whose deps are ALL skipped is skipped too — terminal, not a failure; a join with one live dep runs; default pass = the arm still runs)}. Echo node: {id, type:'echo', after, output} — commits its `output` verbatim as the node result with zero tokens and no child spawn; downstream nodes consume it via after/inputs like any done node. Any key outside these closed sets is rejected at run/amend with errors:[{node, field, msg}] for EVERY defect.",
+            "description": "For run/amend: {name, nodes:[...], defaults:{schema, timeout, max_turns, reasoning, provider, model, context}} where `defaults` fills agent node keys the author left unset (explicit node keys always win; defaults.context is the shared preamble prepended once to each agent's own context) and where node = {id, type:'agent'|'gate'|'echo', after:[node ids], goal, context, schema (json-schema for child output), model, provider (optional explicit Hermes provider paired with model; passed as --provider; when unset it is INHERITED from a provider-qualified model alias/tier), toolsets, max_turns, timeout (s wall-clock kill, default 900), shape (recon|build|review|publish — fills max_turns/timeout from the measured p95 census presets when the author left them unset; explicit keys win), run_budget (s, child's own budget), reasoning (a hermes reasoning effort: none|minimal|low|medium|high|xhigh|max|ultra — passed to the child as --reasoning; levels are validated PER ROUTE at the door against the resolved (provider, model) route's supported set, with the supported list and nearest level in the error — no silent downgrade), inputs:['<ancestor>' | '<ancestor>.<dotted.path>', ...] (inject a committed upstream output into the prompt as a labelled json block under '## Inputs'; unresolvable ref fails the node at spawn; DIRECT parents from `after` are auto-injected capped at 8KB with a truncation marker — use inputs only to pick a dotted path or a non-parent ancestor; a parent listed in both appears once), fanout:{items | items_from:'<node_id>.<dotted.path>', goal (OPTIONAL template; an item's own `goal` key overrides it — when items carry their own goals the shared node goal prefixes each item prompt, so no placeholder template is ever needed), schema, quorum (OPTIONAL positive int; ONLY when set: once quorum items have committed, the still-running stragglers are cancelled with error_class 'cancelled' and excluded from the failure math; when unset there is NO default — the fan-out waits for every item)}} — agent node. A provider requires a non-empty model; model aliases and literal IDs are preserved (tiers resolve explicitly, and a matching provider/model prefix is removed for the CLI). Run/amend responses include requested/resolved provider/model routes. Gate node: {id, type:'gate', after, question, options, context, when (bounded expr: out.<node>.<dotted.path> with == != > >= < <=, and/or/not, parens; malformed when is rejected at run/amend validation and holds the gate at fire — never a silent skip), wait:{wait_s, until_argv:[fixed argv, no shell], every_s (default 60), timeout_s (default 3600)} (machine-answered gate: parks the run at zero tokens — wait_s alone = timer; until_argv re-runs until exit 0; timeout → gate fails; its last stdout/stderr tail is the gate's output, usable via inputs). A human release pre-empts a park), on_skip:'pass'|'prune' (with when: prune commits the gate `skipped` and every node whose deps are ALL skipped is skipped too — terminal, not a failure; a join with one live dep runs; default pass = the arm still runs)}. Echo node: {id, type:'echo', after, output} — commits its `output` verbatim as the node result with zero tokens and no child spawn; downstream nodes consume it via after/inputs like any done node. Any key outside these closed sets is rejected at run/amend with errors:[{node, field, msg}] for EVERY defect.",
         },
         "answer": {"type": "string", "description": "release: the human's answer text (from clarify)."},
         "gate_id": {"type": "string", "description": "release: gate node id."},
@@ -314,7 +314,9 @@ def model_preflight(requests, tiers, seat_raw):
         return "model preflight: " + " | ".join(route_errs)
     return None
 
-def _resolve_models(nodes) -> tuple[str | None, dict | None, dict | None]:
+_ROUTE_KEYS = ("model", "tier", "provider")
+
+def _resolve_models(nodes, committed=None, keep=()) -> tuple[str | None, dict | None, dict | None]:
     """Resolve tier keys in place and return (error, model_table, routes).
 
     Explicit aliases and literal ids stay unchanged. If a provider is supplied and the
@@ -322,20 +324,43 @@ def _resolve_models(nodes) -> tuple[str | None, dict | None, dict | None]:
     ``-m`` value. `routes` contains requested and effective provider/model pairs only;
     no credentials or config values. At the tail, the FEEDBACK #43 ``model_preflight``
     rejects names that resolve to nothing (fail-closed at submit, never at spawn).
+
+    amend only (fb 034849a23af94418): `committed` = {id: committed graph.json def},
+    `keep` = ids that will replay-skip (see _frozen_committed). A kept node restores
+    its committed model/tier/provider verbatim and is never re-resolved against the
+    current seat. Any other node still carrying its committed bake verbatim is
+    UN-baked back to its tier key, so it routes exactly as the author graph would.
+    act_run passes neither.
     """
     tiers = model_tiers()
     table, routes = {}, {}
-    known = set(_seat_aliases()) | ({_seat_default()} - {None})
+    # tier TARGETS are seat-owned names: resolution bakes them, so re-resolving a baked
+    # def must accept them (idempotence; fb 034849a23af94418).
+    known = set(_seat_aliases()) | ({_seat_default()} - {None}) | set(tiers.values())
+    committed = committed or {}
     requests = []
     for n in nodes:
         if n.get("type") in ("gate", "echo"):
             continue
+        c = committed.get(n.get("id")) or {}
+        frozen = bool(c) and n.get("id") in keep
+        if frozen:
+            for k in _ROUTE_KEYS:
+                if c.get(k) is None:
+                    n.pop(k, None)
+                else:
+                    n[k] = c[k]
+        elif (c and c.get("tier") in tiers
+              and all(n.get(k) == c.get(k) for k in _ROUTE_KEYS)):
+            n.pop("provider", None)
+            n.pop("tier", None)
+            n["model"] = c["tier"]
         requested_model = n.get("model")
         provider = n.get("provider")
         m = requested_model
-        tier = None
+        tier = n.get("tier") if frozen else None
         display = "(seat default)"
-        if not m:
+        if not m or frozen:
             pass
         elif m in tiers:
             tier = m
@@ -356,7 +381,7 @@ def _resolve_models(nodes) -> tuple[str | None, dict | None, dict | None]:
         # itself stays verbatim (house contract: aliases are preserved); only the
         # provider is baked so the runner's --provider matches the alias's own route.
         ip = im = None
-        if m and not provider and (tier or m in known):
+        if m and not provider and not frozen and (tier or m in known):
             ip, im = _alias_provider_pair(requested_model, _seat_model_cfg(), tiers, known)
             if ip:
                 n["provider"] = ip
@@ -392,6 +417,150 @@ def resolve_models(nodes):
     """Compatibility wrapper: resolve models and return the historical (error, table) pair."""
     err, table, _routes = _resolve_models(nodes)
     return err, table
+
+# ---------- FEEDBACK #152be7f7: preflight LIVENESS ping (warn-and-surface) ----------
+# model_preflight proves RESOLUTION, not liveness; a live-but-quota-dead seat used to
+# first fail hours later at the first child spawn (transport_exhausted after the retry
+# ladder), and the server's Retry-After never survived to the door. This ping fires at
+# run/amend submit and ANNOTATES the existing routes entries only — it NEVER blocks the
+# launch. Every failure path (timeout, core not importable, transient 5xx, parse
+# failure, fallback-ladder surprise) maps to liveness='unknown' and the run launches.
+# No new door schema keys: the annotation rides the existing routes dict; the dead
+# copy rides the existing hint.
+_PING_TASK = "wf-preflight-ping"
+PING_TIMEOUT_S = 10.0
+_PING_DEAD_STATUSES = (401, 403, 404, 429)
+_PING_NOTE_MAX = 160
+_PING_KEYISH = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+|api[_-]?key\s*[=:]\s*\S+)", re.I)
+
+def _import_call_llm():
+    """Call-time lazy core import (rule 7: stdlib at import time; host imports lazy and
+    guarded). Raises on non-core hosts — the caller maps that to liveness='unknown'."""
+    from agent.auxiliary_client import call_llm
+    return call_llm
+
+def _ping_status(exc):
+    """Best-effort HTTP status of a ping failure: the SDK attribute first, then the
+    openai escape-line format (str(exc) = 'Error code: NNN - {body}'). None otherwise."""
+    st = getattr(exc, "status_code", None)
+    if isinstance(st, int) and 100 <= st <= 599:
+        return st
+    m = re.search(r"Error code:\s*(\d{3})", str(exc))
+    return int(m.group(1)) if m else None
+
+def _ping_retry_after(exc):
+    """Server Retry-After, best-effort via core's parser. None when no header — NEVER
+    fabricated."""
+    try:
+        from agent.retry_utils import parse_retry_after_seconds
+    except Exception:
+        return None
+    try:
+        return parse_retry_after_seconds(getattr(getattr(exc, "response", None), "headers", None))
+    except Exception:
+        return None
+
+def _ping_note(exc, status):
+    """Short, credential-scrubbed note for the annotation: type + status + head of str."""
+    head = " ".join(str(exc or "").split())[:_PING_NOTE_MAX]
+    head = _PING_KEYISH.sub("[redacted]", head)
+    return (f"HTTP {status}: {head}" if status else f"{type(exc).__name__}: {head}").strip()
+
+def _same_ping_route(ri, provider, model):
+    """True when the route core RECORDED for the ping is the pinned route itself.
+    call_llm's recovery ladder may answer from another lane (capacity errors bypass the
+    explicit-provider gate); a ping whose recorded route is not the pinned one proves
+    nothing about the pinned one — the caller degrades to 'unknown', never 'alive'/'dead'."""
+    def _lbl(v):
+        v = str(v or "").strip().lower()
+        m = re.search(r"\(([^()]+)\)\s*$", v)  # 'main-agent(openai)' / 'fallback_chain[0](x)'
+        return m.group(1) if m else v
+    rp, rm = _lbl((ri or {}).get("provider")), _lbl((ri or {}).get("model"))
+    lp, lm = str(provider).strip().lower(), str(model).strip().lower()
+    return bool(rp) and rp == lp and (rm == lm or rm == lm.rsplit("/", 1)[-1])
+
+def _ping_route_once(provider, model):
+    """One auxiliary ping on the pinned (provider, model) route — explicit provider AND
+    model, ONE call, no ladder of ours; core's own recovery is only trusted when the
+    recorded route is the pinned one. NEVER raises: returns the annotation dict."""
+    try:
+        call_llm = _import_call_llm()
+    except Exception as e:
+        return {"liveness": "unknown",
+                "note": f"core auxiliary client not importable ({type(e).__name__}) — ping skipped"}
+    ri = {}
+    try:
+        call_llm(task=_PING_TASK, provider=provider, model=model,
+                 messages=[{"role": "user", "content": "ping"}],
+                 max_tokens=1, timeout=PING_TIMEOUT_S, route_info=ri)
+    except Exception as exc:
+        # The annotation itself must never raise (a hostile __str__ is still just an
+        # unknown, never a crash at submit — fail-open is the whole contract).
+        try:
+            st = _ping_status(exc)
+        except Exception:
+            st = None
+        if st in _PING_DEAD_STATUSES and _same_ping_route(ri, provider, model):
+            return {"liveness": "dead", "retry_after_s": _ping_retry_after(exc),
+                    "note": _safe_ping_note(exc, st)}
+        if st in _PING_DEAD_STATUSES:
+            return {"liveness": "unknown",
+                    "note": f"dead-status on an unattributed route {ri.get('provider')!r} — not counted"}
+        return {"liveness": "unknown", "note": _safe_ping_note(exc, st)}
+    if not _same_ping_route(ri, provider, model):
+        return {"liveness": "unknown",
+                "note": "ping answered by a different route (fallback ladder) — not counted as alive"}
+    return {"liveness": "alive"}
+
+def _safe_ping_note(exc, status):
+    try:
+        return _ping_note(exc, status)
+    except Exception:
+        return f"{type(exc).__name__}: (unprintable error)"
+
+def _route_liveness_ping(routes):
+    """FEEDBACK #152be7f7: warn-and-surface liveness, called ONCE at the _resolve_models
+    tail of BOTH submit paths (act_run / act_amend), after model_preflight (which stays
+    pure — the ping is I/O and therefore lives at the call site, not inside resolution).
+    One ping per DISTINCT resolved (provider, model) pair; the outcome annotates every
+    route entry sharing that pair IN PLACE (existing routes dict — no new door schema
+    keys). A resolved route with no explicit provider+model cannot be pinned without
+    letting core auto-route (the fallback surprise condition(1) forbids) — it honestly
+    gets liveness='unknown', ping skipped. Returns dead-route hint fragments; the run
+    LAUNCHES regardless of every outcome."""
+    notes = []
+    if not routes:
+        return notes
+    by_route = {}
+    for nid in sorted(routes):
+        ent = routes[nid] or {}
+        res = ent.get("resolved") or {}
+        p, m = res.get("provider"), res.get("model")
+        if not p or not m:
+            ent["liveness"] = "unknown"
+            ent["note"] = "no explicit provider+model to pin (seat default) — ping skipped"
+            continue
+        by_route.setdefault((str(p), str(m)), []).append(nid)
+    for (p, m), ids in by_route.items():
+        ann = _ping_route_once(p, m)
+        for nid in ids:
+            routes[nid].update(ann)
+        if ann.get("liveness") == "dead":
+            ra = ann.get("retry_after_s")
+            when = (f"retry after {int(ra)}s" if isinstance(ra, (int, float))
+                    else "retry-after absent")
+            notes.append(f"route {p}/{m}: dead ({when}) — repoint node(s) "
+                         f"{', '.join(ids)} before dispatch")
+    return notes
+
+def _liveness_hint_suffix(notes):
+    """Dead-route copy appended to the run/amend hint (agent-visible, warn-and-surface):
+    states the verdict AND the resolution-not-liveness caveat verbatim-flavored."""
+    if not notes:
+        return ""
+    return (" — preflight liveness: " + "; ".join(notes)
+            + f". Note: {_PREFLIGHT_NOT_LIVENESS} the submit ping is auxiliary and never "
+              "blocked this launch; repoint the dead routes before their nodes spawn.")
 
 def _seat_model_cfg():
     """The seat's `model:` block ({default, aliases}) — hermes_cli when importable, else a
@@ -551,6 +720,9 @@ def act_run(args):
     if err:
         return {"error": err}
     assert models is not None and routes is not None
+    # FEEDBACK #152be7f7: warn-and-surface liveness ping (annotates `routes` in place;
+    # never blocks — every failure path yields liveness='unknown' and the launch).
+    _liveness_notes = _route_liveness_ping(routes)
     base = time.strftime("%Y%m%d-%H%M%S") + "-" + "".join(
         c for c in name.lower() if c.isalnum() or c in "-_")[:24]
     rid, n = base, 0
@@ -580,7 +752,9 @@ def act_run(args):
     return {"run_id": rid, "models": models, "routes": routes, "hint":
             # Copy-exact inducement (papercut #70): the hint IS the paste line —
             # no paraphrase, no fallback. The card is agent-authored by ruling.
-            f'PASTE this line alone in your reply, then call wait: {_card(rid)}',
+            # The liveness suffix rides BEHIND the paste line (prefix stays copy-exact).
+            f'PASTE this line alone in your reply, then call wait: {_card(rid)}'
+            + _liveness_hint_suffix(_liveness_notes),
             "card": _card(rid)}
 
 def _steer_event(r, ev, **kw):
@@ -908,6 +1082,35 @@ def act_inbox(args):
             "node": os.environ.get("HERMES_WF_STEER_NODE"),
             "spawn": os.environ.get("HERMES_WF_STEER_SPAWN")}
 
+def _frozen_committed(r, old, new_nodes):
+    """fb 034849a23af94418: ids whose committed bake an amend keeps verbatim — ONLY nodes
+    that will replay-skip. All of: (a) a committed def with that id; (b) the def minus
+    budgets and route keys is unchanged; (c) the route is untouched (all of model/tier/
+    provider equal, or the author wrote the committed tier key with no/same provider);
+    (d) the committed record is valid at the OLD efp; (e) every `after` ancestor is
+    frozen too (fixpoint). Edited, re-running and pending nodes route on the current seat."""
+    ob = {n["id"]: n for n in old.get("nodes", []) if isinstance(n, dict) and n.get("id")}
+    drop = set(_common._BUDGET_KEYS) | set(_ROUTE_KEYS)
+    rest = lambda d: {k: v for k, v in d.items() if k not in drop}
+    frozen = set()
+    for n in new_nodes:
+        c = ob.get(n.get("id"))
+        if not c or rest(n) != rest(c):
+            continue
+        same = all(n.get(k) == c.get(k) for k in _ROUTE_KEYS) or (
+            bool(c.get("tier")) and n.get("model") == c["tier"]
+            and n.get("provider") in (None, c.get("provider")))
+        if same and _common.node_rec(r, c, ob)[0] in ("done", "partial", "skipped"):
+            frozen.add(n["id"])
+    moved = True
+    while moved:
+        moved = False
+        for n in new_nodes:
+            if n.get("id") in frozen and any(a not in frozen for a in n.get("after", []) or []):
+                frozen.discard(n["id"])
+                moved = True
+    return ob, frozen
+
 def act_amend(args):
     r = run_dir(args.get("run_id"))
     if not (r / "graph.json").exists():
@@ -928,17 +1131,24 @@ def act_amend(args):
         new = _common.apply_graph_defaults(new)
     except ValueError as e:
         return {"error": f"graph invalid: defaults/shape: {e}"}
-    err, _models, _routes = _resolve_models(new["nodes"])
+    # fb 034849a23af94418: freeze (against the OLD graph, BEFORE resolution) only the
+    # nodes that will replay-skip; everything else re-resolves on the current seat.
+    _old_byid, _frozen = _frozen_committed(r, old, new["nodes"])
+    err, _models, _routes = _resolve_models(new["nodes"], committed=_old_byid, keep=_frozen)
     if err:
         return {"error": err}
     assert _models is not None and _routes is not None
+    # FEEDBACK #152be7f7: the same warn-and-surface ping at the amend submit (annotates
+    # `_routes` in place; never blocks — the amend applies regardless of ping outcome).
+    _liveness_notes = _route_liveness_ping(_routes)
     # Q3 preview — the same replay-skip law the runner applies (wfcommon.efp +
     # node_rec), computed on the RESOLVED defs (what lands in graph.json), read-only.
     # dry_run returns here WITHOUT touching graph.json, amends.jsonl, or the runner.
     preview = amend_preview(r, new["nodes"])
     if args.get("dry_run"):
         return {"ok": True, "dry_run": True, "models": _models, "routes": _routes, **preview,
-                "hint": "nothing written — re-run without dry_run to apply"}
+                "hint": "nothing written — re-run without dry_run to apply"
+                        + _liveness_hint_suffix(_liveness_notes)}
     (r / "amends.jsonl").open("a").write(
         json.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "old": jload(r / "graph.json"), "new": new}) + "\n")
@@ -961,7 +1171,7 @@ def act_amend(args):
         _spawn_runner(r)
         applies = "runner respawned; efp replay-skip re-runs changed nodes and everything downstream"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
-            "hint": "workflow wait to follow", **preview}
+            "hint": "workflow wait to follow" + _liveness_hint_suffix(_liveness_notes), **preview}
 
 def act_stop(args):
     r = run_dir(args.get("run_id"))

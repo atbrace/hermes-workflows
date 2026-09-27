@@ -1,5 +1,73 @@
 # Changelog
 
+## 1.0.9 — 2026-09-27 — amend keeps committed routes only where they replay
+
+- amend keeps committed nodes' baked routes only where the node replay-skips;
+  edited/re-running nodes re-route on the current seat; a node's own tier target
+  is a known model (fb 034849a23af94418)
+
+## 1.0.8 — 2026-09-27 — quorum cancels never fire blind
+
+- A fan-out straggler cancelled at an explicit `quorum` now states its output
+  state AT THE KILL INSTANT: `cancelled: quorum already met — no output on disk
+  at quorum moment` vs `— had output at quorum moment (log N bytes, workdir M
+  files)` (snapshot dict `cancel_evidence` rides the record). The kill itself
+  is unchanged (A5 opt-in intact); the SIGKILL freezes the capture, so the
+  snapshot is faithful (fb a2d7f66443910813).
+- Harvest-at-cancel: a cancelled straggler whose frozen capture carries a
+  valid fenced answer keeps it (`harvest` + `item.harvested_at_cancel` event).
+  Classification and quorum math untouched — error_class stays `cancelled`.
+
+## 1.0.7 — 2026-09-27 — door quorum blurb matches the runner
+
+- The `workflow` tool's graph-param description told authors fanout `quorum`
+  "defaults to majority ... stragglers are cancelled" — the runner cancels
+  stragglers ONLY when quorum is EXPLICIT; unset quorum waits for every item
+  (grammar.md always agreed with the runner; the door did not). Door copy now
+  states: quorum OPTIONAL positive int; with it set, once N items commit the
+  still-running stragglers get `error_class: cancelled` and are excluded from
+  the failure math; without it the fan-out waits for all. Pin test
+  `tests/test_door_quorum_copy.py` (red-first) pins the registered string.
+  fb 2f9653b1; lane 89d86c9 (red-first pin) + a874255 (copy) + 0c5c05e (graphify).
+
+## 1.0.6 — 2026-09-26 — suite ledger resets; fanout grammar named
+
+- `scripts/suite.py` no longer seeds `exits.json` from disk: each run resets the
+  ledger (atomic `[]` seed via tmp+os.replace) so a re-run into a non-empty ci-out
+  reports the CURRENT pass only — no more `TOTAL 120` citing the previous run's
+  stale red rows. fb 3d2175e9.
+- `references/grammar.md` now names the fanout closed set exactly
+  `{items | items_from, goal, schema, quorum}` (matching the validator at
+  wfcommon.py:68) and documents `fanout.schema` (per-item reply contract, same
+  rules as node `schema`) — previously undocumented, authors had to guess.
+  fb aa9a65e0.
+
+## 1.0.5 — 2026-09-26 — preflight LIVENESS ping (warn-and-surface)
+
+- A graph pinned to a live-but-quota-dead seat used to launch happily and die hours
+  later at the FIRST child spawn (`transport_exhausted` after the fixed 5s/20s retry
+  ladder); `model_preflight` proves resolution, not liveness, and the provider's
+  `Retry-After` header never survived to the door. Now: one `wf-preflight-ping`
+  auxiliary request (max_tokens=1, ~10s timeout, explicit provider+model, one
+  attempt) per DISTINCT resolved route at run AND amend submit annotates the existing
+  `routes` entries with `liveness=alive|dead|unknown` + `retry_after_s` (never
+  fabricated) + scrubbed note, and dead routes append a repoint hint. STRICTLY
+  fail-open: every exception path (timeout, non-core host, transient 5xx, fallback
+  answered cross-route) maps to `unknown` and the run LAUNCHES — warn-and-surface,
+  no blocking, no new door schema keys. Ledger 152be7f7; lane de228d5+b28254f;
+  targeted 34/34, mutation-checked (revert -> 30 FAIL), suite 61/61.
+
+## 1.0.4 — 2026-09-26 — manifest floor matches the fleet
+
+- `requires_hermes` reverted `>=0.21.4` -> `>=0.21`: the CI-pin (09-25) raised the
+  floor above the fleet image (0.21.3), so the plugin was silently SKIPPED at boot
+  (`Plugin 'hermes-workflows' skipped: requires hermes >=0.21.4, running 0.21.3`)
+  and the workflow tool vanished after the next serve restart. The CI pin stays in
+  the workflow file; the manifest must only state the floor the stock `-Q`
+  contract actually needs. Deploy lesson: after restart, prove
+  `Mounted plugin API routes: /api/plugins/hermes-workflows/` in gui.log —
+  `/api/health` 200 does NOT prove the plugin loaded.
+
 ## 1.0.3 — 2026-09-26 — the feedback fleet's four lane fixes
 
 Merged from the feedback-triage commander's verified lanes (each:

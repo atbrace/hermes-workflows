@@ -27,6 +27,18 @@ if os.environ.get("FAKE_PID_LOG"):            # spawn-record tests: child pid, o
 if os.environ.get("FAKE_PROMPT_LOG"):         # prompt-content tests: FULL prompt per child,
     with open(os.environ["FAKE_PROMPT_LOG"], "a") as f:   # delimited (first line + full text)
         f.write("\n=====PROMPT=====\n" + q + "\n")
+# a2d7f664 quorum-cancel evidence markers (prompt-scoped; no env needed so one
+# run mixes silent and had-output stragglers under the SAME spawn conditions).
+# BEFORE the shared model-latency sleep so QFLUSH means 'flushed the answer
+# immediately' with no race against the quorum kill:
+#   QFLUSH     -> flush a valid fenced answer IMMEDIATELY, then keep cooking
+#                 (log has bytes at the kill instant)
+#   QSLEEP n   -> sleep n seconds printing NOTHING (spawn log stays 0 bytes)
+if "QFLUSH" in q:
+    print("```json\n" + json.dumps({"result": "flushed-before-kill"}) + "\n```", flush=True)
+if "QSLEEP" in q:
+    try: time.sleep(float(q.split("QSLEEP")[1].split()[0]))
+    except Exception: pass
 time.sleep(0.15)
 if "CRASHME" in q:
     print("segfault-ish diagnostic prose, NO json")
