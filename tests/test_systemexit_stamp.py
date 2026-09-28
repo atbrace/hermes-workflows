@@ -3,11 +3,17 @@
 
 The runner's benign, self-reported exits — acquire_lock()'s lock-loser
 sys.exit(0) after WORKFLOW_BUSY, and the no-graph sys.exit(2) — are BaseExceptions.
-The last-resort net in the __main__ block (and main()'s own net around loop())
-used to record them as "crashed: SystemExit: N" into runner_exit.json. Downstream,
-`workflow status/wait` then renders status=failed + next:[amend] WHILE the real
-runner and all its children are alive — and the operator reflex that invites
-(rerun `wf.py run`, or `amend`) re-stamps or poisons the live run.
+The last-resort net in the __main__ block used to record them as "crashed:
+SystemExit: N" into runner_exit.json. The load-bearing case is the lock-loser:
+acquire_lock exits BEFORE main() resets the first-writer-wins flag, so the net's
+write lands — and because WORKFLOW_BUSY is exactly what happens when a second
+`wf.py run` is launched against a LIVE run, the loser poisons the winner's status
+record. Downstream, `workflow status`/`wait` then renders status=failed +
+next:[amend] WHILE the real runner and all its children are alive — and the
+operator reflex that invites (rerun `wf.py run`, or `amend`) re-stamps or poisons
+the live run. (The no-graph exit's stamp was already blocked by
+write_runner_exit's first-writer-wins flag; the guard makes all self-reported
+exits structurally exempt.)
 
 This test mirrors the live repro: hold the run's flock to emulate a working
 runner, launch a second runner against it, and assert the second runner exits
@@ -15,7 +21,7 @@ clean WITHOUT touching the run's exit record. Also asserts the no-graph path
 keeps its own honest stamp (rc=2, 'crashed: no graph.json') and that a real
 crash still stamps.
 """
-import fcntl, json, os, shutil, subprocess, sys
+import atexit, fcntl, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 BUILD = Path(__file__).resolve().parent.parent
@@ -24,6 +30,7 @@ if HOME.exists():
     shutil.rmtree(HOME)
 RUNS = HOME / "workflows"
 RUNS.mkdir(parents=True)
+atexit.register(shutil.rmtree, HOME, ignore_errors=True)   # never leak on mid-test failure
 env = dict(os.environ, HERMES_HOME=str(HOME),
            HERMES_WF_HERMES_BIN=str(BUILD / "tests" / "fake"))
 
@@ -78,21 +85,21 @@ rec = json.loads((r2 / "runner_exit.json").read_text())
 check(rec["reason"] == "crashed: no graph.json",
       "no-graph stamp is the self-reported one, not 'crashed: SystemExit: 2'", rec)
 
-# ---- 3) a real crash STILL stamps (the net still works) ----
+# ---- 3) a REAL crash STILL stamps (the net still works) ----
+# Force a genuine BaseException THROUGH the __main__ net: an unparseable
+# graph.json is swallowed by jload and exits via the honest no-graph branch
+# (self-reported, _EXIT_WRITTEN first-writer-wins), so it proves nothing about
+# the net. Pre-creating runner.lock as a DIRECTORY makes acquire_lock's
+# os.open(..., O_RDWR) raise OSError(EISDIR) INSIDE main(), before
+# _EXIT_WRITTEN is reset — only the net can record this death.
 r3 = mkrun("crash-run")
-(r3 / "graph.json").write_text(json.dumps(
-    {"name": "crash", "nodes": [{"id": "x", "type": "nonsense"}]}))
-(r3 / "run.json").write_text(json.dumps(
-    {"hermes_bin": str(BUILD / "tests" / "fake")}))
-# invalid graph is caught and stamped before the loop, same contract; verify a
-# genuine BaseException path (unparseable graph.json) reaches the crash net:
-(r3 / "graph.json").write_text("{not json")
+(r3 / "runner.lock").mkdir()
 p4 = subprocess.run([sys.executable, str(BUILD / "wf.py"), "run", "crash-run"],
                     capture_output=True, text=True, env=env, timeout=60)
-check(p4.returncode != 0, "broken graph.json exits non-zero", str(p4.returncode))
+check(p4.returncode != 0, "EISDIR death exits non-zero", str(p4.returncode))
 rec4 = json.loads((r3 / "runner_exit.json").read_text()) if (r3 / "runner_exit.json").exists() else {}
-check(rec4.get("reason", "").startswith("crashed:"),
-      "genuine crash still stamps runner_exit.json", json.dumps(rec4))
+check(rec4.get("reason", "").startswith(("crashed: OSError", "crashed: IsADirectoryError")),
+      "genuine crash still stamps runner_exit.json THROUGH the net", json.dumps(rec4))
 
 shutil.rmtree(HOME, ignore_errors=True)
 print(f"\nALL PASS ({ok})")
