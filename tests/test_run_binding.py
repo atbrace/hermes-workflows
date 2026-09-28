@@ -83,8 +83,9 @@ text = hw._wf_command("bind-replay key=a1")
 check("/wf single atomic argument, no steer", 'run_context:"key=a1"' in text and 'from:"bind-replay"' in text and "steer" not in text, text)
 # Real runner + fake child: inspect the exact prompt file, not only graph.json.
 hw._spawn_runner = actual_spawn
+os.environ["HERMES_WF_HERMES_BIN"] = str(BUILD / "fake")  # operator-side launcher (122099)
 live = {"name": "prompt-binding", "nodes": [{"id": "one", "type": "agent", "goal": "LIST: go {run.key}", "context": "branch={run.branch}"}]}
-r = run(graph=live, binding={"key": "a1", "branch": "fix/a1"}, hermes_bin=str(BUILD / "fake"))
+r = run(graph=live, binding={"key": "a1", "branch": "fix/a1"})
 if "run_id" in r:
     hw.act_wait({"run_id": r["run_id"], "timeout": 30})
     prompts = list((HOME / "workflows" / r["run_id"] / "logs").glob("one.*.prompt.md"))
