@@ -14,6 +14,10 @@ A gate has `type:"gate"`, `after`, optional `question`/`options`, `when`, `on_sk
 
 Bounded `when` reads `out.<ancestor>.<path>`, with string/number/boolean literals (`true`, `false`, `True`, `False`), comparisons, and/or/not and parentheses. A false predicate defaults to `on_skip:"prune"`: the gate and descendants with only skipped dependencies become terminal-skipped. Explicit `on_skip:"pass"` skips the gate question but lets descendants proceed. A true predicate still holds or waits; a predicate error fails safe rather than skipping. For mutually exclusive arms, use two complementary gates, each with its agent, then a mixed join. See tested `examples/approve-publish.json` and `examples/branch-on-verdict.json`. A missing upstream input fails rather than injecting an empty value. There is no native vote/loop/foreach engine.
 
+## Staleness and replay
+
+Each new commit (including gate answers, spawn identities and runner exits) stamps its fingerprint rule. Readers recompute against the current graph under THAT recorded rule, not necessarily the reader’s default. A definition or ancestor edit invalidates the affected record; an unknown rule fails closed. Unstamped historical records replay only when exactly one known rule matches the current graph; equal hashes under both rules are ambiguous and fail closed, even if a run-level stamp exists (mixed-version resumes prevent it from proving per-record provenance). A budget-only edit invalidates old-rule commits but not new-rule commits. A pre-upgrade reader already loaded in a long-lived serve process must restart after deployment.
+
 ## File-authored graphs
 
 Use `graph_path` with run/save/amend for a caller-authorized absolute local regular UTF-8 JSON file, at most 1 MiB, no final symlink. Choose exactly one source: inline graph, graph_path, or run's `from` / save's `run_id`. Validation completes before writing or spawning. Save to the library and replay with `from` for repeated use; graph_path is valuable for an unsaved local graph or replacement amendment. Neither feature asserts a universal tool-argument length limit.

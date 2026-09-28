@@ -1,8 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- 1.0.12: fingerprint rule provenance on new run, node, spawn, gate, and runner-exit records. Readers verify each stamped record against the current graph using its own known rule; unknown versions and ambiguous unstamped hashes fail closed. Historical no-budget unstamped commits may replay instead of skip; restart old in-memory readers after deployment (95d7010295d70102).
+- 1.0.13: `workflow run from=<name>` accepts optional `run_context`: a non-empty string
+  delivered to every first-wave agent (including gate-first/parallel roots), or a
+  string map that resolves only explicit `{run.KEY}` in node goals, contexts,
+  fan-out goals/item goals, and gate questions. Invalid/missing bindings fail
+  before run creation. Resolution follows defaults, precedes persistence and
+  fingerprinting; the shelved graph is unchanged. `/wf <name> [note]` now sends
+  its note atomically as a string seed rather than a post-launch steer. A seed
+  does not replace baked target literals: reusable graphs must contain explicit
+  `{run.key}`, `{run.branch}`, `{run.argv}` binding points. Bound values persist
+  in prompts and must not contain secrets (fb 4052d57719653b1a).
+
 ## 1.0.11 — 2026-09-27 — false when-gate defaults to prune (decorative-gate footgun closed)
 
+
 - A false `gate.when` with omitted `on_skip` now prunes the gate and exclusively dependent descendants in both human and wait-gate paths; `gate.skipped` reports `prune` to match the saved status. Explicit `pass` still permits the arm, and explicit `prune` is unchanged (fb e4c98f6e550e3a90). This does not change explicit `on_skip:"pass"` in existing graphs, including `library/fb-fix.json` before publish.
+
+- Desktop gate answers now resume the run's owner session through the public
+  composer SDK as a visible turn; on older Desktop builds, the resume text is
+  inserted for the user to send, or the UI asks for manual resume. No app DOM
+  query or private composer event (per maintainer review on
+  NousResearch/hermes-agent#122099, teknium1).
+- The workflow tool no longer accepts `hermes_bin`; only operator plugin settings
+  or `HERMES_WF_HERMES_BIN` may select the child launcher. Tool-arg attempts
+  fail closed (per maintainer review on NousResearch/hermes-agent#122099).
+- Document the detached runner's lifecycle and the stop-before-disable rule;
+  align the documented Hermes floor and catalog metadata.
+
 
 ## 1.0.10 — 2026-09-27 — child work dir is writable under HERMES_WRITE_SAFE_ROOT
 

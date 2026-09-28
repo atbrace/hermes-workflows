@@ -115,7 +115,18 @@ def _validation_error(graph):
 HERE = Path(__file__).resolve().parent
 
 def _hermes_bin():
-    """Absolute launcher path — background runners do NOT inherit an interactive PATH."""
+    """Operator-controlled launcher; tool arguments never choose a child executable."""
+    direct = _CTX.get_config("hermes_bin", None) if _CTX else None
+    plugins = _CTX.get_config("plugins", {}) if _CTX else {}
+    entries = plugins.get("entries", {}) if isinstance(plugins, dict) else {}
+    entry = entries.get("hermes-workflows", {}) if isinstance(entries, dict) else {}
+    settings = entry.get("settings", {}) if isinstance(entry, dict) else {}
+    configured = direct or (settings.get("hermes_bin") if isinstance(settings, dict) else None)
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    env_bin = os.environ.get("HERMES_WF_HERMES_BIN", "").strip()
+    if env_bin:
+        return env_bin
     w = shutil.which("hermes")
     if w:
         return w
@@ -151,6 +162,7 @@ WORKFLOW_PARAMS = {
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
         "name": {"type": "string", "description": "run: overrides graph.name (default workflow); save: library name overrides graph.name (lowercase, [-_.]). amend: set graph.name in the replacement graph; omitting it retains the run name."},
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
+        "run_context": {"description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, fan-out goals/item goals and gate questions. Missing keys/malformed bindings reject before any run write. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals."}, 
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "graph_path": {"type": "string", "description": "run/save/amend: absolute path to a caller-supplied local regular UTF-8 JSON graph file (max 1 MiB, no final symlink). Choose exactly one of graph, graph_path, or run's from / save's run_id. Validated before any write or spawn."},
         "graph": {
@@ -164,7 +176,6 @@ WORKFLOW_PARAMS = {
         "dry_run": {"type": "boolean", "description": "amend: true = validate + preview {added, removed, changed, will_rerun, unchanged} ONLY — nothing is written, the runner is not touched. Normal amends echo the same lists."},
         "timeout": {"type": "number", "description": "wait: max seconds to block while a runner is live (default 600, capped 1800). Self-yields ~330s segments under the harness tool deadline with status+note — call wait again until terminal."},
         "detail": {"type": "string", "enum": ["full"], "description": "status/wait: 'full' attaches every committed node output and full spawn argv; the default is compact — mid-run waits carry output pointers (keys+bytes) only, terminal payloads always include outputs."},
-        "hermes_bin": {"type": "string", "description": "run: override the child launcher binary (advanced/testing; default auto-resolved 'hermes')."},
     },
     "required": ["action"],
 }
@@ -689,6 +700,74 @@ def _session_env(name):
 def _card(rid):
     return f'::workflow{{id="{rid}"}}'
 
+_RUN_REF = re.compile(r"\{run\.([^{}]*)\}")
+_RUN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _bind_run_context(graph, binding):
+    """Resolve a launch binding on a post-defaults copy, before persistence.
+
+    Map substitution is deliberately narrow: no str.format, no interpolation of
+    substituted values, and no changes to fan-out's {item}/{index} grammar.
+    """
+    if isinstance(binding, str):
+        if not binding.strip():
+            raise ValueError("run_context seed must be a non-empty string")
+        byid = {n["id"]: n for n in graph["nodes"]}
+        def agent_ancestor(nid, seen):
+            for parent_id in byid[nid].get("after", []):
+                if parent_id in seen:
+                    continue
+                parent = byid[parent_id]
+                if parent.get("type", "agent") == "agent" or agent_ancestor(parent_id, seen | {parent_id}):
+                    return True
+            return False
+        nodes = []
+        roots = 0
+        for n in graph["nodes"]:
+            n = dict(n)
+            if n.get("type", "agent") == "agent" and not agent_ancestor(n["id"], {n["id"]}):
+                n["context"] = (n.get("context") + "\n\n" if n.get("context") else "") + binding
+                roots += 1
+            nodes.append(n)
+        if not roots:
+            raise ValueError("run_context seed requires at least one first-wave agent")
+        return dict(graph, nodes=nodes)
+    if not isinstance(binding, dict) or not binding:
+        raise ValueError("run_context must be a non-empty string or non-empty map of string bindings")
+    for key, value in binding.items():
+        if not isinstance(key, str) or not _RUN_KEY.fullmatch(key):
+            raise ValueError(f"run_context invalid key {key!r}: expected identifier")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"run_context[{key!r}] must be a non-empty string")
+    def render(text):
+        def replace(match):
+            key = match.group(1)
+            if not _RUN_KEY.fullmatch(key):
+                raise ValueError(f"run_context malformed reference {match.group(0)!r}")
+            if key not in binding:
+                raise ValueError(f"run_context missing key {key!r} for {match.group(0)}")
+            return binding[key]
+        return _RUN_REF.sub(replace, text)
+    nodes = []
+    for original in graph["nodes"]:
+        n = dict(original)
+        for field in ("goal", "context", "question"):
+            if isinstance(n.get(field), str):
+                n[field] = render(n[field])
+        if isinstance(n.get("fanout"), dict):
+            fanout = dict(n["fanout"])
+            if isinstance(fanout.get("goal"), str):
+                fanout["goal"] = render(fanout["goal"])
+            if isinstance(fanout.get("items"), list):
+                fanout["items"] = [dict(item, goal=render(item["goal"]))
+                                   if isinstance(item, dict) and isinstance(item.get("goal"), str)
+                                   else item for item in fanout["items"]]
+            n["fanout"] = fanout
+        nodes.append(n)
+    return dict(graph, nodes=nodes)
+
+
 def act_run(args):
     graph, bad = _input_graph(args, library=True)
     if bad:
@@ -716,6 +795,11 @@ def act_run(args):
         graph = _common.apply_graph_defaults(graph)
     except ValueError as e:
         return {"error": f"graph invalid: defaults/shape: {e}"}
+    if "run_context" in args:
+        try:
+            graph = _bind_run_context(graph, args["run_context"])
+        except ValueError as e:
+            return {"error": str(e)}
     err, models, routes = _resolve_models(graph["nodes"])
     if err:
         return {"error": err}
@@ -738,12 +822,12 @@ def act_run(args):
             n += 1
     (r / "gates").mkdir(exist_ok=True)
     (r / "graph.json").write_text(json.dumps(graph, ensure_ascii=False, indent=2))
-    meta = {"name": graph.get("name", "workflow"), "hermes_bin": args.get("hermes_bin") or _hermes_bin(),
+    meta = {"name": graph.get("name", "workflow"), "hermes_bin": _hermes_bin(),
             "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "fp_rule_version": _common.FP_RULE_VERSION,
             # OWNER = the agent session that spawned the run. The desktop uses it to
-            # route a UI gate answer back to THIS chat (host.openSession + hidden turn),
-            # never to whichever chat happens to be open. Env is the only truth the
-            # tool handler has; absent (tests, CLI) => no owner => UI falls back.
+            # send a visible SDK composer turn to THIS chat, never the active chat.
+            # Absent (tests, CLI) => no owner => UI asks for manual resume.
             "owner": {"session_id": _session_env("HERMES_SESSION_ID") or None,
                       "ui_session_id": _session_env("HERMES_UI_SESSION_ID") or None,
                       "platform": _session_env("HERMES_SESSION_PLATFORM") or None}}
@@ -946,9 +1030,10 @@ def _release_core(r, gate_id, answer, ui=False):
     if not gate or gate.get("type") != "gate":
         return {"ok": False, "error": "no such gate node in this run"}
     old = jload(r / "gates" / f"{gate_id}.json")
-    if old is not None and old.get("_def") == efp(byid, gate):
+    if old is not None and _common.gate_answer_valid(r, gate, byid) is not None:
         return {"ok": False, "error": "gate already answered (current graph)"}
     rec = {"answer": answer, "_def": efp(byid, gate),
+           "fp_rule_version": _common.FP_RULE_VERSION,
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     if ui: rec["_ui"] = True
     (r / "gates").mkdir(exist_ok=True)
@@ -1205,6 +1290,8 @@ ACTIONS = {"run": act_run, "status": act_status, "wait": act_wait, "release": ac
 
 def handle(args, **kwargs):
     try:
+        if "hermes_bin" in args:
+            return json.dumps({"error": "hermes_bin is not a workflow tool argument; configure plugins.entries.hermes-workflows.settings.hermes_bin or HERMES_WF_HERMES_BIN"})
         fn = ACTIONS.get(args.get("action"))
         if not fn:
             return json.dumps({"error": f"unknown action {args.get('action')!r}", "actions": sorted(ACTIONS)})
@@ -1214,9 +1301,8 @@ def handle(args, **kwargs):
         return json.dumps({"error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-800:]})
 
 def _wf_command(raw_args):
-    """`/wf` — the library front door. `/wf` lists; `/wf <name> [note]` tells the agent to
-    replay <name> (with the note as steering context). The command output is shown to the
-    human, so it doubles as the instruction the agent will act on next turn."""
+    """`/wf` — the library front door. `/wf <name> [note]` supplies the note
+    atomically as a launch seed, never as post-launch steering."""
     arg = (raw_args or "").strip()
     lib = act_library({})["library"]
     if not arg or arg in ("list", "ls"):
@@ -1237,8 +1323,9 @@ def _wf_command(raw_args):
     g = jload(p) or {}
     return (f"Replay the shelved workflow **{p.stem}** ({len(g.get('nodes') or [])} nodes)"
             + (f" — operator note: {note}" if note else "") + ".\n"
-            f"Agent: call `workflow{{action:\"run\", from:\"{p.stem}\"}}`"
-            + (f", then `workflow{{action:\"steer\", run_id, node:<first pending node>, text:{json.dumps(note)}}}`" if note else "")
+            f"Agent: call `workflow{{action:\"run\", from:\"{p.stem}\""
+            + (f", run_context:{json.dumps(note)}" if note else "")
+            + "}`"
             + ", emit `::workflow{id=\"<run_id>\"}` on its own line, then `wait` and answer gates via clarify.")
 
 def register(ctx):

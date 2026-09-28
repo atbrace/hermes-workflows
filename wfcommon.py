@@ -14,17 +14,23 @@ def jload(p, default=None):
         return default
 
 _BUDGET_KEYS = ("max_turns", "timeout", "run_budget", "shape")
+FP_RULE_LEGACY = 1  # before b79fa21: budgets participated in def_hash
+FP_RULE_VERSION = 2  # b79fa21: exclude budgets
+FP_RULES = (FP_RULE_LEGACY, FP_RULE_VERSION)
 
-def def_hash(node):
+def def_hash(node, rule=FP_RULE_VERSION):
     # Budgets are not work: raising a wall or naming a shape must not invalidate a
     # committed node (and apply_graph_defaults baking budgets into an old run's
     # frozen graph at amend must not re-run everything it already finished).
-    node = {k: v for k, v in node.items() if k not in _BUDGET_KEYS}
+    if rule not in FP_RULES:
+        raise ValueError(f"unknown fingerprint rule: {rule!r}")
+    if rule == FP_RULE_VERSION:
+        node = {k: v for k, v in node.items() if k not in _BUDGET_KEYS}
     return hashlib.sha256(json.dumps(node, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
 _EFP_SEP = "\u241f"
 
-def efp(byid, node, _seen=None):
+def efp(byid, node, _seen=None, *, rule=FP_RULE_VERSION):
     """Effective fingerprint: own def + every ancestor's effective fingerprint.
     An amended node (or any ancestor) changes the efp of everything downstream, so
     downstream results are stale and nodes downstream re-run or re-hold — transitively."""
@@ -33,21 +39,21 @@ def efp(byid, node, _seen=None):
     if nid in _seen:
         return "?"  # unreachable for validated (acyclic) graphs
     _seen = _seen | {nid}
-    parts = [def_hash(node)]
+    parts = [def_hash(node, rule)]
     for a in sorted(node.get("after", [])):
         if a in byid:
-            parts.append(efp(byid, byid[a], _seen))
+            parts.append(efp(byid, byid[a], _seen, rule=rule))
     return hashlib.sha256(_EFP_SEP.join(parts).encode()).hexdigest()[:16]
 
 
-def graph_fingerprint(graph):
+def graph_fingerprint(graph, *, rule=FP_RULE_VERSION):
     """Stable signature of the node definitions that a runner verdict describes."""
     nodes = (graph or {}).get("nodes")
     if not isinstance(nodes, list) or any(not isinstance(n, dict) or not n.get("id") for n in nodes):
         return None
     try:
         byid = {n["id"]: n for n in nodes}
-        facts = {str(n["id"]): efp(byid, n) for n in nodes}
+        facts = {str(n["id"]): efp(byid, n, rule=rule) for n in nodes}
         raw = json.dumps(facts, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
     except Exception:
@@ -453,14 +459,31 @@ def runner_alive(r, pid_path=None):
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return False
 
+def fingerprint_valid(stored, actual, rule):
+    """A record's own rule is authoritative; unstamped records need a unique match.
+
+    A run-level stamp cannot attest to commits after a mixed-version resume.
+    Ambiguous unstamped commits fail closed, even if one hash matches today's rule.
+    """
+    if rule is not None:
+        return type(rule) is int and rule in FP_RULES and stored == actual(rule) and stored is not None
+    matches = [v for v in FP_RULES if stored is not None and stored == actual(v)]
+    return len(matches) == 1
+
+def record_efp_valid(rec, byid, node, field="efp"):
+    return isinstance(rec, dict) and ("fp_rule_version" not in rec or
+                                      (type(rec["fp_rule_version"]) is int and rec["fp_rule_version"] in FP_RULES)) and fingerprint_valid(
+        rec.get(field), lambda rule: efp(byid, node, rule=rule), rec.get("fp_rule_version"))
+
 def runner_exit_read(r, pid_path=None):
     """Graph-bound runner verdict, or a crash when a previous pid lacks identity.
     No pid file means a fresh, not-yet-spawned run, not a crash."""
     rec = jload(Path(r) / "runner_exit.json")
     if isinstance(rec, dict) and rec.get("reason"):
         current_graph = jload(Path(r) / "graph.json")
-        current_fp = graph_fingerprint(current_graph)
-        if rec.get("graph_fingerprint") != current_fp:
+        if ("fp_rule_version" in rec and rec["fp_rule_version"] not in FP_RULES) or not fingerprint_valid(rec.get("graph_fingerprint"),
+                                 lambda rule: graph_fingerprint(current_graph, rule=rule),
+                                 rec.get("fp_rule_version")):
             return {"reason": "stale", "previous_reason": rec.get("reason"), "at": rec.get("at")}
         return {k: v for k, v in rec.items()
                 if k in ("reason", "at", "detail", "graph_fingerprint")}
@@ -478,7 +501,8 @@ def _legacy_chain_unchanged(r, n, byid):
     proof of 'unchanged since this commit': an amended ancestor that re-ran must
     NOT resurrect stale downstream records or gate answers (MF2)."""
     rec = jload(r / "nodes" / f"{n['id']}.json")
-    if not rec or "efp" in rec or rec.get("def_hash") != def_hash(n):
+    if not rec or "efp" in rec or not fingerprint_valid(
+            rec.get("def_hash"), lambda rule: def_hash(n, rule), rec.get("fp_rule_version")):
         return False
     return all(a not in byid or _legacy_chain_unchanged(r, byid[a], byid)
                for a in n.get("after", []))
@@ -495,7 +519,7 @@ def node_rec(r, n, byid):
     if st == "failed" and (rec or {}).get("error_class") == "cancelled":
         return "pending", rec   # stop != failure (#7): a resume re-drives cancelled work
     if st in ("done", "partial", "failed", "skipped"):
-        if rec.get("efp") == efp(byid, n):
+        if record_efp_valid(rec, byid, n):
             return st, rec
         if "efp" not in rec and _legacy_chain_unchanged(r, n, byid):
             return st, rec
@@ -506,13 +530,15 @@ def gate_answer_valid(r, gate, byid):
     ans = jload(r / "gates" / f"{gate['id']}.json")
     if ans is None:
         return None
-    if ans.get("_def") == efp(byid, gate):
+    if record_efp_valid(ans, byid, gate, "_def"):
         return ans
+    if "fp_rule_version" in ans:
+        return None
     gate_rec = jload(r / "nodes" / f"{gate['id']}.json", {}) or {}
     if "efp" not in gate_rec and "efp" not in ans:
-        # legacy answer: same law as node records — the gate def AND its whole
-        # ancestor chain must be proven unchanged legacy commits, not merely done.
-        if ans.get("_def") != def_hash(gate):
+        # Pre-efp answers require a uniquely attributable historical definition
+        # and a chain of equally verified pre-efp ancestor commits.
+        if not fingerprint_valid(ans.get("_def"), lambda rule: def_hash(gate, rule), None):
             return None
         return ans if all(a not in byid or _legacy_chain_unchanged(r, byid[a], byid)
                           for a in gate.get("after", [])) else None
@@ -736,7 +762,7 @@ def _verify_spawn_rec(r, n, byid, rec):
     active_child (runner adoption) so runner and read model can never disagree.
     """
     if not isinstance(rec, dict) or rec.get("status") != "running" \
-            or rec.get("efp") != efp(byid, n):
+            or not record_efp_valid(rec, byid, n):
         return None
     pid, skey = rec.get("pid"), rec.get("skey")
     if not isinstance(pid, int) or pid <= 0 or not isinstance(skey, str) or not skey:
@@ -838,7 +864,7 @@ def run_state(r):
             # machine-answered gate: the runner is polling it — 'running', never 'held'.
             # Its blockage is self-explaining via nodes[id].parked (P4 + jury tweak).
             pk = jload(r / "gates" / f"{gate['id']}.parked.json", {}) or {}
-            if live and pk.get("_def") == efp(byid, gate):
+            if live and record_efp_valid(pk, byid, gate, "_def"):
                 nodes[gate["id"]]["parked"] = {k: v for k, v in pk.items() if k != "_def"}
             elif live:
                 nodes[gate["id"]]["parked"] = {"kind": "timer" if not gate["wait"].get("until_argv") else "check", "attempt": 0}
