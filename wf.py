@@ -1915,6 +1915,11 @@ def main(run_id):
     # try/except cannot (interpreter-level); the finally is the last-resort net.
     try:
         reason = loop()
+    except SystemExit:
+        # A self-reported exit is a verdict, not a crash. Stamping "crashed:
+        # SystemExit: N" here overwrites the real exit record (e.g. the
+        # no-graph stamp) and poisons the read model with a phantom 'failed'.
+        raise
     except BaseException as e:
         write_runner_exit(run, f"crashed: {type(e).__name__}: {e}", graph=exit_graph[0])
         raise
@@ -1950,6 +1955,13 @@ if __name__ == "__main__":
     _rid = sys.argv[2]
     try:
         main(_rid)
+    except SystemExit:
+        # Legit self-reported exits (WORKFLOW_BUSY lock-loser sys.exit(0), no-graph
+        # sys.exit(2)) come through as SystemExit. Recording "crashed: SystemExit: N"
+        # here STAMPS OVER the real exit record (or over a LIVE sibling runner's
+        # absence of one) and poisons the status model with a phantom 'failed'.
+        # The emit line already carries the verdict; the net is for silent deaths only.
+        raise
     except BaseException as _e:  # main already records its own crashes; this net
         try:                      # catches death OUTSIDE main's try (and re-raises
             write_runner_exit(hermes_home() / "workflows" / _rid,  # nothing is swallowed
