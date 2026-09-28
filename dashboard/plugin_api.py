@@ -43,7 +43,7 @@ def _safe_run(run_id):
     if not rid or rid != "".join(c for c in rid if c.isalnum() or c in "-_.") \
             or rid.startswith("."):
         return None
-    r = _root() / rid
+    r = _workflow_common().find_run(rid)   # legacy-location fallback for pre-fix ids
     return r if r.is_dir() else None
 
 def _events(r, limit=400):

@@ -211,8 +211,17 @@ def _spawn_runner(r):
     Single-runner admission is enforced by the runner's flock (kernel-owned) admission lock, so racing
     door spawns are harmless (the loser exits WORKFLOW_BUSY)."""
     log = open(r / "runner.log", "a")
+    # The contextvar profile scope does NOT cross processes: a runner spawned for a run
+    # under the RESOLVED runs root gets that home stamped explicitly (core's own #18594
+    # guidance for subprocess spawners), so its seat config and child env follow the
+    # OWNER's profile, not the launch root os.environ carries on a multiplex host.
+    # A legacy-location run (pre-fix, under the launch root) keeps the inherited env
+    # verbatim — runner_alive compares it against the run's parent.
+    env = ({**os.environ, "HERMES_HOME": str(_common.hermes_home())}
+           if r.parent == _common.runs_root() else None)
     proc = subprocess.Popen([sys.executable, str(HERE / "wf.py"), "run", r.name],
                             stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                            env=env,
                             start_new_session=True, cwd=str(HERE))
     (r / "wf.pid").write_text(str(proc.pid))
 
@@ -671,9 +680,9 @@ def _seat_model_cfg():
     out = {"default": None, "aliases": {},
            "workflows_forbidden_models": _common.seat_forbidden_models()}
     try:
-        home = os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")
+        home = _common.hermes_home()
         section = None; in_aliases = False
-        for line in (Path(home) / "config.yaml").read_text().splitlines():
+        for line in (home / "config.yaml").read_text().splitlines():
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
             indent = len(line) - len(line.lstrip())
@@ -710,12 +719,14 @@ def runs_root():
     return _common.runs_root()
 
 def run_dir(run_id):
-    """Strict: no silent normalization — ids double as directory names."""
+    """Strict: no silent normalization — ids double as directory names.
+    Profile-scoped door on a multiplex host: pre-fix runs sit under the launch root —
+    find_run keeps those ids resumable (resolved root wins when both exist)."""
     rid = (run_id or "").strip()
     if not rid or rid != "".join(c for c in rid if c.isalnum() or c in "-_.") \
             or rid.startswith(".") or set(rid) == {"."}:
         raise ValueError(f"invalid run_id {run_id!r}")
-    return runs_root() / rid
+    return _common.find_run(rid)
 
 # ---------- graph library (named, re-runnable graphs) ----------
 
@@ -1549,12 +1560,18 @@ def act_stop(args):
     return {"ok": True, "note": "stop lands at the next boundary; in-flight children are killed"}
 
 def act_list(_args):
-    root = runs_root()
-    runs = []
-    if root.exists():
+    roots = [runs_root()]
+    legacy = _common.launch_runs_root()
+    if legacy != roots[0]:
+        roots.append(legacy)   # pre-fix runs under the launch root stay listed
+    runs, seen = [], set()
+    for root in roots:
+        if not root.exists():
+            continue
         for r in sorted(root.iterdir(), reverse=True):
             st = run_state(r)
-            if st:
+            if st and st["run_id"] not in seen:
+                seen.add(st["run_id"])
                 row = {"run_id": st["run_id"], "name": st["name"], "status": st["status"],
                        "gate": (st["held_gate"] or {}).get("id"),
                        "nodes_done": st["done"], "nodes_skipped": st["skipped"], "nodes_total": st["total"],
