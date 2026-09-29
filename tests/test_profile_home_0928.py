@@ -128,6 +128,49 @@ check("act_list shows both the new (profile) and legacy (launch-root) runs",
       rid in {x["run_id"] for x in lst.get("runs", [])} and "old-run" in {x["run_id"] for x in lst.get("runs", [])},
       str([x["run_id"] for x in lst.get("runs", [])][:6]))
 
+# ---- F1 (#14 review): library, dashboard list, and lane registry relocated with
+# runs_root() must keep the same legacy fallback find_run/act_list got ----
+# 1. a graph saved under the LAUNCH root pre-fix is listed and replays from the scoped door
+legacy_graph = {"name": "old-graph", "nodes": [{"id": "a", "type": "agent", "goal": "x"}]}
+(BASE / "workflows" / "library").mkdir(parents=True, exist_ok=True)
+(BASE / "workflows" / "library" / "old-graph.json").write_text(json.dumps(legacy_graph))
+lib = json.loads(hw.handle({"action": "library"}))
+check("act_library includes a pre-fix launch-root graph",
+      "old-graph" in {x["name"] for x in lib.get("library", [])},
+      str([x["name"] for x in lib.get("library", [])]))
+# replay must bind the legacy graph (it fails later on the fake child at worst, but
+# must NOT answer 'no library graph named')
+rep = json.loads(hw.handle({"action": "run", "from": "old-graph",
+                            "name": "legacy-replay"}))
+check("run from=<legacy graph> resolves it, not 'no library graph'",
+      bool(rep.get("run_id")) and rep.get("error") is None, rep)
+if rep.get("run_id"):
+    hw.handle({"action": "stop", "run_id": rep["run_id"]})
+
+# 2. dashboard _list_runs sees the legacy run too (same merge as act_list)
+_api_spec = importlib.util.spec_from_file_location("hw_dash_api", str(BUILD / "dashboard" / "plugin_api.py"))
+assert _api_spec and _api_spec.loader
+dash = importlib.util.module_from_spec(_api_spec)
+_api_spec.loader.exec_module(dash)
+dl = dash._list_runs()
+dids = {x["id"] for x in dl.get("runs", [])}
+check("dashboard _list_runs merges the legacy launch root",
+      "old-run" in dids and rid in dids, str(sorted(dids)[:6]))
+
+# 3. a lane entry written under the LAUNCH root dedupes a relaunch from the scoped door
+(BASE / "workflows" / "lanes").mkdir(parents=True, exist_ok=True)
+lane_key = "team/x"
+stem = __import__("hashlib").sha256(lane_key.encode("utf-8")).hexdigest()[:16]
+(BASE / "workflows" / "lanes" / f"{stem}.json").write_text(
+    json.dumps({"lane_key": lane_key, "run_id": "old-run", "graph_name": "old"}))
+entry, coll = hw._lane_entry(lane_key)
+check("legacy launch-root lane entry is visible to the scoped door",
+      entry is not None and entry.get("run_id") == "old-run" and coll is None,
+      str((entry, coll)))
+# writes still land in the RESOLVED root
+check("lane write path stays resolved (not legacy)",
+      str(hw._lane_paths(lane_key)[0]).startswith(str(PROF)), hw._lane_paths(lane_key)[0])
+
 hw.subprocess.Popen = real_popen
 sys.modules.pop("hermes_constants", None)
 

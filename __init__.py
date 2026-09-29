@@ -733,13 +733,38 @@ def run_dir(run_id):
 def library_root():
     return runs_root() / "library"
 
+def _library_roots():
+    """Resolved library root first; legacy launch-root library second (F1 #14).
+    Graphs saved before the profile-home fix live under the launch root on a
+    profile-scoped host and stay readable/replayable; new saves go to the
+    resolved root only."""
+    roots = [library_root()]
+    legacy = _common.launch_runs_root() / "library"
+    if legacy != roots[0]:
+        roots.append(legacy)
+    return roots
+
 LIB_OK = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 def _lib_path(name):
+    """WRITE resolver: always the resolved root (current best version lands there)."""
     n = str(name or "").strip().lower()
     if not LIB_OK.match(n):
         raise ValueError(f"invalid library name {name!r} (lowercase alnum, [-_.], <=64)")
     return library_root() / f"{n}.json"
+
+def _lib_read(name):
+    """READ resolver mirroring find_run: resolved first, legacy only for an EXISTING
+    graph absent from the resolved root. Returns the path whether or not it exists
+    (callers keep their own None/not-exists handling on the primary shape)."""
+    p = _lib_path(name)
+    if not p.exists():
+        n = str(name or "").strip().lower()
+        if LIB_OK.match(n):
+            legacy = _common.launch_runs_root() / "library" / f"{n}.json"
+            if legacy != p and legacy.exists():
+                return legacy
+    return p
 
 def act_save(args):
     """Shelve a graph under a name: from an existing run (`run_id`) or an inline `graph`.
@@ -775,10 +800,14 @@ def act_save(args):
             "hint": f"re-run any time: workflow run from={p.stem}  |  /wf {p.stem}"}
 
 def act_library(_args):
-    root = library_root()
-    out = []
-    if root.exists():
+    out, seen = [], set()
+    for root in _library_roots():   # F1 #14: pre-fix graphs under the launch root stay listed
+        if not root.exists():
+            continue
         for p in sorted(root.glob("*.json")):
+            if p.stem in seen:
+                continue
+            seen.add(p.stem)
             g = jload(p) or {}
             nodes = g.get("nodes") or []
             row = {"name": p.stem, "nodes": len(nodes),
@@ -947,12 +976,22 @@ def _identity_stamps(args, graph, lib_name=None):
     return out
 
 def _lane_paths(key):
+    """WRITE side: the resolved root (new entries land with their runs)."""
     stem = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     root = runs_root() / "lanes"
     return root / f"{stem}.json", root / f"{stem}.lock"
 
 def _lane_entry(key):
+    # F1 #14: a lane entry saved under the launch root before the profile-home fix
+    # stays visible from the scoped door, so an in-flight incumbent is still deduped
+    # (one-time upgrade hazard otherwise: same lane_key admits a second runner while
+    # the old one lives). Writes always go to the resolved root via _lane_paths.
+    stem = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     entry = jload(_lane_paths(key)[0])
+    if entry is None:
+        legacy = _common.launch_runs_root() / "lanes" / f"{stem}.json"
+        if legacy != _lane_paths(key)[0]:
+            entry = jload(legacy)
     if entry is not None and entry.get("lane_key") != key:
         return None, {"error": "lane_key hash collision"}
     return entry, None
@@ -999,7 +1038,7 @@ def act_run(args):
     lib_name = None
     if graph is None and args.get("from"):
         try:
-            graph = jload(_lib_path(args["from"]))
+            graph = jload(_lib_read(args["from"]))   # F1 #14: legacy-root graphs stay replayable
         except ValueError as e:
             return {"error": str(e)}
         if graph is None:
@@ -1613,7 +1652,7 @@ def _wf_command(raw_args):
         return f"Workflow library:\n{rows}\n\nRun one: `/wf <name> [note for the run]`"
     name, _, note = arg.partition(" ")
     try:
-        p = _lib_path(name)
+        p = _lib_read(name)   # F1 #14: /wf reaches a pre-fix graph where it was saved
     except ValueError as e:
         return f"{e}"
     if not p.exists():

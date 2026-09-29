@@ -112,12 +112,10 @@ def launch_runs_root():
     return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")) / "workflows"
 
 
-def find_run(rid, create=False):
+def find_run(rid):
     """Locate a run dir by id: resolved runs_root() first; legacy launch root only
     for an EXISTING run (pre-fix ids stay resumable, new ids never land there)."""
     root = runs_root()
-    if create:
-        return root
     legacy = launch_runs_root()
     if legacy != root and (legacy / rid).is_dir() and not (root / rid).exists():
         return legacy / rid
