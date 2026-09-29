@@ -167,9 +167,17 @@ succeed, the rest are cancelled; without it the fan-out waits for every item;
 
 - `node.failed` events carry `error_class` from a closed set — `timeout | cap_exhausted |
   early_death | provider_400 | unresolved_model | transport | transport_exhausted | schema |
-  crashed | spawn | graph_invalid | cancelled | inputs | quorum | fanout_empty | unknown` —
+  crashed | spawn | graph_invalid | cancelled | inputs | quorum | fanout_empty |
+  fatal_quota | route_unavailable | unknown` —
   plus `attempts`. Read the class, not the prose. `cancelled` (a `stop`, or a fan-out
   straggler at quorum) is never a failure: the run reads `stopped`, and a `wait` re-drives it.
+  `fatal_quota` (#24): a 429 whose own text carries a reset horizon beyond the run's
+  reach — fails on the FIRST attempt (the retry ladder cannot beat a multi-day reset)
+  and stamps the model into the seat quota cache; the door then refuses a launch on
+  that model until the horizon passes (one recovery ping first).
+  `route_unavailable` (#25): a pinned route the door's ping affirmatively proved dead
+  or answered-from-the-fallback-ladder (submit refusal), or a committed served_model
+  that contradicts the door's alive-proof (commit hold) — never silent fallback billing.
 - A child that dies after printing a valid fenced answer (rc≠0, wall, cap) is committed as
   `status: partial` with the death cause kept as `error_class`; downstream runs on it.
 - `transport | early_death | cap_exhausted | timeout` deaths with tool progress get ONE
@@ -210,7 +218,7 @@ subscription routes.
 | `desktop/plugin.js` | Desktop half: runs list, DAG canvas, fan-out stacks, timeline, gate hand-off, `::workflow` card |
 | `SKILL.md`, `references/` | The authoring skill loaded into sessions. Portable: no host names, install paths, or provider lore |
 | `tests/` | Stdlib-only serial scripts; each prints `PASS`/`FAIL` lines, exit 0 = green. `.mjs` under Node. `tests/fake_hermes.py` is the child stand-in (`FAKE_MODE=…`) |
-| `scripts/suite.py` | Serial runner with per-test logs + `exits.json` ledger (the merge gate) |
+| `scripts/suite.py` | Serial runner with per-test logs + `exits.json` ledger (the merge gate); `--baseline <ledger>` adds `admission.json` splitting reds into introduced vs pre-existing (exact name+exit identities; a base red is blocking, never waived — and a base red whose test was DELETED reports `missing`, which blocks too, so `rm` can't launder a red to green) |
 | `scripts/pack.py` | Release zip + `SHA256SUMS` + sidecar |
 | `scripts/make_public.py` | Publish-tree exporter with a private-string audit gate (`scripts/.scrub-guards` allow-list) |
 | `docs/` | Patched-core guide, manifest decisions, catalog entry + PR body, scrub audit |
