@@ -239,6 +239,73 @@ def _hermes_bin():
 
 runner_alive = _common.runner_alive
 
+def _reap_silent_death(r):
+    """#8 fix-law item 2 (crash-visibility): make a silent runner death loud
+    BEFORE a door respawn replaces it. The incident shape: runner + children die
+    together out-of-band (gateway restart / cgroup or process-tree sweep) — a
+    SIGKILL records nothing, no runner_exit.json exists, node records still claim
+    status=running, and every watcher shape (tail|grep, events-offset loops, wait)
+    sees silence while act_wait quietly replaces the runner. Law: the door's
+    RESPAWN paths (never a read path — run_state/act_status stay pure observers)
+    append, in order, one `runner.reaped` (previous pid + observed reason) and one
+    `node.interrupted` per node record claiming a running child whose pid fails
+    the ONE verification law (_verify_spawn_rec: a verifiably-live child is
+    ADOPTED, never interrupted). Evidence is observed from files only (dead pid +
+    absent/foreign runner_exit.json), and the falsely-claimed records are left
+    byte-intact — the events are the record; a reaper must not erase the crime
+    scene. Best-effort: a reaper that itself throws never blocks the resume."""
+    try:
+        pid = None
+        try:
+            pid = int((r / "wf.pid").read_text().strip())
+        except (OSError, ValueError):
+            pass
+        if pid is None or _common.runner_alive(r):
+            return   # no pid file = fresh run; alive = nothing to reap
+        graph = _common.jload(r / "graph.json") or {}
+        byid = {n["id"]: n for n in graph.get("nodes", [])}
+        # The ONE exit read is the silent-death probe. `crashed (no exit record)`
+        # is pid-dead + no verdict on disk; `stale` is a verdict of a PREVIOUS
+        # process (amended graph) while the current one recorded nothing — both
+        # mean the death we are staring at was never written down. A VALID
+        # recorded exit is a verdict, not a silent death (e.g. the run parked at
+        # a gate and exited on purpose) — act_wait's rx gate owns it, no reaping.
+        reason = (_common.runner_exit_read(r) or {}).get("reason")
+        if reason not in ("crashed (no exit record)", "stale"):
+            return
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        events = [{"ts": now_iso, "event": "runner.reaped", "prev_pid": pid, "reason": reason}]
+        for n in graph.get("nodes", []):
+            paths = [r / "nodes" / f"{n['id']}.json"]
+            if n.get("fanout"):
+                paths.extend(sorted((r / "nodes").glob(f"{n['id']}.[0-9]*.json")))
+            for p in paths:
+                if _common.node_rec(r, n, byid)[0] != "pending":
+                    continue   # committed truth (done/partial/failed) is never a false claim
+                if _common.active_child(r, n, byid):
+                    continue   # live child: adoption owns it (the ONE verification law)
+                rec = _common.jload(p) or {}
+                if rec.get("status") != "running":
+                    continue   # nothing ever claimed a live child here
+                suffix = p.name[len(n["id"]):-len(".json")]
+                events.append({"ts": now_iso, "event": "node.interrupted",
+                               "node": n["id"] + suffix.lstrip("."),
+                               "pid": rec.get("pid"), "skey": rec.get("skey"),
+                               "attempt": rec.get("attempt"), "of_runner": pid})
+        with open(r / "events.jsonl", "a") as f:
+            for e in events:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # visibility is diagnostics, never a reason to skip the resume
+
+
+def _respawn_runner(r):
+    """ONE bridge: the crash-visibility reaper, then the spawn. Every door path
+    that RESPAWNS a possibly-dead runner goes through here; `run` launches a
+    fresh dir and stays on the bare spawn."""
+    _reap_silent_death(r)
+    _spawn_runner(r)
+
 def _spawn_runner(r):
     """Append mode: runner.log keeps crash diagnostics across respawns.
     Stamp wf.pid ourselves — the door never races the runner's own pid write.
@@ -1557,7 +1624,7 @@ def act_wait(args):
     if st["status"] in ("running", "pending", "interrupted"):
         top_alive = bool(st.get("runner_live"))   # A2 one-read law: THE ONE read
         if not top_alive:
-            _spawn_runner(r)  # only this explicit wait resumes unfinished work
+            _respawn_runner(r)  # only this explicit wait resumes unfinished work
     cap = min(float(args.get("timeout", 600)), 1800)
     # fb-validator-duo (2026-09-26): the clamp stays (harness deadline guard), but a
     # silent cut is a papercut — echo it in the result when it bites.
@@ -1588,7 +1655,7 @@ def act_wait(args):
         if spawn_tries >= 3 or time.time() - last_spawn < 1.0:
             return False
         last_spawn, spawn_tries = time.time(), spawn_tries + 1
-        _spawn_runner(r)
+        _respawn_runner(r)
         return True
     while True:
         st = run_state(r)
@@ -1651,7 +1718,7 @@ def act_release(args):
     if not res.get("ok"):
         return res
     if not runner_alive(r):
-        _spawn_runner(r)
+        _respawn_runner(r)
         res["auto_resumed"] = True
     res["hint"] = "workflow wait to follow the next boundary"
     return res
@@ -1864,7 +1931,7 @@ def act_amend(args):
         (r / "restart.request").write_text("1")
         applies = "live runner hot-reloads at its next wave boundary; call wait (it will resume as needed)"
     else:
-        _spawn_runner(r)
+        _respawn_runner(r)
         applies = "runner respawned; efp replay-skip re-runs changed nodes and everything downstream"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
             "hint": "workflow wait to follow" + _liveness_hint_suffix(_liveness_notes), **preview}
@@ -1878,7 +1945,7 @@ def act_stop(args):
         return {"ok": True, "already": st["status"]}
     (r / "stop.request").write_text(datetime.now(timezone.utc).isoformat(timespec="seconds"))
     if not runner_alive(r):
-        _spawn_runner(r)  # consume the marker even from an idle/held run
+        _respawn_runner(r)  # consume the marker even from an idle/held run
         return {"ok": True, "note": "was idle — runner spawned just to honour the stop"}
     return {"ok": True, "note": "stop lands at the next boundary; in-flight children are killed"}
 

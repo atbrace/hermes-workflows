@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- #8 item 2 crash-visibility: a door respawn of a silently-dead runner is loud
+  BEFORE it replaces it. The incident shape (issue #8, incidents 1-6): runner +
+  children SIGKILLed by an out-of-band sweep (gateway restart, process-tree or
+  cgroup cleanup) record nothing — no `runner_exit.json`, node records still claim
+  `status:"running"`, and `act_wait` quietly respawns over the crime scene, so
+  every watcher shape (tail|grep of lifecycle lines, events-offset loops) reads
+  liveness that is a ghost. Fix law as written on the issue: on the door's RESPAWN
+  paths only (`wait` top-of-call + throttled re-spawn, `release` auto-resume,
+  `amend` respawn, `stop` idle-honour), when `wf.pid` is dead and `runner_exit_read`
+  observes a silent death (`crashed (no exit record)` / `stale` — a verdict of a
+  PREVIOUS process), append `runner.reaped` (prev_pid + observed reason) + one
+  `node.interrupted` (node, dead child pid, skey, attempt) per node record still
+  claiming a running child whose identity FAILS the ONE verification law
+  (`active_child`/`_verify_spawn_rec` — a verifiably-live child is adopted, never
+  interrupted), then spawn. Fresh `run` launches (no prior pid file) and clean
+  parked exits (valid verdict on disk) write nothing; reads (`status`, `wait`'s
+  `run_state`, dashboard, `list`) stay pure observers — the reaper rides the
+  respawn, never the probe. Append-only: the falsely-claimed records stay
+  byte-intact for the idempotence item (#8 item 3) to consume. No status
+  vocabulary change, no schema change, no new dependency.
+  Test: `tests/test_silent_death_reaper_8.py` (live runner+child through the fake
+  hermes, real SIGKILL sweep of runner pgid + child, respawn-trace ordering vs
+  `run.resumed`, adoption and parked-exit negatives, byte-identical node records,
+  flock-held short-circuit, read-path purity).
+
 - #59 validator: string-typed keys are TYPE-checked at submit, never discovered at the
   wall (fb-fix ledger 97e90c2205f17fb0 — run `20260930-051209-fb-fix-436f89c3-rem`
   authored an agent `context` as a LIST; it passed the truthy-only checks and died at
