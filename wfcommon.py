@@ -1174,6 +1174,10 @@ def _include_when_rewrite(expr, map_head):
             pieces.append(".".join(segs))
         else:
             pieces.append(t)
+    # Rebuild joins tokens with single spaces: every WHEN_TOKEN match is ONE token
+    # (string literals keep their internal spacing inside the token), so the result
+    # re-parses identically. Only ever done when a head actually mapped — untouched
+    # whens stay byte-identical (efp stability).
     return " ".join(pieces) if changed else expr
 
 
@@ -1404,9 +1408,9 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
             if public in exports_map:
                 own(alias, f"exports public name {public!r} collides with include "
                            f"'{exports_map[public].split(_INCLUDE_NS_SEP, 1)[0]}'")
-            if public in parent_ids or public in full_ns:
+            if public in parent_ids or public in full_ns or public in aliases:
                 own(alias, f"exports public name {public!r} shadows an existing "
-                           f"node id")
+                           f"node id or include alias")
             exports_map[public] = ns_id
 
         if nsset & (parent_ids | full_ns):
