@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 - fix(valid): gate `when` ref heads must descend from the gate's `after` ancestry,
   the law `inputs` (wfcommon validate: non-ancestor head → reject) and
   `fanout.items_from` (head not in `after` → reject) already enforce at submit.
@@ -19,6 +20,21 @@
   Test: `tests/test_when_ancestry_0930.py` (sibling/ghost/self rejected at submit;
   direct + transitive accepted; per-head naming; inputs/literal/parse/agent-when
   behavior byte-intact).
+=======
+- door: `run_context` transport guards in `_bind_run_context` (string branch). Two silent
+  routes to a launched run full of unsubstituted `{run.KEY}` refs, both now rejecting
+  before any run write, same fail-closed style as the #7 brace guard: (1) a JSON object
+  handed over as a STRING (a caller that meant the map form — tool transports routinely
+  stringify objects) was routed to SEED mode and bound nothing; it now raises and names
+  the mistake. (2) a seed string against a graph holding `{run.KEY}` refs appended to
+  context and launched anyway, leaving the refs literal in the persisted graph; it now
+  raises naming the offending node id and key. The map branch is untouched; prose and
+  `k=v` seeds behave exactly as before. The `run_context` schema entry declares
+  `["string","object"]` and states both rejections.
+  Test: `tests/test_run_context_seed_guard.py` (encoded-map rejects atomically — no run
+  written, no spawn; seed-with-refs rejects naming node+key; dict binding still
+  substitutes; prose seeds still launch).
+>>>>>>> pub/main
 
 - #57 door: provenance census counters on the `list` payload (quartermaster digest
   contract, #52 vocab — field names `provenance.dispatched_by_set` / `provenance.total`
