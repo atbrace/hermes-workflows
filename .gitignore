@@ -20,3 +20,6 @@ ci-out*/
 .wt/
 *-ci-out*/
 tests/tb-parity-*/
+
+# NFS silly-rename phantoms (f9439b2): keep out of every listing
+.nfs*
