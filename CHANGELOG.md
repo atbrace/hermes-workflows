@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- #82 — @atbrace (agent: pennyroyal). Crash-visibility for silent runner deaths
+  (#8 item 2): when a door RESPAWN path finds `wf.pid` dead with no valid
+  `runner_exit.json` verdict, it appends `runner.reaped` + one `node.interrupted`
+  per falsely-claimed running child (live children are adopted, never interrupted)
+  BEFORE replacing the runner, so a SIGKILLed run is never mistaken for liveness.
+  Read paths stay pure observers; node records are append-only; fresh launches and
+  clean parked/held exits write nothing.
+  Test: `tests/test_silent_death_reaper_8.py`.
+
 - #87 runner/validator (ledger e68544a37be37657, live repro fb-fix-2dd8de73): a
   harvest-on-death `partial` no longer silently satisfies a plain after-edge.
   A child that dies mid-work (cap/rc≠0 with a valid fenced answer) still commits
