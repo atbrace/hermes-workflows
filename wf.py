@@ -1157,6 +1157,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     except OSError as e:   # B1 is an add-on: a bake failure must never kill the spawn
         log(run, "steer.bake.error", node=node["id"], error=f"{type(e).__name__}: {e}")
         steer_file, steer_cur, steer_hwm = "", "", 0
+    wall = wall_s if wall_s is not None else node.get("timeout", meta.get("node_timeout", 900))
     env = dict(os.environ, HERMES_HOME=str(hermes_home()),
                HERMES_QUIET_TURN_REPORT_FILE=str(report_path),
                HERMES_WF_STEER_FILE=steer_file,
@@ -1166,6 +1167,11 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                HERMES_WF_STEER_SPAWN=str(spawn_no),
                HERMES_WF_RUN_ID=run.name,
                HERMES_WF_RUN_DIR=str(run))   # 1.1 (RATIFY F1): absolute run dir; act_inbox prefers it
+    if wall is not None:
+        # #24: the child sees the wall it is being given (the RESUME spawn's is the
+        # remaining wall, not the full fare) — observable, and the liveness tests
+        # assert on it. Children that want it (monitors, budgeted tools) read it.
+        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     # fb 625a3241: WORK_DIR_NOTE advertises wd as durable; under a safe root it must
     # also be writable. Append the child's OWN dir only; unset/'' = unrestricted in
     # core, so leave it exactly as inherited (setting it would newly restrict).
@@ -1230,7 +1236,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # #24 work-metered resume: a bounded retry may hand the respawn the REMAINING
     # wall instead of the identical fare (wall_s set = resume spawn; None = the
     # same read as today — one read, both users, so a resume never re-fares).
-    wall = timeout_s = node.get("timeout", meta.get("node_timeout", 900)) if wall_s is None else wall_s
+    timeout_s = wall
     deadline = t0 + wall if wall is not None else float("inf")
     silence_deadline = t0 + first_msg_s if first_msg_s > 0 else None
     rc = None
