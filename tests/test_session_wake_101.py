@@ -418,10 +418,13 @@ try:
     try:
         import wf as _wf2
         _saved_home = os.environ.get("HERMES_HOME")
+        _saved_sink = os.environ.pop("WF_WAKE_SINK_PORT", None)   # force the config path
         os.environ["HERMES_HOME"] = str(tmp)
         try:
             ep = _wf2._wake_endpoint()
         finally:
+            if _saved_sink is not None:
+                os.environ["WF_WAKE_SINK_PORT"] = _saved_sink
             if _saved_home is not None:
                 os.environ["HERMES_HOME"] = _saved_home
         check("endpoint expands ${VAR} refs and brackets IPv6 (core parity)",
