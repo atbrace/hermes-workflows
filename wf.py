@@ -145,15 +145,14 @@ WAKE_TIMEOUT_S = 10.0   # fail-open: a wake must never stall a runner exit
 def _wake_endpoint():
     """Where to POST a wake, host config first (mirrors the api_server adapter's own
     precedence: config platforms.api_server host/port win over the env fallbacks;
-    key: config `key` > API_SERVER_KEY). WF_WAKE_SINK_PORT / WF_WAKE_GATEWAY_URL +
-    WF_WAKE_GATEWAY_KEY override for tests and sidecar sinks. Returns
-    (url, key, header-path) or None when the host runs no reachable API server."""
+    key: config `key` > API_SERVER_KEY). WF_WAKE_SINK_PORT — the ONE environment
+    hook, test/sidecar-only (the regression test and the dogfood rig stand a local
+    sink up on it; a production host never sets it) — short-circuits the endpoint.
+    Returns (url, key, header-path) or None when the host runs no reachable API
+    server."""
     port = os.environ.get("WF_WAKE_SINK_PORT", "").strip()
     if port:
         return f"http://127.0.0.1:{port}/wake", "", "X-Hermes-Session-Id"
-    base = os.environ.get("WF_WAKE_GATEWAY_URL", "").strip()
-    if base:
-        return base.rstrip("/") + "/v1/chat/completions", os.environ.get("WF_WAKE_GATEWAY_URL_KEY", os.environ.get("API_SERVER_KEY", "")), "X-Hermes-Session-Id"
     try:
         cfg = wfcommon._yaml_load((wfcommon.hermes_home() / "config.yaml").read_text()) or {}
     except Exception:
