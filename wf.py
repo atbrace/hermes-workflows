@@ -166,6 +166,25 @@ def emit(line):
 
 WAKE_TIMEOUT_S = 10.0   # fail-open: a wake must never stall a runner exit
 
+# Bearer-secret redaction (F4, maintainer matrix #2): EVERY persisted field goes
+# through this — a stdlib error can embed the whole header value ("Invalid header
+# value b'Bearer <secret>'"), the caller's text may quote one, and a config-scan
+# exception can name the file. Patterns that could ONLY come from an auth header
+# or a secret assignment are cut; a bare secret (already redacted from the text
+# fields, never from the wire) is unrecoverable noise, not a credential class.
+_SECRET_PATTERNS = [
+    re.compile(r"[Bb]earer\s+\S+"),                       # the wire scheme, any case
+    re.compile(r"[Aa]uthorization['\"]?\s*[:=]\s*\S+"),   # header name + value
+    re.compile(r"(?i)(api[_ -]?server[_ -]?key|secret|passwd|password|token)['\"]?\s*[:=]\s*\S+"),
+]
+
+def _wake_safe(value):
+    """Redact bearer/credential shapes out of anything the wake path may persist."""
+    text = str(value)
+    for pat in _SECRET_PATTERNS:
+        text = pat.sub("[redacted]", text)
+    return text
+
 def _wake_endpoint():
     """Where to POST a wake, host config first (mirrors the api_server adapter's own
     precedence: config platforms.api_server host/port win over the env fallbacks;
@@ -181,12 +200,15 @@ def _wake_endpoint():
     try:
         cfg = wfcommon._yaml_load((wfcommon.hermes_home() / "config.yaml").read_text()) or {}
     except Exception:
-        cfg = {}
+        cfg = {}                                  # F3: an unreadable config degrades, never crashes
     if not isinstance(cfg, dict):
         cfg = {}                                  # F3: garbage config root degrades, never crashes
-    api = wfcommon._expand_config_values((cfg.get("platforms") or {}).get("api_server") or {})
+    platforms = cfg.get("platforms")
+    if not isinstance(platforms, dict):
+        platforms = {}                            # F3: `platforms: [1]` is not a mapping
+    api = wfcommon._expand_config_values(platforms.get("api_server") or {})
     if not isinstance(api, dict):
-        api = {}
+        api = {}                                  # F3: `api_server: [1]` is not a mapping
     host = str(api.get("host") or os.environ.get("API_SERVER_HOST") or "127.0.0.1")
     if host in ("0.0.0.0", "::", "*"):
         host = "127.0.0.1"
@@ -201,30 +223,6 @@ def _wake_endpoint():
         host = f"[{host}]"                        # F2: a bare IPv6 host needs URL brackets
     return f"http://{host}:{port}/v1/chat/completions", key, "X-Hermes-Session-Id"
 
-def _wake_already(run, event, identity):
-    """Transition-only guard: an already-DELIVERED (event, identity) is never
-    re-pinged — a runner respawn parked at the same gate hold (same definition
-    fingerprint) must not double-notify. A failed attempt is NOT a delivered
-    transition: the next pass re-attempts (at-least-once on the owner, zero on
-    duplicates). Identity is (key, generation), so a terminal decision that is
-    genuinely RE-MADE (a new log line between the two decisions bumps the
-    generation) is a new transition and wakes again (finding 5). Every probe read
-    is fail-open (F3): a corrupt line, a non-dict JSON value, or an unreadable
-    probe (wake.jsonl a directory -> IsADirectoryError) degrades to 'not yet
-    delivered' — the wake path must never cost the run its exit."""
-    try:
-        for l in (run / "wake.jsonl").read_text().splitlines():
-            try:
-                rec = json.loads(l)
-            except Exception:
-                continue
-            if (isinstance(rec, dict) and rec.get("event") == event
-                    and rec.get("key") == identity and rec.get("delivered")):
-                return True
-    except Exception:
-        pass
-    return False
-
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Credentials must NEVER ride a redirect (NEW blocker): urlopen's default
     handler follows 30x with a GET and carries Authorization + the session header
@@ -234,31 +232,150 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
-_WAKE_OPENER = urllib.request.build_opener(_NoRedirect)
+_WAKE_SCHEMA = "wake-observe/v1"   # the ONLY schema the runner ever persists
 
-def _wake_gen(run):
-    """Transition counter: lines already in events.jsonl (the run's own ledger).
-    Two notifications separated by a new ledger line are separated by a real state
-    change — that is what makes a re-made terminal decision (failed, amended, failed
-    again) a NEW transition while a respawn of the same decision stays deduped."""
+def _wake_opener():
+    """Fresh no-redirect opener per call. Module-level would share urllib's
+    per-instance redirect state across calls; building per notify keeps every
+    delivery attempt stateless (the redirect law must hold attempt after
+    attempt, not just the first)."""
+    return urllib.request.build_opener(_NoRedirect)
+
+def _wake_ledger_read(run):
+    """(rows, delivered_ids) from wake.jsonl, fail-open on every shape the file
+    can be in (F3): unreadable (a directory), corrupt lines, non-dict records.
+    A probe read must never cost a decided run its exit."""
+    rows, delivered = [], set()
     try:
-        return sum(1 for l in (run / "events.jsonl").read_text().splitlines() if l.strip())
+        for l in (run / "wake.jsonl").read_text().splitlines():
+            if not l.strip():
+                continue
+            try:
+                rec = json.loads(l)
+            except Exception:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            rows.append(rec)
+            if rec.get("delivered") and rec.get("id"):
+                delivered.add(rec["id"])
+    except Exception:
+        pass
+    return rows, delivered
+
+def _wake_append(run, rec):
+    """Append one ledger row; a failure is loud on stderr (runner.log) and NEVER
+    raises (the record-write law, unchanged). Every persisted field is bearer-
+    redacted (F4): text and error are caller/computed content that must not be
+    able to smuggle a credential into the probe."""
+    rec = dict(rec)
+    rec["schema"] = _WAKE_SCHEMA
+    if "id" in rec:
+        rec["key"] = rec["id"]        # read-compat: pre-schema readers key off `key`
+    for f in ("text", "error"):
+        if f in rec:
+            rec[f] = _wake_safe(rec[f])
+    try:
+        with open(run / "wake.jsonl", "a") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:              # probe un-writable: loud on stderr, never fatal
+        print(f"WORKFLOW_WAKE_RECORD_FAILED {run.name} {rec.get('event','?')} ({_wake_safe(e)})",
+              file=sys.stderr, flush=True)
+
+def _wake_rev(run):
+    """Durable amendment generation: how many graph.amended events the run's own
+    ledger has recorded. Written by the DOOR before the runner ever sees a new
+    graph, so it is identical across every respawn of one decision and advances
+    exactly when the owner genuinely re-decides the graph — including when an
+    amend reverts a gate to a previous definition (A→B→A: the third hold lives
+    at a rev the first hold never saw). Fail-open (F3): unreadable ledger reads
+    as 0 — a constant, so respawns still dedupe; the worst case after a lost
+    ledger is one redelivered nudge, never a suppressed one."""
+    try:
+        n = 0
+        for l in (run / "events.jsonl").read_text().splitlines():
+            try:
+                ev = json.loads(l)
+            except Exception:
+                continue
+            if isinstance(ev, dict) and ev.get("event") == "graph.amended":
+                n += 1
+        return n
     except Exception:
         return 0
 
-def notify(run, event, text, key=None):
-    """Push ONE lifecycle transition to the owner session stamp. Owner-null (tests,
-    CLI, tool hosts without a session env) writes NOTHING — the door's silent
-    degradation, unchanged. Each ATTEMPT records in <run>/wake.jsonl (the probe);
-    a duplicate of a delivered transition writes nothing. The POST carries a stable
-    Idempotency-Key — sha256(run|event|key|generation) — so the owner may be nudged
-    at-least-once; this leg guarantees delivered-or-recorded per transition (F5).
-    Collapsing duplicate nudges into one paid turn is the server-side consumer's
-    contract, outside this repo — not a guarantee made here. Delivery failure is loud
-    in the probe and NEVER raises
-    into the run loop — the run's own state was already decided; a dead endpoint must
-    not cost the run its exit. Nothing caller-computed is interpolated into the probe
-    before the generic fail-open net; a crash in preparation records a typed line."""
+def _wake_resolved_failed(run, graph):
+    """The run's ALREADY-COMMITTED failed-node set straight from the node records
+    (efp-validated via node_rec — stale/absent records are not facts). Identical
+    across a respawn of one decided failure; genuinely new failures (an amend to
+    fresh nodes) add ids. Never re-executes a node — the point is to describe the
+    decision that already exists, not to reproduce it."""
+    try:
+        nodes = (graph or {}).get("nodes")
+        if not isinstance(nodes, list):
+            return None
+        byid = {n["id"]: n for n in nodes if isinstance(n, dict) and n.get("id")}
+        if not byid:
+            return None
+        return sorted(nid for nid, n in byid.items()
+                      if node_rec(run, n, byid)[0] == "failed")
+    except Exception:
+        return None
+
+def _wake_identity(run, event, key, graph=None):
+    """THE transition-instance discriminant (B3 law): a string that is IDENTICAL
+    across retries/respawns of one lifecycle decision and DIFFERENT for every
+    genuinely new decision, computed from ledger-persisted facts BEFORE the POST
+    (never from wall-clock or pid). It always carries the durable amendment
+    generation rev, plus the decision's own subject:
+      explicit key   -> caller-named subject (gate id + definition, crash reason,
+                        pre-start reason), rev attached by the caller's format or here;
+      run.done       -> the graph fingerprint the run finalized under, + rev;
+      run.failed     -> the committed failed-node set + graph fingerprint + rev.
+    A failed decision whose node records/graph cannot be read returns None:
+    silence is safer than a duplicate paid owner turn."""
+    rev = _wake_rev(run)
+    if key is not None:
+        return f"{event}|x:{key}|r{rev}"
+    gfp = None
+    try:
+        gfp = graph_fingerprint(jload(run / "graph.json", {}) or {})
+    except Exception:
+        pass
+    if gfp is None:
+        return None
+    if event == "run.done":
+        return f"{event}|done:{gfp}|r{rev}"
+    if event == "run.failed":
+        failed = _wake_resolved_failed(run, graph)
+        if failed is None:
+            return None
+        return f"{event}|failed:{','.join(failed)}@{gfp}|r{rev}"
+    return None
+
+def notify(run, event, text, key=None, graph=None):
+    """Push ONE lifecycle transition instance to the owner session stamp. Owner-null
+    (tests, CLI, tool hosts without a session env) writes NOTHING — the door's
+    silent degradation, unchanged. The transition instance (B3 law) is a
+    deterministic identity — sha256(run|event|discriminant) over ledger-backed
+    facts, computed BEFORE any endpoint is touched — so a retry/respawn of the
+    SAME decision reuses the instance (one delivered row, one POST, one stable
+    Idempotency-Key) while every genuinely new decision — gate A→B→A,
+    FAILED→DONE→FAILED→DONE, a catchable crash — mints a fresh one. The POST
+    carries that identity as Idempotency-Key: the pinned-core route's idempotent
+    wrapper replays an in-flight/finished turn instead of starting a second owner
+    turn, so a lost response (client timeout, killed before the ack) cannot
+    double-charge the session even though our probe keeps the attempt retryable
+    (at-least-once POST, exactly-once turn — proven by the pinned-core probe).
+    Each ATTEMPT records in <run>/wake.jsonl (the probe); a duplicate of a
+    DELIVERED instance writes nothing. The POST is runner-authored protocol text
+    ONLY (authority law): graph-authored prose (gate questions and friends) is
+    attributed DATA, never the owner-facing instruction text. Delivery failure is
+    loud in the probe and NEVER raises into the run loop — the run's own state
+    was already decided; a dead endpoint must not cost the run its exit. Nothing
+    caller-computed is interpolated into the probe before the generic fail-open
+    net; a crash in preparation records a typed line. Every persisted field is
+    bearer-redacted (F4) — a stdlib error can embed the raw header value."""
     try:
         if not run.is_dir():
             return
@@ -272,82 +389,83 @@ def notify(run, event, text, key=None):
         sid = owner.get("session_id")
         if not sid:
             return
-        # Identity: an EXPLICIT caller key already names the transition exactly
-        # (gate id + definition fingerprint; crash reason) — it must survive a
-        # runner respawn, so no generation is mixed in. A DEFAULTED key is just
-        # the event name: two distinct decisions of the same class (failed,
-        # amended, failed again) only differ by what the ledger says happened in
-        # between, so the generation distinguishes them (finding 5) while a
-        # respawn of the SAME delivered decision still dedupes.
-        gen = _wake_gen(run) if key is None else 0
-        key = event if key is None else key
-        identity = hashlib.sha256(
-            f"{run.name}\0{event}\0{key}\0{gen}".encode()).hexdigest()[:32]
-        if _wake_already(run, event, identity):
-            return
+        disc = _wake_identity(run, event, key, graph)
+        if disc is None:
+            return                       # unresolvable identity: silent, never a duplicate
+        text = _wake_safe(text)          # F4 at the SOURCE: the crash nets interpolate
+        # str(exception) into this text, and a stdlib header-rejection error embeds the
+        # raw bearer — neither the wire body nor the ledger may ever carry it.
+        tid = hashlib.sha256(f"{run.name}\0{event}\0{disc}".encode()).hexdigest()[:32]
+        _rows, delivered = _wake_ledger_read(run)
+        if tid in delivered:
+            return                       # delivered instance: zero rows, zero POSTs
+        try:                             # the door's authority-law stamp, for the trail
+            proto = (run / "wake_protocol").read_text().strip()
+        except OSError:
+            proto = "unstamped"          # run dir made outside the door (recorded as such)
         rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
-               "key": identity, "gen": gen, "text": text}
+               "id": tid, "wake_protocol": proto, "text": text}
         ep = _wake_endpoint()
         if ep is None:
             rec["delivered"] = False
-            rec["error"] = "no reachable api_server (enable platforms.api_server + API_SERVER_KEY)"
-        else:
-            url, secret, hdr = ep
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps({"model": "hermes-agent", "stream": False,
-                                     "messages": [{"role": "user", "content": text}]}).encode(),
-                    headers={"Content-Type": "application/json", hdr: str(sid),
-                             "Idempotency-Key": identity,
-                             **({"Authorization": f"Bearer {secret}"} if secret else {})})
-                with _WAKE_OPENER.open(req, timeout=WAKE_TIMEOUT_S) as resp:
-                    status = getattr(resp, "status", None) or resp.getcode()
-                    if 300 <= status < 400:
-                        # A redirect is NOT a delivery: nothing followed, nothing
-                        # forwarded; probe undelivered so the retry re-drives.
-                        rec["delivered"] = False
-                        rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
-                    else:
-                        rec["delivered"] = 200 <= status < 300
-                        if not rec["delivered"]:
-                            rec["error"] = f"HTTP {status}"
-            except urllib.error.HTTPError as e:
-                rec["delivered"] = False
-                rec["error"] = f"HTTP {e.code}"
-            except (socket.timeout, TimeoutError):
-                # F5: a read timeout is NOT a delivery — we never saw a status line,
-                # so we cannot claim the turn was queued. Recording delivered=True
-                # here let the guard suppress the retry FOREVER: a transient gateway
-                # stall permanently lost the transition. Probe it as undelivered; the
-                # next pass retries and the delivered-guard ends the sequence at the
-                # first success (at-least-once on the nudge; the stable
-                # Idempotency-Key makes the server-side dedupe exactly-once).
-                rec["delivered"] = False
-                rec["error"] = "timeout: read window closed before a response (retryable)"
-            except Exception as e:
-                # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
-                # http.client raises ValueError("Invalid header value b'Bearer
-                # <secret>'") for a key with a newline. Record the TYPE only (plus
-                # a secret-free suffix for a ValueError, whose argument is the raw
-                # bytes with the secret embedded); never the raw repr.
-                rec["delivered"] = False
-                suffix = (" (header value rejected)" if isinstance(e, ValueError) else "")
-                rec["error"] = f"{type(e).__name__}{suffix}"
+            rec["error"] = ("no reachable api_server (enable platforms.api_server"
+                            " + API_SERVER_KEY)")
+            rec["error_class"] = "missing_endpoint"     # B4: stable typed field
+            _wake_append(run, rec)
+            return
+        url, secret, hdr = ep
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"model": "hermes-agent", "stream": False,
+                                 "messages": [{"role": "user", "content": text}]}).encode(),
+                headers={"Content-Type": "application/json", hdr: str(sid),
+                         "Idempotency-Key": tid,
+                         **({"Authorization": f"Bearer {secret}"} if secret else {})})
+            with _wake_opener().open(req, timeout=WAKE_TIMEOUT_S) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                if 300 <= status < 400:
+                    # A redirect is NOT a delivery: nothing followed, nothing
+                    # forwarded; probe undelivered so the retry re-drives under
+                    # the SAME identity (same Idempotency-Key).
+                    rec["delivered"] = False
+                    rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
+                else:
+                    rec["delivered"] = 200 <= status < 300
+                    if not rec["delivered"]:
+                        rec["error"] = f"HTTP {status}"
+        except urllib.error.HTTPError as e:
+            rec["delivered"] = False
+            rec["error"] = f"HTTP {e.code}"
+        except (socket.timeout, TimeoutError):
+            # F5: a read timeout is NOT a delivery — we never saw a status line,
+            # so we cannot claim the turn was queued. Recording delivered=True
+            # here let the guard suppress the retry FOREVER: a transient gateway
+            # stall permanently lost the transition. Probe it as undelivered; the
+            # next pass retries under the SAME instance id — its Idempotency-Key
+            # makes the pinned-core consumer replay the in-flight turn instead of
+            # starting a second owner turn (the exactly-one-turn law this PR
+            # proves at the CI-pinned route).
+            rec["delivered"] = False
+            rec["error"] = "timeout: read window closed before a response (retryable)"
+        except Exception as e:
+            # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
+            # http.client raises ValueError("Invalid header value b'Bearer
+            # <secret>'") for a key with a newline. Record the TYPE plus the
+            # redacted message; never a raw repr, and the ledger redaction runs
+            # again at append time as a second net.
+            rec["delivered"] = False
+            rec["error"] = _wake_safe(f"{type(e).__name__}: {e}")
+        _wake_append(run, rec)
     except Exception as e:                       # fail-open encompasses PREPARATION (F3)
         try:
-            rec = {"ts": now(), "event": event, "delivered": False,
-                   "error": f"notify-prep: {type(e).__name__}"}
-            with open(run / "wake.jsonl", "a") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            _wake_append(run, {"ts": now(), "event": event, "run_id": run.name,
+                               "delivered": False,
+                               "error": f"notify-prep: {type(e).__name__}",
+                               "error_class": "notify_prep"})
         except Exception:
             pass
         return
-    try:
-        with open(run / "wake.jsonl", "a") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except OSError as e:                      # probe un-writable: loud on stderr (runner.log), never fatal
-        print(f"WORKFLOW_WAKE_RECORD_FAILED {run.name} {event} ({e})", file=sys.stderr, flush=True)
 
 _LOCK_FD = None  # kept open for process lifetime — closing it would release the flock
 
@@ -3581,12 +3699,14 @@ def main(run_id):
     meta = jload(run / "run.json", {}) or {}
     if not jload(run / "graph.json", {}):
         emit(f"WORKFLOW_FAILED {run_id} (no graph.json)")
-        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: no graph.json.")
+        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: no graph.json.",
+               key="pre-start: no graph.json")
         write_runner_exit(run, "crashed: no graph.json"); sys.exit(2)
     err = validate_graph(jload(run / "graph.json")["nodes"])
     if err:
         emit(f"WORKFLOW_FAILED {run_id} (graph invalid: {err})")
-        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: graph invalid: {err}")
+        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: graph invalid: {err}",
+               key="pre-start: graph invalid")
         write_runner_exit(run, "crashed: graph invalid", err); return
     if not meta.get("hermes_bin"):
         import shutil as _sh
@@ -3819,11 +3939,30 @@ def main(run_id):
             log(run, "gate.held", node=gate["id"], question=gate.get("question"),
                 options=gate.get("options"), context=gate.get("context"))
             emit(f"WORKFLOW_HELD {run_id} {gate['id']}")
-            notify(run, "gate.held",
-                   f"Workflow run {run_id} is HELD at gate '{gate['id']}': "
-                   f"{gate.get('question', '')} — answer with the workflow release action.",
-                   key=f"{gate['id']}:{efp(rs.byid, gate)}")
+            # AUTHORITY LAW (owner ruling, PR#97 review): the automatic owner wake
+            # is RUNNER-AUTHORED protocol text only. The gate's question/options/
+            # context are graph-authored — attributed DATA that lives in the
+            # events.jsonl line above, the run's status, and the desktop gate card;
+            # they are NEVER interpolated into a role:user owner turn. A graph
+            # author therefore cannot speak as the owner's master.
+            # The hold marker (gates/<id>.held.json, efp-stamped) is written BEFORE
+            # the wake when the gate parks (hold_timeout): a respawn of the same
+            # hold re-derives the identical identity from it. For an exiting hold
+            # (no ht) the identity comes from the CURRENT graph definition + the
+            # durable amendment generation — both survive the process.
             ht = gate.get("hold_timeout")
+            hdef = efp(rs.byid, gate)
+            hf = run / "gates" / f"{gate['id']}.held.json"
+            hm = jload(hf, {}) or {}
+            if ht is not None and (not record_efp_valid(hm, rs.byid, gate, "_def")
+                                   or not isinstance(hm.get("since"), (int, float))):
+                hm = {"since": time.time(), "_def": hdef, "fp_rule_version": FP_RULE_VERSION}
+                hf.write_text(json.dumps(hm))
+            notify(run, "gate.held",
+                   f"Workflow run {run_id} is HELD at gate '{gate['id']}' and needs your "
+                   "answer. Inspect the question in the run's status or gates view, then "
+                   "answer with the workflow release action.",
+                   key=f"{gate['id']}:{hdef}")
             if ht is None:
                 return f"held at {gate['id']}"
             # sprint101 #14: a human gate with hold_timeout PARKS in-process (zero
@@ -3832,12 +3971,6 @@ def main(run_id):
             # default_option the gate releases itself exactly like a human answer;
             # without one it logs gate.expired ONCE (loud, never silent) and keeps
             # holding — tour-demo burned 9.3 h on "either button is fine".
-            hf = run / "gates" / f"{gate['id']}.held.json"
-            hdef = efp(rs.byid, gate)
-            hm = jload(hf, {}) or {}
-            if not record_efp_valid(hm, rs.byid, gate, "_def") or not isinstance(hm.get("since"), (int, float)):
-                hm = {"since": time.time(), "_def": hdef, "fp_rule_version": FP_RULE_VERSION}
-                hf.write_text(json.dumps(hm))
             while True:
                 m = consume_markers()
                 if m == "stopped": return "stopped"
@@ -3870,14 +4003,16 @@ def main(run_id):
             emit(f"WORKFLOW_FAILED {run_id} ({','.join(n['id'] for n in failed)})")
             notify(run, "run.failed",
                    f"Workflow run {run_id} FAILED: nodes "
-                   f"{','.join(n['id'] for n in failed)} — status shows the error.")
+                   f"{','.join(n['id'] for n in failed)} — status shows the error.",
+                   graph=rs.graph)
             return "blocked by failed " + ",".join(n["id"] for n in failed)
         if all(states[n["id"]] in ("done", "partial", "skipped") for n in rs.nodes):   # #4: a harvested partial closes the run
             finalize(run, rs.graph, "done")
             return "done"
         emit(f"WORKFLOW_FAILED {run_id} (graph stuck — check after/refs)")
         notify(run, "run.failed",
-               f"Workflow run {run_id} FAILED: graph stuck (check after/refs).")
+               f"Workflow run {run_id} FAILED: graph stuck (check after/refs).",
+               key="graph stuck", graph=rs.graph)
         return "graph stuck"
 
     # Q1 runner_exit: EVERY exit path records {reason, at} — the loop's verdict
@@ -3931,7 +4066,8 @@ def finalize(run, graph, status):
     emit(f"WORKFLOW_{status.upper()} {run.name}")
     notify(run, f"run.{status}",
            f"Workflow run {run.name} is {status.upper()}. summary.md is written; "
-           f"status shows the node outputs.")
+           f"status shows the node outputs.",
+           graph={"nodes": nodes})
 
 if __name__ == "__main__":
     if len(sys.argv) < 3 or sys.argv[1] != "run":

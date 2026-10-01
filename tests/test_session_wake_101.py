@@ -434,23 +434,26 @@ try:
         os.environ.pop("WAKE_TEST_KEY", None)
         (tmp / "config.yaml").unlink(missing_ok=True)
 
-    # ---- 14. terminal dedupe is per TRANSITION, not once-per-run/event (finding
-    #          5): a second failed decision (gen advanced in events.jsonl) is a
-    #          NEW transition and must wake; a respawn of the SAME decision stays
-    #          deduped; the crash double-net (same gen) fires exactly one wake. ----
-    r14 = mk("w14", G_HOLD, OWNER)
+    # ---- 14. terminal dedupe is per TRANSITION INSTANCE, not once-per-run/event
+    #          and never a hand-crafted ledger line (finding 5, round-1 #5): a real
+    #          runner respawn of ONE decided failure re-derives the identical
+    #          instance from ledger facts — exactly one row, one POST. The
+    #          FAILED->amend->DONE->amend->FAILED amend cycle (real act_amend) and
+    #          the gate A->B->A revert law live in section 15 below. ----
+    r14 = mk("w14", [{"id": "boom", "type": "agent", "goal": "FAILME"}], OWNER)
     before14 = len(sinks)
-    _wf.notify(r14, "run.failed", "first failure")
-    with open(r14 / "events.jsonl", "a") as f:
-        f.write(json.dumps({"ts": "x", "event": "run.blocked"}) + "\n")
-    _wf.notify(r14, "run.failed", "second failure after amend")
+    out14a = drive(r14).stdout.strip()
+    out14b = drive(r14).stdout.strip()          # respawn #2 of the same decision
+    out14c = drive(r14).stdout.strip()          # respawn #3
     w14 = wakes(r14)
-    check("two terminal decisions = two transitions = two wakes",
-          len(w14) == 2 and len(sinks) == before14 + 2
-          and w14[0].get("key") != w14[1].get("key"), str(w14))
-    _wf.notify(r14, "run.failed", "second failure re-driven")
-    check("same terminal decision stays deduped once delivered",
-          len(wakes(r14)) == 2 and len(sinks) == before14 + 2, str(wakes(r14)))
+    check("three runs of one failed decision = one terminal wake",
+          out14a.startswith(f"WORKFLOW_FAILED {r14.name}")
+          and len(w14) == 1 and w14[0].get("event") == "run.failed"
+          and w14[0].get("delivered") is True and len(sinks) == before14 + 1,
+          f"{out14a} {w14} posts={len(sinks) - before14}")
+    check("terminal row carries a stable instance id",
+          bool(w14) and bool(w14[0].get("id")) and w14[0].get("key") == w14[0].get("id"),
+          str(w14))
 finally:
     _sink_srv.shutdown()
     shutil.rmtree(tmp, ignore_errors=True)
