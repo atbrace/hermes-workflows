@@ -292,13 +292,113 @@ with tempfile.TemporaryDirectory(prefix="reaper8-", dir=HERE) as td:
     runner5 = int((r5 / "wf.pid").read_text())
     os.kill(runner5, signal.SIGKILL)
     wait_for(lambda: not alive(runner5))
-    os.kill(sp5["pid"], signal.SIGKILL)
+    try:
+        os.kill(sp5["pid"], signal.SIGKILL)
+    except ProcessLookupError:
+        pass   # the fake child already died with its runner — nothing to sweep
     wait_for(lambda: not alive(sp5["pid"]))
     mid = len(ev_lines(r5))
     st5 = door.act_status({"run_id": r5.name})
     check("purity: act_status on a silently-dead run reports interrupted and writes nothing",
           st5["status"] == "interrupted" and len(ev_lines(r5)) == mid, st5["status"])
     kill_tree(r5)
+
+    # ---- E. PR #82 review F1+F4: fan-out liveness is per-item-index ----
+    # One live item (adoption owns it) + one dead item (interrupted), real
+    # processes verified by the ONE law through the indexed path. The event
+    # vocabulary must be {node: <parent id>, index: N} (F4), never "fan0".
+    fo = {"id": "fan", "type": "agent", "fanout": {"items": ["a", "b"], "goal": "{item}"}}
+    r6 = runs / "r6-fanout"
+    r6.mkdir()
+    (r6 / "nodes").mkdir()
+    (r6 / "gates").mkdir()
+    (r6 / "graph.json").write_text(json.dumps({"name": r6.name, "nodes": [fo]}))
+    (r6 / "run.json").write_text(json.dumps({"hermes_bin": FAKE, "concurrency": 2}))
+    (r6 / "wf.pid").write_text("99999998")
+    byid_fo = {"fan": fo}
+    kids = []
+    try:
+        for i in range(2):
+            sk = f"wf:r6-fanout:fan:{i}:fixture#a1"
+            rec = {"status": "running", "skey": sk, "attempt": 1,
+                   "started": "2026-01-01T00:00:00+00:00",
+                   "efp": wfcommon.efp(byid_fo, fo),
+                   "fp_rule_version": wfcommon.FP_RULE_VERSION}
+            if i == 0:   # live item: a real child carrying the skey in argv
+                kid = subprocess.Popen([sys.executable, "-c",
+                                        "import time; time.sleep(120)", sk],
+                                       start_new_session=True)
+                kids.append(kid)
+                rec["pid"] = kid.pid
+            else:        # dead item: a pid that cannot exist
+                rec["pid"] = 99999997
+            (r6 / "nodes" / f"fan.{i}.json").write_text(json.dumps(rec))
+        check("setup E: live fan item verifies under the ONE law (indexed entry point)",
+              bool(wfcommon.active_child(r6, fo, byid_fo, 0)))
+        if callable(_reap):
+            _reap(r6)
+        ev6 = ev_lines(r6)
+        int6 = [e for e in ev6 if e.get("event") == "node.interrupted"]
+        check("fanout (F1): a verifiably-live fan-out item is NOT interrupted",
+              [e.get("index") for e in int6] == [1], json.dumps(int6)[:300])
+        check("fanout (F4): the dead item keeps the runner's item vocabulary",
+              bool(int6) and int6[0].get("node") == "fan" and int6[0].get("index") == 1
+              and int6[0].get("pid") == 99999997, json.dumps(int6)[:300])
+        # F3: the SAME observed death must not be re-appended on a retry
+        # (offset watchers see one runner.reaped per death, pre-resume).
+        if callable(_reap):
+            _reap(r6)
+            _reap(r6)
+        reaped6 = [e for e in ev_lines(r6) if e.get("event") == "runner.reaped"]
+        check("repeat (F3): re-observing the same frozen death appends once",
+              len(reaped6) == 1, json.dumps([e.get("event") for e in ev_lines(r6)])[:300])
+        # F3 is CONTENT-aware, not a mute switch: when the item-0 child dies
+        # after the first reap, the changed scene is NEW evidence — exactly one
+        # additional node.interrupted (index 0), still one runner.reaped.
+        kids[0].kill()
+        kids[0].wait()
+        if callable(_reap):
+            _reap(r6)
+        ev6b = ev_lines(r6)
+        int6b = [e for e in ev6b if e.get("event") == "node.interrupted"]
+        check("changed-scene (F3): a child dying after the first reap is recorded",
+              [e for e in ev6b if e.get("event") == "runner.reaped"].__len__() == 1
+              and len(int6b) == 2 and {e.get("index") for e in int6b} == {0, 1},
+              json.dumps([e.get("event") for e in ev6b])[:300])
+    finally:
+        for kid in kids:
+            kid.kill()
+            kid.wait()
+
+    # ---- F. PR #82 review F2: amending a cleanly held run is not a death ----
+    # act_amend replaces graph.json, which makes the recorded `held at g` exit
+    # read as `stale` — fingerprint staleness is NOT proof of an unrecorded
+    # death (the predecessor exited on purpose and said so).
+    r7 = mk_run(runs, "r7-held-amend", "hang a while")
+    (r7 / "graph.json").write_text(json.dumps({"name": r7.name, "nodes": [
+        {"id": "g", "type": "gate", "question": "proceed?", "options": ["yes"]}]}))
+    out7 = subprocess.run([sys.executable, str(ROOT / "wf.py"), "run", r7.name],
+                          env=dict(os.environ), capture_output=True, text=True, timeout=60)
+    check("setup F: run parked at the gate with a recorded held exit",
+          out7.stdout.startswith("WORKFLOW_HELD")
+          and (r7 / "runner_exit.json").read_text().find("held at") >= 0,
+          out7.stdout[:120])
+    _real_spawn7 = door._spawn_runner
+    door._spawn_runner = lambda rr: None   # freeze the scene; the bridge is under test
+    try:
+        before7 = len(ev_lines(r7))
+        amended7 = {"name": r7.name, "nodes": [
+            {"id": "g", "type": "gate", "question": "proceed?", "options": ["yes"]},
+            {"id": "later", "type": "echo", "after": ["g"], "output": {"ok": True}}]}
+        res7 = door.act_amend({"run_id": r7.name, "graph": amended7})
+    finally:
+        door._spawn_runner = _real_spawn7
+    ev7 = ev_lines(r7)[before7:]
+    check("held-amend (F2): a stale fingerprint over a clean held exit reaps nothing",
+          isinstance(res7, dict) and "error" not in res7
+          and not [e for e in ev7 if e.get("event") in ("runner.reaped", "node.interrupted")],
+          json.dumps([e.get("event") for e in ev7])[:200])
+    kill_tree(r7)
 
 print(f"\nTOTAL {checks} FAIL {failures}")
 sys.exit(1 if failures else 0)

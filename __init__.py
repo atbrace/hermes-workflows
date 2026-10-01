@@ -265,34 +265,79 @@ def _reap_silent_death(r):
             return   # no pid file = fresh run; alive = nothing to reap
         graph = _common.jload(r / "graph.json") or {}
         byid = {n["id"]: n for n in graph.get("nodes", [])}
-        # The ONE exit read is the silent-death probe. `crashed (no exit record)`
-        # is pid-dead + no verdict on disk; `stale` is a verdict of a PREVIOUS
-        # process (amended graph) while the current one recorded nothing — both
-        # mean the death we are staring at was never written down. A VALID
-        # recorded exit is a verdict, not a silent death (e.g. the run parked at
-        # a gate and exited on purpose) — act_wait's rx gate owns it, no reaping.
-        reason = (_common.runner_exit_read(r) or {}).get("reason")
-        if reason not in ("crashed (no exit record)", "stale"):
+        # The ONE exit read is the silent-death probe. ONLY
+        # `crashed (no exit record)` (pid-dead + no verdict on disk) proves the
+        # death was never written down. `stale` does NOT: it only says the
+        # recorded verdict's graph fingerprint no longer matches — which is
+        # exactly what act_amend itself causes when it replaces graph.json over
+        # a CLEAN recorded exit (previous_reason "held at g" etc.). Fingerprint
+        # staleness alone is never evidence of an unrecorded death (PR #82
+        # review, F2); a VALID recorded exit — fresh or amend-staled — is a
+        # verdict, and act_wait's rx gate owns it, no reaping.
+        rx = _common.runner_exit_read(r) or {}
+        reason = rx.get("reason")
+        if reason != "crashed (no exit record)":
             return
+        # Event-level once-per-record dedup (PR #82 review, F3), content-aware:
+        # scan the events after the LAST run.resumed (a replacement that
+        # readied re-arms the channel for the NEXT death) and drop candidates
+        # already on the record modulo ts. Retrying the same frozen scene
+        # appends nothing; a scene that changed since (a claimed child died in
+        # the meantime) contributes exactly the NEW lines — never a duplicate
+        # runner.reaped or a second interrupt for the same claim. Best-effort
+        # check-then-append: concurrent reapers are serialized upstream by the
+        # door's own admission path (only one respawn proceeds), so the retry
+        # window this pins is sequential.
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
         events = [{"ts": now_iso, "event": "runner.reaped", "prev_pid": pid, "reason": reason}]
         for n in graph.get("nodes", []):
-            paths = [r / "nodes" / f"{n['id']}.json"]
+            paths = [(r / "nodes" / f"{n['id']}.json", None)]
             if n.get("fanout"):
-                paths.extend(sorted((r / "nodes").glob(f"{n['id']}.[0-9]*.json")))
-            for p in paths:
+                paths.extend((p, p.name[len(n["id"]):-len(".json")].lstrip("."))
+                             for p in sorted((r / "nodes").glob(f"{n['id']}.[0-9]*.json")))
+            for p, idx in paths:
                 if _common.node_rec(r, n, byid)[0] != "pending":
                     continue   # committed truth (done/partial/failed) is never a false claim
-                if _common.active_child(r, n, byid):
-                    continue   # live child: adoption owns it (the ONE verification law)
                 rec = _common.jload(p) or {}
                 if rec.get("status") != "running":
                     continue   # nothing ever claimed a live child here
-                suffix = p.name[len(n["id"]):-len(".json")]
-                events.append({"ts": now_iso, "event": "node.interrupted",
-                               "node": n["id"] + suffix.lstrip("."),
-                               "pid": rec.get("pid"), "skey": rec.get("skey"),
-                               "attempt": rec.get("attempt"), "of_runner": pid})
+                # The ONE verification law applied to the record actually
+                # loaded — NOT active_child(r, n, byid), which always probes the
+                # BASE file and would call a live fan-out item's pid a ghost
+                # (PR #82 review, F1). A verifiably-live child is adopted.
+                if _common._verify_spawn_rec(r, n, byid, rec):
+                    continue   # live child: adoption owns it
+                ev = {"ts": now_iso, "event": "node.interrupted", "node": n["id"],
+                      "pid": rec.get("pid"), "skey": rec.get("skey"),
+                      "attempt": rec.get("attempt"), "of_runner": pid}
+                if idx is not None:
+                    # the runner's own item vocabulary (PR #82 review, F4):
+                    # {node: <parent id>, index: N}, joinable to item.* events
+                    # and never colliding with a real node named "fan0".
+                    ev["index"] = int(idx) if idx.isdigit() else idx
+                events.append(ev)
+        _strip = lambda e: json.dumps({k: v for k, v in e.items() if k != "ts"},
+                                      sort_keys=True)
+        seen = set()
+        try:
+            for line in (r / "events.jsonl").read_text().splitlines():
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("event") == "run.resumed":
+                    seen = set()   # a readied replacement re-arms the channel
+                elif e.get("event") in ("runner.reaped", "node.interrupted"):
+                    seen.add(_strip(e))
+        except OSError:
+            seen = None
+        # `seen` now holds every reap line since the last run.resumed (modulo
+        # ts). Candidates already on the record are dropped; nothing new =>
+        # write nothing. A changed scene appends exactly the NEW lines.
+        if seen is not None:
+            events = [e for e in events if _strip(e) not in seen]
+        if not events:
+            return
         with open(r / "events.jsonl", "a") as f:
             for e in events:
                 f.write(json.dumps(e, ensure_ascii=False) + "\n")
