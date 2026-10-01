@@ -1506,26 +1506,29 @@ def _unbound_include_refs(graph, provenance):
     subtree. The check is alias-scoped — the subtree's refs come from shelved
     bytes the parent author never sees — while parent-authored nodes keep the
     plain-graph behavior (seed-less literal spawns are their documented
-    leniency). Returns an error envelope naming alias, node, and key."""
+    leniency). Returns an error envelope naming alias, node, and key.
+
+    PR#84 review F-3: the text surface is the SHARED _include_text_fields
+    traversal (goal/context/question/profile, fan-out goal + item goals, AND an
+    echo node's string `output`), not a private field list here. The private
+    list omitted echo output — the one surface the runner commits VERBATIM — so
+    an included echo holding `verdict={run.MISSING}` survived a closed seeds
+    map and landed as literal placeholder text in a DONE run, consumable
+    downstream as a verdict. One traversal means run/amend/binding/scratch-notes
+    can never drift apart again."""
     aliases = [f"{p['alias']}__" for p in provenance]
     for node in graph["nodes"]:
         nid = node.get("id", "")
         if not any(nid.startswith(a) for a in aliases):
             continue
-        texts = [node.get(f) for f in ("goal", "context", "question", "profile")]
-        fo = node.get("fanout")
-        if isinstance(fo, dict):
-            texts.append(fo.get("goal"))
-            texts += [i.get("goal") for i in fo.get("items", []) if isinstance(i, dict)]
-        for text in texts:
-            if isinstance(text, str):
-                m = _RUN_REF.search(text)
-                if m:
-                    return {"error": (
-                        f"include seed contract unbound: node {nid!r} still references "
-                        f"{{run.{m.group(1)}}} after include seeds and run_context binding — "
-                        "supply it in the include `seeds` map or the run_context; "
-                        "refused before any write or spawn")}
+        for text in _common._include_texts(node):
+            m = _RUN_REF.search(text)
+            if m:
+                return {"error": (
+                    f"include seed contract unbound: node {nid!r} still references "
+                    f"{{run.{m.group(1)}}} after include seeds and run_context binding — "
+                    "supply it in the include `seeds` map or the run_context; "
+                    "refused before any write or spawn")}
     return None
 
 
