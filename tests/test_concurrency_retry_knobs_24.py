@@ -40,6 +40,11 @@ def check(label, cond, detail=""):
 # ---------- part A: the door (in-process; HERMES_WF_HERMES_BIN keeps every spawn fake)
 shutil.rmtree(HOME, ignore_errors=True)
 os.environ["HERMES_HOME"] = str(HOME)
+# council r4 R3: a host WF_RUNS_ROOT would escape the sandbox. DROP it rather
+# than point it: setting it makes the door stamp launch_root into a knob-free
+# run.json, which the B-leg exact-keys check (correctly) forbids; with it
+# unset the door resolves runs under HERMES_HOME (RUNS below).
+os.environ.pop("WF_RUNS_ROOT", None)
 os.environ["HERMES_WF_HERMES_BIN"] = FAKE
 sys.path.insert(0, str(ROOT))
 _spec = importlib.util.spec_from_file_location("hw", ROOT / "__init__.py")
