@@ -1,0 +1,43 @@
+{
+  "template": "gated-publish",
+  "receipt_kind": "author-run",
+  "author_estate": "estate seat (WOFS peer author)",
+  "graph_file": "examples/gated-publish.workflow.json",
+  "graph_sha256": "ed5d6d89ac74140a4c31a989a4544ce424654f1f0bbd15c02ea0b7fd7b3d8b4b",
+  "source_digest": "ecd487f7f2cef56c4c928124378d39d676dd2520600141eddfee030a03f0586f",
+  "laps": {
+    "authorized_publish": {
+      "run_id": "20261001-015249-core10-gp-lapa",
+      "release_answer": "publish: copy the staged v1 artifact to the publish target exactly as staged",
+      "outcome": "done; parse authorized=true scope-verbatim; publish executed + hash-verified (fd03c3e8\u2026==stage); report lane=publish published=true; route-hold/publish arm of hold pruned.",
+      "runner_exit": {
+        "reason": "done",
+        "at": "2026-10-01T01:56:45+00:00",
+        "graph_fingerprint": "965636f8f1e0e5ac"
+      }
+    },
+    "bare_publish_refusal": {
+      "run_id": "20261001-015709-core10-gp-lapb",
+      "release_answer": "publish  (bare word, no authorization clause)",
+      "outcome": "done; parse authorized=false 'missing a clause after publish'; routed to hold-report (zero writes \u2014 published/ dir never created); next_step printed the exact release text that would authorize the copy.",
+      "runner_exit": {
+        "reason": "done",
+        "at": "2026-10-01T02:02:03+00:00",
+        "graph_fingerprint": "965636f8f1e0e5ac"
+      }
+    },
+    "explicit_hold": {
+      "run_id": "20261001-020226-core10-gp-lapc",
+      "release_answer": "hold: v1 brief does not state the rollback plan; hold until the publisher attaches one",
+      "outcome": "done; publish arm pruned (all deps pruned), hold-report carried the reason VERBATIM, report lane=hold; zero writes verified on disk.",
+      "runner_exit": {
+        "reason": "done",
+        "at": "2026-10-01T02:05:39+00:00",
+        "graph_fingerprint": "965636f8f1e0e5ac"
+      }
+    }
+  },
+  "release_triangle_proof": "LAW ONE proved structurally: no when-compares-raw-words edge exists \u2014 parse emits the boolean, gate pair prunes one arm; lane fields in reports came from the executed arm each time. LAW TWO proved live both ways (lap A executes authorized scope; lap B refuses bare 'publish' and says how to be authorizable). LAW THREE: precheck carries wait-without-question, approve carries question-without-wait \u2014 validator-clean under the current key sets and honest under sys-4zsj9o.",
+  "precheck_proof": "until_argv sidecar check released at attempt 1 on all three laps (sha256sum -c over staged.bin + sidecar, zero tokens while parked).",
+  "notes": "engine main b84a49b; three laps share one graph fingerprint 965636f8f1e0e5ac \u2014 replay-skip law never reused the human gate across laps (each run held independently). Zero vendor ids/host paths outside documented scratch root."
+}

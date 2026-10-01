@@ -29,6 +29,7 @@ INCLUDE_FILES = (
     "examples/approve-publish.json",
     "examples/branch-on-verdict.json",
     "examples/incident-response.json",
+    "examples/gated-publish.workflow.json",
     "examples/portable-review.workflow.json",
     "examples/smoke.json",
     "plugin.yaml",

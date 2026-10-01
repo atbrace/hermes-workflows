@@ -162,6 +162,11 @@ succeed, the rest are cancelled; without it the fan-out waits for every item;
 `wait:{"until_argv":[…],"every_s":60,"timeout_s":3600}`. Tested examples:
 [examples/approve-publish.json](examples/approve-publish.json),
 [examples/branch-on-verdict.json](examples/branch-on-verdict.json).
+[examples/gated-publish.workflow.json](examples/gated-publish.workflow.json) is a
+publish-lifecycle TEMPLATE teaching the release triangle: human gate with no
+auto-release, answer-as-data normalizer (never `when` on raw words),
+refuse-on-empty-authorization, machine-wait/human-question in separate gates.
+One validate + smoke-run tested.
 [examples/incident-response.json](examples/incident-response.json) is a full
 lifecycle TEMPLATE (alert-triggered incident: verdict-branch gate pair, machine
 recovery probe with human escalation, merge-gated close) meant to be adapted —

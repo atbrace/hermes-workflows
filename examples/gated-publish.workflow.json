@@ -1,0 +1,79 @@
+{
+  "grammar": "wf/1",
+  "name": "gated-publish",
+  "description": "Publish lifecycle that teaches the release triangle every estate gets wrong: a human approval (NO auto-release — no default_option, no hold_timeout: a publish that self-releases on a timer is the anti-pattern), an answer-as-data normalizer, and a boolean branch pair. LAW ONE — never branch on a human's raw words: the gate grammar compares values, not intent, so a `when` on out.approve.answer is a string-equality bet on free text; the parse node reads the answer as DATA and emits the boolean, the complementary gate pair (negated when, on_skip prune) routes one arm. LAW TWO — refuse-on-empty-authorization: an answer of bare 'publish' (or anything without an authorization clause) normalizes to authorized=false and the hold arm reports it; the publish node executes ONLY the copy the human's text clearly authorizes, and re-verifies the hash. LAW THREE — machine wait and human question never share a gate: precheck (until_argv, zero tokens) and approve (question, no wait) are separate nodes — the hybrid gate is the ambiguity both estates' validators under-enforce (sys-4zsj9o) and this file never models it. Seeds (run_context map, ALL required): 'artifact_src' = absolute path of the file to publish; 'publish_target' = absolute path the publish node alone may write; 'review_brief' = what the human is asked to approve, verbatim into the gate context. Scratch root /tmp/gated-publish-example holds the staging copy + sha256 sidecar; stage wipes it, so a stale artifact can never ride an old pre-check. every_s/timeout_s are policy, not work: raise them for real cadence without touching any node fingerprint. Receipts walk three paths: authorized publish (executed + hash-verified), bare-'publish' refusal (routed to hold, zero writes), explicit hold with reason.",
+  "provenance": {
+    "owner": "hermes-workflows",
+    "source": "hermes-workflows/examples/gated-publish.workflow.json"
+  },
+  "nodes": [
+    {
+      "id": "stage",
+      "type": "agent",
+      "max_turns": 8,
+      "goal": "Stage the artifact for human approval. 1) rm -rf /tmp/gated-publish-example && mkdir -p /tmp/gated-publish-example (a stale staging file must never ride into a new approval). 2) Copy {run.artifact_src} to /tmp/gated-publish-example/staged.bin — if the source does not exist, do NOT create a stand-in: reply {\"staged\": false, \"why\": \"source missing\"}. 3) Write the line 'sha256sum output' style sidecar: run sha256sum so /tmp/gated-publish-example/staged.bin.sha256 contains '<hex>  staged.bin'. 4) Re-hash the staged copy and compare to the source hash. Reply with ONLY fenced json {\"staged\": true, \"sha256\": \"<hex>\", \"size_bytes\": <int>, \"match\": true} — match only if source and staged hashes are equal."
+    },
+    {
+      "id": "precheck",
+      "type": "gate",
+      "after": ["stage"],
+      "wait": {
+        "until_argv": ["/usr/bin/python3", "-c", "import pathlib,subprocess,sys; S=pathlib.Path('/tmp/gated-publish-example'); B=S/'staged.bin'; M=S/'staged.bin.sha256'\nif not (B.exists() and M.exists()): sys.exit(1)\nrc=subprocess.run(['sha256sum','-c','staged.bin.sha256'],cwd=str(S),capture_output=True).returncode\nS.joinpath('precheck_last.json').write_text('{\"sidecar_check_exit\": %d}' % rc)\nsys.exit(0 if rc==0 else 1)"],
+        "every_s": 3,
+        "timeout_s": 120
+      }
+    },
+    {
+      "id": "approve",
+      "type": "gate",
+      "after": ["precheck"],
+      "question": "Stage verified by machine pre-check (sidecar hash confirmed). Publish to {run.publish_target}? Release law: 'publish: <one clause naming exactly what you authorize>' — anything else (bare 'publish', 'yes', vague praise) executes NOTHING and routes to the hold report; 'hold: <why>' routes to the hold report too.",
+      "options": ["publish: <authorized scope>", "hold: <why>"],
+      "context": "REVIEW BRIEF: {run.review_brief}"
+    },
+    {
+      "id": "parse",
+      "type": "agent",
+      "after": ["approve"],
+      "max_turns": 4,
+      "goal": "The human answered the approve gate; its committed answer is in ## Inputs. Read it as DATA — you are a normalizer, not an approver: you approve nothing and write nothing. Reply with ONLY fenced json {\"authorized\": <true|false>, \"scope\": \"<the authorization clause verbatim if authorized, else ''>\", \"held_reason\": \"<the human's text if this is a hold or a refusal, else ''>\"}. Rules: authorized=true ONLY when the answer begins with 'publish' (case-insensitive) AND carries a non-empty clause after it clearly naming what is authorized; bare 'publish', 'publish:' with nothing after, or any vague yes is authorized=false with held_reason naming the missing piece."
+    },
+    {
+      "id": "route-publish",
+      "type": "gate",
+      "after": ["parse"],
+      "when": "out.parse.authorized == True",
+      "wait": { "wait_s": 0.01 },
+      "on_skip": "prune"
+    },
+    {
+      "id": "route-hold",
+      "type": "gate",
+      "after": ["parse"],
+      "when": "out.parse.authorized == False",
+      "wait": { "wait_s": 0.01 },
+      "on_skip": "prune"
+    },
+    {
+      "id": "publish",
+      "type": "agent",
+      "after": ["route-publish"],
+      "max_turns": 8,
+      "goal": "Execute the authorized publish. The normalized human decision is in ## Inputs (parse payload: authorized + scope; approve answer). SAFETY: copy /tmp/gated-publish-example/staged.bin to {run.publish_target} — that ONE location, nothing else, nothing extra. If the scope text does not clearly cover this copy operation, write NOTHING and reply {\"published\": false, \"refused\": \"<why>\"}. Otherwise copy, re-hash the copy against the stage sha256 (from the stage payload in your Inputs), and reply ONLY fenced json {\"published\": true, \"sha256\": \"<hex>\", \"authorized_scope\": \"<scope verbatim>\", \"verified\": <true iff hashes equal>}."
+    },
+    {
+      "id": "hold-report",
+      "type": "agent",
+      "after": ["route-hold"],
+      "max_turns": 4,
+      "goal": "The publish was NOT authorized (explicit hold, or a bare/vague 'publish' that carried no authorization clause — the parse payload in ## Inputs carries held_reason). Touch no file. Reply with ONLY fenced json {\"published\": false, \"held_because\": \"<held_reason verbatim>\", \"next_step\": \"<one line: the exact release text this would need to execute>\"}"
+    },
+    {
+      "id": "report",
+      "type": "agent",
+      "after": ["publish", "hold-report"],
+      "max_turns": 4,
+      "goal": "Close the publish run: exactly one arm ran (the pruned arm counts as satisfied and injects nothing — say which ran from the payloads in ## Inputs). The pre-check answer (## Inputs from 'precheck') carries attempt + waited_s — report them. Reply with ONLY fenced json {\"lane\": \"publish|hold\", \"published\": <bool from executing arm>, \"sha256\": \"<hex or null>\", \"precheck_attempts\": <int>, \"held_because\": \"<reason or null>\"}"
+    }
+  ]
+}
