@@ -1563,7 +1563,16 @@ def _expand_includes_at_door(graph):
         # dict-valued memo: the key's presence marks the read; None is a cached
         # absence (the resolver's unknown-entry refusal), not a cache miss.
         if name not in _memo:
-            _memo[name] = base_reader(name)
+            data = base_reader(name)
+            # #50: a shelved file is bare graph or the {meta, graph} envelope —
+            # unwrap to the graph here, the same normalizer `from=<name>` uses, so
+            # the resolver's full standalone validation measures THE GRAPH, not
+            # the envelope wrapper (PR#84 review F-2 made the shelf check strict
+            # enough to refuse an envelope's unknown `meta`/`graph` keys).
+            if isinstance(data, dict) and isinstance(data.get("graph"), dict) \
+                    and not isinstance(data.get("nodes"), list):
+                data = data["graph"]
+            _memo[name] = data
         return _memo[name]
     try:
         expanded, notes = _common.expand_includes(graph, reader)
