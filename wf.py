@@ -182,6 +182,8 @@ def _wake_endpoint():
         cfg = wfcommon._yaml_load((wfcommon.hermes_home() / "config.yaml").read_text()) or {}
     except Exception:
         cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}                                  # F3: garbage config root degrades, never crashes
     api = wfcommon._expand_config_values((cfg.get("platforms") or {}).get("api_server") or {})
     if not isinstance(api, dict):
         api = {}
@@ -199,33 +201,29 @@ def _wake_endpoint():
         host = f"[{host}]"                        # F2: a bare IPv6 host needs URL brackets
     return f"http://{host}:{port}/v1/chat/completions", key, "X-Hermes-Session-Id"
 
-def _wake_already(run, event, key):
-    """Transition-only guard: an already-DELIVERED (event, key) is never re-pinged —
-    a runner respawn parked at the same gate hold (same definition fingerprint)
-    must not double-notify. A failed attempt is NOT a delivered transition: the
-    next pass re-attempts (at-least-once on the owner, zero on duplicates). A
-    changed `_def` key (amend re-holds a redesigned gate) IS a new transition."""
+def _wake_already(run, event, identity):
+    """Transition-only guard: an already-DELIVERED (event, identity) is never
+    re-pinged — a runner respawn parked at the same gate hold (same definition
+    fingerprint) must not double-notify. A failed attempt is NOT a delivered
+    transition: the next pass re-attempts (at-least-once on the owner, zero on
+    duplicates). Identity is (key, generation), so a terminal decision that is
+    genuinely RE-MADE (a new log line between the two decisions bumps the
+    generation) is a new transition and wakes again (finding 5). Every probe read
+    is fail-open (F3): a corrupt line, a non-dict JSON value, or an unreadable
+    probe (wake.jsonl a directory -> IsADirectoryError) degrades to 'not yet
+    delivered' — the wake path must never cost the run its exit."""
     try:
         for l in (run / "wake.jsonl").read_text().splitlines():
             try:
                 rec = json.loads(l)
             except Exception:
                 continue
-            if rec.get("event") == event and rec.get("key") == key and rec.get("delivered"):
+            if (isinstance(rec, dict) and rec.get("event") == event
+                    and rec.get("key") == identity and rec.get("delivered")):
                 return True
-    except FileNotFoundError:
+    except Exception:
         pass
     return False
-
-def _wake_gen(run):
-"""Transition counter: lines already in events.jsonl (the run's own ledger).
-    Two notifications separated by a new ledger line are separated by a real state
-    change — that is what makes a re-made terminal decision (failed, amended, failed
-    again) a NEW transition while a respawn of the same decision stays deduped."""
-    try:
-        return sum(1 for l in (run / "events.jsonl").read_text().splitlines() if l.strip())
-    except Exception:
-        return 0
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Credentials must NEVER ride a redirect (NEW blocker): urlopen's default
@@ -238,6 +236,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 _WAKE_OPENER = urllib.request.build_opener(_NoRedirect)
 
+def _wake_gen(run):
+    """Transition counter: lines already in events.jsonl (the run's own ledger).
+    Two notifications separated by a new ledger line are separated by a real state
+    change — that is what makes a re-made terminal decision (failed, amended, failed
+    again) a NEW transition while a respawn of the same decision stays deduped."""
+    try:
+        return sum(1 for l in (run / "events.jsonl").read_text().splitlines() if l.strip())
+    except Exception:
+        return 0
+
 def notify(run, event, text, key=None):
     """Push ONE lifecycle transition to the owner session stamp. Owner-null (tests,
     CLI, tool hosts without a session env) writes NOTHING — the door's silent
@@ -247,83 +255,92 @@ def notify(run, event, text, key=None):
     at-least-once while the server-side dedupe guarantees the PAID TURN runs at most
     once per transition (F5). Delivery failure is loud in the probe and NEVER raises
     into the run loop — the run's own state was already decided; a dead endpoint must
-    not cost the run its exit."""
-    if not run.is_dir():
-        return
-    meta = jload(run / "run.json", {}) or {}
-    owner = meta.get("owner")
-    # Defensive on shape (R10): the wake needs the door's dict stamp
-    # {session_id, ...}; any other truthy value (legacy strings in older/fixed-up
-    # run.json files) is not a delivery target — degrade silently, never crash.
-    if not isinstance(owner, dict):
-        return
-    sid = owner.get("session_id")
-    if not sid:
-        return
-    # Identity: an EXPLICIT caller key already names the transition exactly
-    # (gate id + definition fingerprint; crash reason) — it must survive a
-    # runner respawn, so no generation is mixed in. A DEFAULTED key is just
-    # the event name: two distinct decisions of the same class (failed,
-    # amended, failed again) only differ by what the ledger says happened in
-    # between, so the generation distinguishes them (finding 5) while a
-    # respawn of the SAME delivered decision still dedupes.
-    gen = _wake_gen(run) if key is None else 0
-    key = event if key is None else key
-    identity = hashlib.sha256(
-        f"{run.name}\0{event}\0{key}\0{gen}".encode()).hexdigest()[:32]
-    if _wake_already(run, event, identity):
-        return
-    rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
-           "key": identity, "gen": gen, "text": text}
-    ep = _wake_endpoint()
-    if ep is None:
-        rec["delivered"] = False
-        rec["error"] = "no reachable api_server (enable platforms.api_server + API_SERVER_KEY)"
-    else:
-        url, secret, hdr = ep
+    not cost the run its exit. Nothing caller-computed is interpolated into the probe
+    before the generic fail-open net; a crash in preparation records a typed line."""
+    try:
+        if not run.is_dir():
+            return
+        meta = jload(run / "run.json", {}) or {}
+        owner = meta.get("owner")
+        # Defensive on shape (R10): the wake needs the door's dict stamp
+        # {session_id, ...}; any other truthy value (legacy strings in older/fixed-up
+        # run.json files) is not a delivery target — degrade silently, never crash.
+        if not isinstance(owner, dict):
+            return
+        sid = owner.get("session_id")
+        if not sid:
+            return
+        # Identity: an EXPLICIT caller key already names the transition exactly
+        # (gate id + definition fingerprint; crash reason) — it must survive a
+        # runner respawn, so no generation is mixed in. A DEFAULTED key is just
+        # the event name: two distinct decisions of the same class (failed,
+        # amended, failed again) only differ by what the ledger says happened in
+        # between, so the generation distinguishes them (finding 5) while a
+        # respawn of the SAME delivered decision still dedupes.
+        gen = _wake_gen(run) if key is None else 0
+        key = event if key is None else key
+        identity = hashlib.sha256(
+            f"{run.name}\0{event}\0{key}\0{gen}".encode()).hexdigest()[:32]
+        if _wake_already(run, event, identity):
+            return
+        rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
+               "key": identity, "gen": gen, "text": text}
+        ep = _wake_endpoint()
+        if ep is None:
+            rec["delivered"] = False
+            rec["error"] = "no reachable api_server (enable platforms.api_server + API_SERVER_KEY)"
+        else:
+            url, secret, hdr = ep
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps({"model": "hermes-agent", "stream": False,
+                                     "messages": [{"role": "user", "content": text}]}).encode(),
+                    headers={"Content-Type": "application/json", hdr: str(sid),
+                             "Idempotency-Key": identity,
+                             **({"Authorization": f"Bearer {secret}"} if secret else {})})
+                with _WAKE_OPENER.open(req, timeout=WAKE_TIMEOUT_S) as resp:
+                    status = getattr(resp, "status", None) or resp.getcode()
+                    if 300 <= status < 400:
+                        # A redirect is NOT a delivery: nothing followed, nothing
+                        # forwarded; probe undelivered so the retry re-drives.
+                        rec["delivered"] = False
+                        rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
+                    else:
+                        rec["delivered"] = 200 <= status < 300
+                        if not rec["delivered"]:
+                            rec["error"] = f"HTTP {status}"
+            except urllib.error.HTTPError as e:
+                rec["delivered"] = False
+                rec["error"] = f"HTTP {e.code}"
+            except (socket.timeout, TimeoutError):
+                # F5: a read timeout is NOT a delivery — we never saw a status line,
+                # so we cannot claim the turn was queued. Recording delivered=True
+                # here let the guard suppress the retry FOREVER: a transient gateway
+                # stall permanently lost the transition. Probe it as undelivered; the
+                # next pass retries and the delivered-guard ends the sequence at the
+                # first success (at-least-once on the nudge; the stable
+                # Idempotency-Key makes the server-side dedupe exactly-once).
+                rec["delivered"] = False
+                rec["error"] = "timeout: read window closed before a response (retryable)"
+            except Exception as e:
+                # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
+                # http.client raises ValueError("Invalid header value b'Bearer
+                # <secret>'") for a key with a newline. Record the TYPE only (plus
+                # a secret-free suffix for a ValueError, whose argument is the raw
+                # bytes with the secret embedded); never the raw repr.
+                rec["delivered"] = False
+                suffix = (" (header value rejected)" if isinstance(e, ValueError) else "")
+                rec["error"] = f"{type(e).__name__}{suffix}"
+    except Exception as e:                       # fail-open encompasses PREPARATION (F3)
         try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps({"model": "hermes-agent", "stream": False,
-                                 "messages": [{"role": "user", "content": text}]}).encode(),
-                headers={"Content-Type": "application/json", hdr: str(sid),
-                         "Idempotency-Key": identity,
-                         **({"Authorization": f"Bearer {secret}"} if secret else {})})
-            with _WAKE_OPENER.open(req, timeout=WAKE_TIMEOUT_S) as resp:
-                status = getattr(resp, "status", None) or resp.getcode()
-                if 300 <= status < 400:
-                    # A redirect is NOT a delivery: nothing followed, nothing
-                    # forwarded; probe undelivered so the retry re-drives.
-                    rec["delivered"] = False
-                    rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
-                else:
-                    rec["delivered"] = 200 <= status < 300
-                    if not rec["delivered"]:
-                        rec["error"] = f"HTTP {status}"
-        except urllib.error.HTTPError as e:
-            rec["delivered"] = False
-            rec["error"] = f"HTTP {e.code}"
-        except (socket.timeout, TimeoutError):
-            # F5: a read timeout is NOT a delivery — we never saw a status line,
-            # so we cannot claim the turn was queued. Recording delivered=True
-            # here let _wake_already suppress the retry FOREVER: a transient
-            # gateway stall permanently lost the transition. Probe it as
-            # undelivered instead; the next pass retries, and the delivered-guard
-            # means a retry that succeeds ends the sequence (at-least-once, and
-            # the wake text is an idempotent nudge — a rare double can only ever
-            # ask the owner to look at the same run again).
-            rec["delivered"] = False
-            rec["error"] = "timeout: read window closed before a response (retryable)"
-        except Exception as e:
-            rec["delivered"] = False
-            # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
-            # http.client raises ValueError("Invalid header value b'Bearer
-            # <secret>'") for a key with a newline. Record the TYPE only (plus
-            # a secret-free suffix for a ValueError, whose argument is the raw
-            # bytes with the secret embedded); never the raw repr.
-            rec["delivered"] = False
-            suffix = (" (header value rejected)" if isinstance(e, ValueError) else "")
-            rec["error"] = f"{type(e).__name__}{suffix}"
+            rec = {"ts": now(), "event": event, "delivered": False,
+                   "error": f"notify-prep: {type(e).__name__}"}
+            with open(run / "wake.jsonl", "a") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        return
     try:
         with open(run / "wake.jsonl", "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
