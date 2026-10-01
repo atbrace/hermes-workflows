@@ -224,6 +224,76 @@ try:
     out7 = drive(r7).stdout.strip()
     check("non-dict owner degrades silently", out7.startswith(f"WORKFLOW_HELD {r7.name} g1"), out7)
     check("non-dict owner writes no wake probe", not (r7 / "wake.jsonl").exists(), str(wakes(r7)))
+
+    # ---- 8. a READ TIMEOUT is not a delivery: the event must stay retryable.
+    #         Pinned in-process (notify() is pure stdlib): a sink that admits the
+    #         connection then hangs past WAKE_TIMEOUT_S, so the client times out
+    #         mid-read. A suppressed retry here means the owner NEVER learns the
+    #         transition — the permanent-loss class. (F5) ----
+    hang_done = threading.Event()
+
+    class _Hang(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            hang_done.wait(30)                 # hang past the client's read window
+            self.send_response(202)
+            self.end_headers()
+            self.wfile.write(b"{}")
+        def log_message(self, *a):
+            pass
+
+    hang_srv = ThreadingHTTPServer(("127.0.0.1", 0), _Hang)
+    threading.Thread(target=hang_srv.serve_forever, daemon=True).start()
+    r8 = mk("w8", G_HOLD, OWNER)
+    try:
+        import wf as _wf
+        _saved = _wf.WAKE_TIMEOUT_S
+        _wf.WAKE_TIMEOUT_S = 0.5               # the constant is the whole contract
+        try:
+            e8 = env(); e8["WF_WAKE_SINK_PORT"] = str(hang_srv.server_address[1])
+            os.environ["WF_WAKE_SINK_PORT"] = e8["WF_WAKE_SINK_PORT"]
+            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            w8a = wakes(r8)
+            check("timeout attempt probe-records, delivered=false (retryable)",
+                  len(w8a) == 1 and w8a[0].get("delivered") is False, w8a)
+            hang_done.set()                    # release the stalled handler thread
+            os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)   # fast sink now
+            before = len(sinks)
+            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            w8b = wakes(r8)
+            check("timeout does NOT suppress the retry: second attempt delivers",
+                  len(w8b) == 2 and w8b[1].get("delivered") is True
+                  and len(sinks) == before + 1, w8b)
+            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            check("a DELIVERED transition stays deduped (retry ends at success)",
+                  len(wakes(r8)) == 2 and len(sinks) == before + 1, wakes(r8))
+        finally:
+            _wf.WAKE_TIMEOUT_S = _saved
+    finally:
+        hang_done.set()
+        hang_srv.shutdown()
+
+    # ---- 9. runner exception-CRASH (the write_runner_exit('crashed') net) pushes
+    #         run.failed too: crash deaths emit no WORKFLOW_* stdout at all, so the
+    #         probe+wake is the only non-polling signal the run died. Transition-only
+    #         guard applies (event run.failed, key carries the crash reason). (F6) ----
+    r9 = mk("w9", [{"id": "boom", "type": "agent", "goal": "LIST: go"}], OWNER)
+    (r9 / "run.json").write_text(json.dumps(
+        {"hermes_bin": FAKE, "concurrency": "abc", "node_timeout": 60, "owner": OWNER}))
+        # concurrency:"abc" -> TypeError inside ThreadPoolExecutor, past acquire_lock:
+        # the maintainer-verified crash trigger (tests/test_systemexit_stamp.py #3).
+    out9 = drive(r9).stdout.strip()
+    w9 = wakes(r9)
+    check("crash wake fires exactly once",
+          len(w9) == 1 and w9[0].get("event") == "run.failed"
+          and "crashed" in w9[0].get("text", ""), w9)
+    check("crash path stdout vocabulary unchanged (no new line)",
+          "WORKFLOW_" not in out9, out9)
+    check("crash still stamps runner_exit.json (net untouched)",
+          (r9 / "runner_exit.json").exists()
+          and "crashed" in json.loads((r9 / "runner_exit.json").read_text()).get("reason", ""),
+          str((r9 / "runner_exit.json").read_text() if (r9 / "runner_exit.json").exists() else ""))
 finally:
     _sink_srv.shutdown()
     shutil.rmtree(tmp, ignore_errors=True)
