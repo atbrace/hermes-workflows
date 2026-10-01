@@ -21,3 +21,4 @@ tests/fake-*
 tests/prompt-*.log
 home-*/
 ci-out*/
+.nfs*
