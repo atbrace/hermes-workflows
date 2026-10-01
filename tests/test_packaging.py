@@ -74,7 +74,8 @@ def main() -> None:
                       "plugin.yaml", "__init__.py", "wf.py", "wfcommon.py",
                       "dashboard/manifest.json", "dashboard/plugin_api.py", "desktop/plugin.js",
                       "README.md", "INSTALL.md", "SKILL.md", "examples/smoke.json",
-                      "examples/approve-publish.json", "examples/branch-on-verdict.json",
+                      "examples/approve-publish.json", "examples/blind-council.workflow.json",
+                      "examples/branch-on-verdict.json",
                       "examples/portable-review.workflow.json",
                       "examples/incident-response.json",
                       "examples/gated-publish.workflow.json",
@@ -91,6 +92,7 @@ def main() -> None:
                           for part in members)
                   and {m[len(root):] for m in members if m.startswith(root + "examples/")}
                       == {"examples/smoke.json", "examples/approve-publish.json",
+                          "examples/blind-council.workflow.json",
                           "examples/branch-on-verdict.json",
                           "examples/incident-response.json",
                           "examples/portable-review.workflow.json",
