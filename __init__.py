@@ -140,47 +140,15 @@ def _input_graph(args, *, run_id=False, library=False):
     return None, None
 
 def _validation_error(graph):
-    """Return graph-level and node-level defects together, before any write/spawn."""
-    errs = []
-    for key in sorted(set(graph) - GRAPH_KEYS):
-        errs.append({"node": None, "field": key,
-                     "msg": f"unknown graph key; allowed: {sorted(GRAPH_KEYS)}"})
-    # #32: a file may state its dialect; absent = wf/1, unknown = refused with the
-    # supported list (fail-closed: a newer dialect must never be misrun as wf/1).
-    errs.extend(_common.grammar_errors(graph))
-    for key in ("concurrency", "item_concurrency"):
-        if key in graph and (type(graph[key]) is not int or graph[key] <= 0):
-            errs.append({"node": None, "field": key,
-                         "msg": f"{key} must be a positive integer"})
-    if "defaults" in graph:
-        # ONE truth: the same per-key rules a node key gets; apply_graph_defaults
-        # bakes this block into the agent defs before graph.json is written.
-        errs.extend(_common._defaults_errors(graph["defaults"]))
-    policy = graph.get("model_policy", {})
-    if not isinstance(policy, dict):
-        errs.append({"node": None, "field": "model_policy", "msg": "model_policy must be an object"})
-    else:
-        for key in sorted(set(policy) - {"require_model", "forbidden_models"}):
-            errs.append({"node": None, "field": f"model_policy.{key}", "msg": "unknown policy key"})
-        if "require_model" in policy and not isinstance(policy["require_model"], bool):
-            errs.append({"node": None, "field": "model_policy.require_model", "msg": "require_model must be boolean"})
-        if "forbidden_models" in policy and not _model_names_valid(policy["forbidden_models"]):
-            errs.append({"node": None, "field": "model_policy.forbidden_models",
-                         "msg": "forbidden_models must be a list of non-empty strings"})
-    if not _model_names_valid(_common.seat_forbidden_models()):
-        errs.append({"node": None, "field": "model.workflows_forbidden_models",
-                     "msg": "seat forbidden model floor must be a list of non-empty strings"})
-    for key in ("name", "description"):
-        if key in graph and (not isinstance(graph[key], str) or not graph[key].strip()):
-            errs.append({"node": None, "field": key, "msg": f"{key} must be a non-empty string"})
-    if "provenance" in graph:
-        prov = graph["provenance"]
-        if not isinstance(prov, dict):
-            errs.append({"node": None, "field": "provenance", "msg": "provenance must be an object"})
-        else:
-            for key in sorted(set(prov) - _common.PROVENANCE_KEYS):
-                errs.append({"node": None, "field": f"provenance.{key}",
-                             "msg": "unknown key; allowed: " + json.dumps(sorted(_common.PROVENANCE_KEYS))})
+    """Return graph-level and node-level defects together, before any write/spawn.
+
+    PR#84 review F-2: the structural (graph-level) half is delegated to
+    wfcommon.structural_graph_errors — the SAME rules the include door measures
+    every expanded shelf with — so submitted graphs and included graphs can
+    never diverge in strictness again. This side keeps the door-specific node
+    normalization (author-forged route_verified stripping) and composes it with
+    the shared node-level validator."""
+    errs = list(_common.structural_graph_errors(graph))
     nodes = graph.get("nodes")
     # The shared validator assumes hashable ids and iterable dependency lists.
     # Normalize only those invalid shapes in a copy, collecting their errors while

@@ -1190,6 +1190,116 @@ def validate_graph(nodes):
     e = errs[0]
     return (e["msg"] if e["node"] is None else f"node {e['node']}: {e['msg']}")
 
+# ---------- full structural graph validation (shared: door + include door) ----------
+# PR#84 review F-2: the door's `_validation_error` and the include resolver's
+# shelf check were TWO validators with different strictness — a shelf carrying an
+# unknown graph key, invalid defaults, a malformed model_policy or provenance was
+# refused when submitted directly and silently accepted when included, because the
+# lossy top-level projection in the expansion pass drops those keys before the
+# fused graph ever reaches the door validator. ONE validator now serves both
+# doors: the structural (graph-level) half lives here, next to the node half it
+# composes with, and the stdlib-only core stays independent of the door (the door
+# delegates here; this module never imports the door).
+
+STRUCTURAL_GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
+                         "provenance", "grammar", "include",
+                         "concurrency", "item_concurrency"}  # #100: optional run-level limits
+
+def model_names_valid(names):
+    return isinstance(names, list) and all(isinstance(n, str) and n.strip() for n in names)
+
+def model_policy_errors(policy):
+    """Closed-set + type rules for one model_policy object, as messages of the
+    form 'model_policy.<field>: <detail>'. ONE list of rules: the structural
+    graph validator AND the include fuse (which ORs child require_model floors
+    into the parent) both consume it — a policy that would fail direct submission
+    can never slip through the merge's coercion path (PR#84 review F-2: a parent
+    require_model:'false' became boolean True via the OR and then passed)."""
+    msgs = []
+    if not isinstance(policy, dict):
+        return ["model_policy: model_policy must be an object"]
+    for key in sorted(set(policy) - {"require_model", "forbidden_models"}):
+        msgs.append(f"model_policy.{key}: unknown policy key")
+    if "require_model" in policy and not isinstance(policy["require_model"], bool):
+        msgs.append("model_policy.require_model: require_model must be boolean")
+    if "forbidden_models" in policy and not model_names_valid(policy["forbidden_models"]):
+        msgs.append("model_policy.forbidden_models: forbidden_models must be a "
+                    "list of non-empty strings")
+    return msgs
+
+def structural_graph_errors(graph, extra_keys=()):
+    """Graph-level (non-node) defects as [{node:None, field, msg}] — the exact
+    checks the door historically ran, moved verbatim so submitted graphs AND each
+    expanded shelf are measured by the SAME rules. `extra_keys` extends the
+    closed top-level key set (the door passes its own additions); `include` is
+    always allowed here — the author form carries it by design, and the fused
+    output is include-STRIPPED, so the door's GRAPH_KEYS law stays intact on
+    every submitted surface. Callers compose with validate_graph_errors (the
+    node-level half)."""
+    if not isinstance(graph, dict):
+        return [{"node": None, "field": "graph", "msg": "graph must be an object"}]
+    errs = []
+    def E(field, msg):
+        errs.append({"node": None, "field": field, "msg": msg})
+    for key in sorted(set(graph) - STRUCTURAL_GRAPH_KEYS - set(extra_keys)):
+        E(key, f"unknown graph key; allowed: {sorted(STRUCTURAL_GRAPH_KEYS | set(extra_keys))}")
+    # #32: a file may state its dialect; absent = wf/1, unknown = refused.
+    errs.extend(grammar_errors(graph))
+    # #100: run-level concurrency limits, positive integers only.
+    for key in ("concurrency", "item_concurrency"):
+        if key in graph and (type(graph[key]) is not int or graph[key] <= 0):
+            E(key, f"{key} must be a positive integer")
+    if "defaults" in graph:
+        errs.extend(_defaults_errors(graph["defaults"]))
+    if "model_policy" in graph:
+        for msg in model_policy_errors(graph["model_policy"]):
+            field, _, detail = msg.partition(": ")
+            E(field, detail)
+    if not model_names_valid(seat_forbidden_models()):
+        E("model.workflows_forbidden_models", "seat forbidden model floor must be a list of non-empty strings")
+    for key in ("name", "description"):
+        if key in graph and (not isinstance(graph[key], str) or not graph[key].strip()):
+            E(key, f"{key} must be a non-empty string")
+    if "provenance" in graph:
+        prov = graph["provenance"]
+        if not isinstance(prov, dict):
+            E("provenance", "provenance must be an object")
+        else:
+            for key in sorted(set(prov) - PROVENANCE_KEYS):
+                E(f"provenance.{key}", "unknown key; allowed: " + json.dumps(sorted(PROVENANCE_KEYS)))
+    return errs
+
+def validate_graph_full(graph):
+    """The WHOLE structural+node validation of a graph object (unnormalized) —
+    what a submitted graph is measured with at the door. Returns the defect list;
+    empty means sound. Node-shape normalization (unhashable ids, non-list after,
+    author-forged route_verified) is the door's caller-side job — see
+    _validation_error there; this function never mutates its input."""
+    if not isinstance(graph, dict):
+        return [{"node": None, "field": "graph", "msg": "graph must be an object"}]
+    errs = structural_graph_errors(graph)
+    nodes = graph.get("nodes")
+    safe = [] if isinstance(nodes, list) else nodes
+    if isinstance(nodes, list):
+        for index, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                safe.append(node)  # shared validator identifies the first non-object
+                continue
+            item = dict(node)
+            nid = node.get("id")
+            if isinstance(nid, (dict, list)):
+                errs.append({"node": None, "field": f"nodes[{index}].id",
+                             "msg": "node id must be a string"})
+                item["id"] = f"__invalid_id_{index}__"
+            deps = node.get("after", [])
+            if not isinstance(deps, list) or any(not isinstance(dep, str) for dep in deps):
+                errs.append({"node": nid if isinstance(nid, str) else None,
+                             "field": "after", "msg": "after must be a list of node id strings"})
+                item["after"] = []
+            safe.append(item)
+    errs.extend(validate_graph_errors(safe))
+    return errs
+
 # ---------- include-by-expansion (design 2026-09-30) ----------
 # Composition at MATERIALIZE time, never invocation: a graph carrying a top-level
 # `include: [{as, use, seeds, exports}]` annotation expands to a plain wf/1 graph
@@ -1249,14 +1359,21 @@ def _include_error(alias, msg):
 
 
 def _include_text_fields(node):
-    """The string fields a {run.KEY} render touches — the exact set
-    _bind_run_context (map mode) renders: goal/context/question/profile plus the
-    fan-out goal template and item goals. Only PRESENT string fields are yielded.
-    Duplicated here (not imported from the door) so the resolver stays hermes-free
-    and byte-agnostic to the door."""
+    """The string fields the {run.KEY} seed-render surface touches: the exact set
+    _bind_run_context (map mode) renders — goal/context/question/profile plus the
+    fan-out goal template and item goals — PLUS an echo node's string `output`.
+    The echo addition closes PR#84 review F-3: echo output is a text surface the
+    runner commits VERBATIM (wf.py echo pass), so a seed placeholder surviving it
+    became a literal `{run.MISSING}` verdict in a done run. Only PRESENT string
+    fields are yielded (a dict/other output is data, not text). One definition
+    feeds seed-render, scratch-path detection, and the door's survivor check —
+    run/amend/binding/notes cannot drift apart again. Duplicated here (not
+    imported from the door) so the resolver stays hermes-free."""
     for f in ("goal", "context", "question", "profile"):
         if isinstance(node.get(f), str):
             yield f, (f,)
+    if node.get("type") == "echo" and isinstance(node.get("output"), str):
+        yield "output", ("output",)
     fo = node.get("fanout")
     if isinstance(fo, dict):
         if isinstance(fo.get("goal"), str):
