@@ -255,11 +255,17 @@ def notify(run, event, text, key=None):
         except urllib.error.HTTPError as e:
             rec["delivered"] = False
             rec["error"] = f"HTTP {e.code}"
-        except socket.timeout:
-            # The connection was admitted; the wake turn may outlive our read
-            # window — the gateway continues it server-side.
-            rec["delivered"] = True
-            rec["note"] = "read window closed; the gateway continues the wake turn"
+        except (socket.timeout, TimeoutError):
+            # F5: a read timeout is NOT a delivery — we never saw a status line,
+            # so we cannot claim the turn was queued. Recording delivered=True
+            # here let _wake_already suppress the retry FOREVER: a transient
+            # gateway stall permanently lost the transition. Probe it as
+            # undelivered instead; the next pass retries, and the delivered-guard
+            # means a retry that succeeds ends the sequence (at-least-once, and
+            # the wake text is an idempotent nudge — a rare double can only ever
+            # ask the owner to look at the same run again).
+            rec["delivered"] = False
+            rec["error"] = "timeout: read window closed before a response (retryable)"
         except Exception as e:
             rec["delivered"] = False
             rec["error"] = f"{type(e).__name__}: {e}"
@@ -3814,7 +3820,15 @@ def main(run_id):
         # possible anyway.)
         raise
     except BaseException as e:
-        write_runner_exit(run, f"crashed: {type(e).__name__}: {e}", graph=exit_graph[0])
+        reason = f"crashed: {type(e).__name__}: {e}"
+        write_runner_exit(run, reason, graph=exit_graph[0])
+        # F6: a crash emits NO WORKFLOW_* stdout line — the probe+wake is the only
+        # non-polling signal the run died. Ride the same transition-only notify
+        # (key = the crash reason: the __main__ net re-raising into a second notify
+        # is deduped here, and only retries if THIS attempt failed to deliver).
+        notify(run, "run.failed",
+               f"Workflow run {run_id} FAILED: runner crashed ({type(e).__name__}: {e})"
+               " — status shows the exit record.", key=reason)
         raise
     finally:
         # #61c last-resort net (all three exits + crash): a runner-adopted
@@ -3874,6 +3888,10 @@ if __name__ == "__main__":
         try:                      # catches death OUTSIDE main's try (and re-raises
             write_runner_exit(runs_root() / _rid,  # nothing is swallowed
                               f"crashed: {type(_e).__name__}: {_e}")
+            notify(runs_root() / _rid, "run.failed",  # F6: same transition-only
+                   f"Workflow run {_rid} FAILED: runner crashed "
+                   f"({type(_e).__name__}: {_e}) — status shows the exit record.",
+                   key=f"crashed: {type(_e).__name__}: {_e}")
         except Exception:
             pass
         raise
