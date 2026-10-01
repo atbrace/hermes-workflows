@@ -2101,6 +2101,15 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta.update(concurrency_meta)
     meta.update(_identity_stamps(args, graph, lib_name))   # 1.1: only derivable keys land
     (r / "run.json").write_text(json.dumps(meta))
+    # AUTHORITY LAW (owner ruling, PR#97 review): every owner-facing automatic wake
+    # is RUNNER-AUTHORED protocol text; graph-authored prose (gate questions etc.)
+    # is attributed data — it lives in events.jsonl / status / the desktop card and
+    # NEVER rides a role:user owner turn. This stamp is the durable marker that the
+    # run was created under that law (the door writes it at creation; the runner
+    # reads it for the probe context and never rewrites it). A run dir made outside
+    # the door carries no stamp — status shows it, and a replaying runner stays
+    # compatible (the text law lives in wf.notify itself, not in this file).
+    (r / "wake_protocol").write_text("runner-authored/v1\n")
     if lane_path is not None:
         entry = {"lane_key": args["lane_key"], "run_id": rid,
                  "claimed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
