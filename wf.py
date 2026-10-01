@@ -3959,9 +3959,10 @@ def main(run_id):
                 hm = {"since": time.time(), "_def": hdef, "fp_rule_version": FP_RULE_VERSION}
                 hf.write_text(json.dumps(hm))
             notify(run, "gate.held",
-                   f"Workflow run {run_id} is HELD at gate '{gate['id']}' and needs your "
-                   "answer. Inspect the question in the run's status or gates view, then "
-                   "answer with the workflow release action.",
+                   f"[runner-authored/v1] Workflow run {run_id} is HELD at gate "
+                   f"'{gate['id']}' and needs your answer. Inspect the question in the "
+                   "run's status or gates view, then answer with the workflow release "
+                   "action.",
                    key=f"{gate['id']}:{hdef}")
             if ht is None:
                 return f"held at {gate['id']}"
