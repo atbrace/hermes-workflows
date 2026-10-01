@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- fix(valid): gate `when` ref heads must descend from the gate's `after` ancestry,
+  the law `inputs` (wfcommon validate: non-ancestor head → reject) and
+  `fanout.items_from` (head not in `after` → reject) already enforce at submit.
+  Parse-only `when_expr_ok` (sentinel operands, by design) never looked at heads,
+  so `when: "out.<sibling>.x == 'go'"` — a parallel sibling, a typo, a ghost node —
+  validated clean, then at fire time resolved to None: False ⇒ silent skip
+  (default `on_skip:prune` = dead branch), True ⇒ holds, depending on whether the
+  unrelated node happened to commit first. Same-class precedent: #59 (validator
+  accepts bad input at submit ⇒ crash at first spawn), #25/#26 (fail-closed at the
+  door). The ancestry closure walk is hoisted out of the `inputs` branch and
+  shared; the error is one per offending head, message cloned from the inputs
+  rule. Parse-error `when` keeps reporting `when_expr_ok`'s message alone (no
+  head-check noise layered on a broken expr). No change for any graph that
+  already followed references/grammar.md (`when` reads `out.<ancestor>.<path>`).
+  Test: `tests/test_when_ancestry_0930.py` (sibling/ghost/self rejected at submit;
+  direct + transitive accepted; per-head naming; inputs/literal/parse/agent-when
+  behavior byte-intact).
 - #8 (P0, partial: caller-tree escape) runner daemonize: the door spawns the
   runner through a transient double-fork hop (Popen → fork → setsid → exec;
   parent exits immediately), so by the time `handle()` returns the runner has
