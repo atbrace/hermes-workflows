@@ -52,26 +52,47 @@ def _inline_graph_size_error(graph):
 GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
               "provenance",   # 1.1 (RATIFY F5): opt-in library provenance block, door-written
               "grammar",      # #32: dialect tag of a shared file ("wf/1"; absent = wf/1)
-              # #24 knob family: fan-out widths + retry mode, validated HERE and
-              # baked into run.json (the runner already read meta["concurrency"]/
-              # meta["item_concurrency"]; they were just unreachable through any door).
+              # #100 (item 4) knob family: fan-out widths + retry mode, validated
+              # HERE and baked into run.json meta (the channel #100 prescribes —
+              # door-clamped, author-vs-default provenance stamped; the runner has
+              # always read meta["concurrency"]/meta["item_concurrency"], they were
+              # just unreachable through any sanctioned surface).
               "concurrency", "item_concurrency", "retry"}
 KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance", "_requested")
+# #100 item 4: the ONE owner-settings key that caps an author's fan-out width
+# ("16-wide stays an estate allowance, never an author pick"). Read through
+# wfcommon.owner_setting — the same channel as runs_root/profile: the door's
+# plugin ctx when it has one, else the resolved home's config.yaml raw.
+OWNER_CONCURRENCY_CAP_KEY = "max_concurrency"
+
+def _concurrency_cap():
+    """(cap, source) for width validation. The owner setting wins whenever it
+    carries a POSITIVE INT (booleans/strings/negatives are not a cap — a typo'd
+    owner value must never silently drop the hardcoded floor); otherwise the
+    hardcoded CONCURRENCY_CAP. Source rides the refusal so an author told 'cap
+    N (owner settings)' knows who set N."""
+    v = _common.owner_setting(OWNER_CONCURRENCY_CAP_KEY)
+    if isinstance(v, int) and not isinstance(v, bool) and v >= 1:
+        return v, f"owner setting {OWNER_CONCURRENCY_CAP_KEY}"
+    return _common.CONCURRENCY_CAP, "default"
 
 def _knob_errors(graph):
-    """#24: reject malformed knob values with the repo's {node, field, msg} shape.
-    Type rules mirror the validator's house style; the cap keeps a typo'd width
-    from opening thousands of child processes at once."""
+    """#100: reject malformed knob values with the repo's {node, field, msg}
+    shape. Type rules mirror the validator's house style; the width cap is
+    OWNER-FIRST (_concurrency_cap — the estate allowance), and the hardcoded
+    ceiling still keeps a typo'd width from opening thousands of processes."""
     errs = []
+    cap, cap_src = _concurrency_cap()
     for key in ("concurrency", "item_concurrency"):
         if key in graph:
             v = graph[key]
             if not isinstance(v, int) or isinstance(v, bool) or v < 1:
                 errs.append({"node": None, "field": key,
-                             "msg": f"{key} must be a positive int (cap {_common.CONCURRENCY_CAP})"})
-            elif v > _common.CONCURRENCY_CAP:
+                             "msg": f"{key} must be a positive int (cap {cap})"})
+            elif v > cap:
                 errs.append({"node": None, "field": key,
-                             "msg": f"{key} {v} exceeds cap {_common.CONCURRENCY_CAP}"})
+                             "msg": f"{key} {v} exceeds cap {cap}"
+                                    + ("" if cap_src == "default" else f" ({cap_src})")})
     if "retry" in graph:
         rt = graph["retry"]
         if not isinstance(rt, dict):

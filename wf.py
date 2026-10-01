@@ -836,8 +836,13 @@ def _receipt_concurrency(meta):
     author-vs-default provenance the door baked. A request the effective meta
     cannot honor (stale meta from a hot-reloaded runner, hand-edited run.json)
     is LOUD: mismatch set, so watchers diff requested-vs-applied without guess.
-    Legacy run.json (no knob keys) requests nothing: knobs={}, applied={defaults}."""
+    KNOB-GATED (#100 golden-solo): a run.json with NO knob keys, no provenance,
+    and no _requested emits NOTHING — the events stream of a legacy run stays
+    byte-identical to the frozen capture; there is no request to receipt."""
     run = meta["_run"]
+    if not any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                   "knobs_provenance", "_requested")):
+        return
     prov = meta.get("knobs_provenance") if isinstance(meta.get("knobs_provenance"), dict) else None
     if prov is None:
         # pre-door / hand-surgery meta: a knob key PRESENT in run.json was set by
@@ -1167,10 +1172,12 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                HERMES_WF_STEER_SPAWN=str(spawn_no),
                HERMES_WF_RUN_ID=run.name,
                HERMES_WF_RUN_DIR=str(run))   # 1.1 (RATIFY F1): absolute run dir; act_inbox prefers it
-    if wall is not None:
-        # #24: the child sees the wall it is being given (the RESUME spawn's is the
+    if wall is not None and isinstance(meta.get("retry"), dict):
+        # #100: the child sees the wall it is being given (the RESUME spawn's is the
         # remaining wall, not the full fare) — observable, and the liveness tests
-        # assert on it. Children that want it (monitors, budgeted tools) read it.
+        # assert on it. KNOB-GATED: a knob-free run's spawn env stays byte-identical
+        # to the frozen capture (golden-solo EMPTY-diff gate); the env key only
+        # means something once the retry knob exists.
         env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     # fb 625a3241: WORK_DIR_NOTE advertises wd as durable; under a safe root it must
     # also be writable. Append the child's OWN dir only; unset/'' = unrestricted in
@@ -1309,12 +1316,16 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                 "error_class": "early_death", "raw": "", "ms": ms, **sk, **evd}
     if timed_out:
         hv = _harvest_death(out, schema)   # #4: a timeout that printed a valid answer keeps it
+        # #100 golden-solo: the wall stamp rides the death record ONLY when the
+        # retry knob exists (it meters the work-metered resume); a knob-free run's
+        # node records stay byte-identical to the frozen capture.
+        wallst = {"wall": wall} if isinstance(meta.get("retry"), dict) else {}
         if hv:
             return {"status": "partial", "error": f"timeout after {timeout_s}s "
                     "(answer harvested from stdout before the kill)",
-                    "error_class": "timeout", "ms": ms, "wall": wall, "final": final_reply, **hv, **sk, **evd}
+                    "error_class": "timeout", "ms": ms, **wallst, "final": final_reply, **hv, **sk, **evd}
         return {"status": "failed", "error": f"timeout after {timeout_s}s",
-                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, "wall": wall,
+                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, **wallst,
                 "final": final_reply, **sk, **evd}
     # unsuccessful exit = failure, PERIOD — diagnostic prose on stdout must never
     # be committed as a successful result (fleet-review F: crash-with-prose).
@@ -1632,6 +1643,11 @@ def _width_tracker(meta, lock):
     log the peak per observation key as node.running_width. One dict in main();
     cheap on the wave threads; observation only — never gates a spawn."""
     state = {"live_by_node": {}, "peak_by_node": {}, "lock": threading.Lock()}
+    # KNOB-GATED (#100 golden-solo): a knob-free run's event stream stays byte-
+    # identical to the frozen capture — width receipts only mean something once
+    # an author asked for a width. Counting still happens (cheap, inert).
+    receipted = any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                        "knobs_provenance", "_requested"))
     def track(nid):
         class _T:
             def __enter__(self_inner):
@@ -1650,6 +1666,8 @@ def _width_tracker(meta, lock):
     def flush(run):
         with state["lock"]:
             peaks, state["peak_by_node"] = dict(state["peak_by_node"]), {}
+        if not receipted:
+            return
         for nid, w in peaks.items():
             log(run, "node.running_width", node=nid, running=w)
     meta["_width_flush"] = flush
