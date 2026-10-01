@@ -75,6 +75,7 @@ def main() -> None:
                       "dashboard/manifest.json", "dashboard/plugin_api.py", "desktop/plugin.js",
                       "README.md", "INSTALL.md", "SKILL.md", "examples/smoke.json",
                       "examples/approve-publish.json", "examples/branch-on-verdict.json",
+                      "examples/triage-route.workflow.json",
                       "examples/portable-review.workflow.json",
                       "examples/incident-response.json",
                       "examples/gated-publish.workflow.json",
@@ -92,6 +93,7 @@ def main() -> None:
                   and {m[len(root):] for m in members if m.startswith(root + "examples/")}
                       == {"examples/smoke.json", "examples/approve-publish.json",
                           "examples/branch-on-verdict.json",
+                          "examples/triage-route.workflow.json",
                           "examples/incident-response.json",
                           "examples/portable-review.workflow.json",
                           "examples/gated-publish.workflow.json",
