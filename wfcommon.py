@@ -25,6 +25,17 @@ FP_RULE_LEGACY = 1  # before b79fa21: budgets participated in def_hash
 FP_RULE_VERSION = 2  # b79fa21: exclude budgets
 FP_RULES = (FP_RULE_LEGACY, FP_RULE_VERSION)
 
+# #24 knob family — ONE truth for door (validation/bake) and runner (fallbacks):
+# the runner has always read meta["concurrency"]/meta["item_concurrency"] with
+# these defaults; they were simply unreachable through any sanctioned surface.
+DEFAULT_CONCURRENCY = 4         # wf.py:2236 ThreadPoolExecutor(max_workers=...)
+DEFAULT_ITEM_CONCURRENCY = 8    # wf.py:1610 fan-out cap
+CONCURRENCY_CAP = 4096          # ceiling vs floor: a typo'd width must not open
+                                # thousands of child processes at launch
+RETRY_MODES = ("wall", "work-metered")   # wall = today's ladder (the default)
+RETRY_KEYS = {"mode", "resume_floor_s"}  # closed key set for the retry block
+DEFAULT_RESUME_FLOOR_S = 30              # min wall a work-metered resume may get
+
 def def_hash(node, rule=FP_RULE_VERSION):
     # Budgets are not work: raising a wall or naming a shape must not invalidate a
     # committed node (and apply_graph_defaults baking budgets into an old run's
