@@ -2269,7 +2269,6 @@ def main(run_id):
     meta["_spawn_n"] = {}                   # per (node,item) spawn counter for log names
     meta["_retries_left"] = _retry_conf_params(meta)[1]   # Q4 per-run retry budget
     _width_tracker(meta, None)                # #24: observed fan-out width per node
-    _receipt_concurrency(meta)                # #100: requested-vs-applied receipt, once
     exit_graph = [jload(run / "graph.json")]
 
     def _stop_watcher():
@@ -2301,6 +2300,10 @@ def main(run_id):
     threading.Thread(target=_stop_watcher, daemon=True).start()
     first = not (run / "events.jsonl").exists()
     log(run, "run.started" if first else "run.resumed")
+    # #100: the requested-vs-applied receipt rides AFTER the started/resumed
+    # line — emitting it earlier would create events.jsonl and make the FIRST
+    # runner misread itself as a resume (the reaper test pins the trace order).
+    _receipt_concurrency(meta)                # once per runner process
     rs = Run(run)
     exit_graph[0] = rs.graph
     consumed, steering = set(), {}
