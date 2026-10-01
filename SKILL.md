@@ -1,13 +1,13 @@
 ---
 name: workflow
 description: "Workflow fan-out audit and census: run agent graphs"
-version: 1.1.1
+version: 1.1.2
 metadata:
   hermes:
     tags: [workflows, fan-out, audit, census, orchestration]
 ---
 
-# Workflow authoring (1.1.1)
+# Workflow authoring (1.1.2)
 
 Requires Hermes Agent v2026.9.21 or newer (package >=0.21.4). A Desktop gate answer sends a visible resume turn to the run owner's chat via the composer SDK; on older Desktop builds it may only insert draft text for the user to send. If no owner/composer is available, type the resume line in that owner chat. Before disabling the plugin, list runs and stop each live run with `workflow{action:"stop",run_id:<id>}`.
 
@@ -25,7 +25,7 @@ For a decision, a `gate` with `question` and `options` holds; present it to the 
 
 ## Run and handoff
 
-- `running` requires a verified live runner. `interrupted` means unfinished work without one; inspect surviving outputs before explicitly resuming with `wait`. Fatal recorded runner errors are `failed`, not automatic respawn loops. Held gates are not counted as running. `status` explains current nodes and every `status`/`wait` payload carries `next` — do what `next` says; `wait` again until it is empty. `next` is derived, never a guess. On a failed run, read the failed node's facts (`node_facts`: error_class — closed set; `cancelled` is never a failure; attempts, final words, log path — `partial` is a harvested answer downstream can use; retryable deaths already got one machine re-drive) and committed outputs before `amend` or stop. `amend` submits the WHOLE replacement graph; `dry_run:true` previews invalidation. `stop` is terminal. Details: [operations](references/operations.md).
+- `running` requires a verified live runner. `interrupted` means unfinished work without one; inspect surviving outputs before explicitly resuming with `wait`. Fatal recorded runner errors are `failed`, not automatic respawn loops. Held gates are not counted as running. `status` explains current nodes and every `status`/`wait` payload carries `next` — do what `next` says; `wait` again until it is empty. `next` is derived, never a guess. On a failed run, read the failed node's facts (`node_facts`: error_class — closed set; `cancelled` is never a failure; attempts, final words, log path — `partial` is a harvested answer downstream can use; retryable deaths already got one machine re-drive) and committed outputs before `amend` or stop. `amend` submits the WHOLE replacement graph; `dry_run:true` previews invalidation. `run` with `dry_run:true` runs every pre-launch gate and writes nothing — a side-effect-free graph lint. `stop` is terminal. Details: [operations](references/operations.md).
 - To save a reusable proven graph: `workflow{action:"save", run_id:<id>, name:<name>, description:<trigger>}`; add `source:<where it came from>` to record opt-in provenance (owner/source/digest — attribution, not access control). `library` lists it; `run` with `from:<name>` replays it. Do not save one-off graphs by default.
 - A poller or keeper that must not double-dispatch: `run` with `lane_key:<key>` — while an UNFINISHED incumbent holds the key, a second `run` on it is deduped (returns the incumbent, spawns nothing; `needs_resume` means `wait` it, never replace it; `stop` is the explicit abandonment). `status` with `lane_key:<key>` reads the incumbent without spawning anything. Optional `team:<label>` stamps run.json and `list` rows. Keys are global per runs root; prefix `<team>/` yourself. Details: [operations](references/operations.md).
 - Report a finished run by its vanity numbers from the read model's metrics: token in | token out | api calls | tool calls (per node and run total). Don't lead with the dollar figure: it is core's `estimated_cost_usd`, a price-table estimate (subscription routes report `included`, not `actual`), and it freaks humans out when quoted as spend.
