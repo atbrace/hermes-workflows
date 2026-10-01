@@ -5649,7 +5649,6 @@ def main(run_id):
                                            # -> server-declared value; runner-private,
                                            # never persisted; survives outer-ladder respawns
     _width_tracker(meta, None)                # #24: observed fan-out width per node
-    _receipt_concurrency(meta)                # #100: requested-vs-applied receipt, once
     exit_graph = [jload(run / "graph.json")]
 
     def _stop_watcher():
@@ -5696,6 +5695,10 @@ def main(run_id):
     _respawn_attempt_record(run, meta,
                             {n["id"]: n for n in (exit_graph[0] or {}).get("nodes", [])})
     log(run, "run.started" if first else "run.resumed")
+    # #100: the requested-vs-applied receipt rides AFTER the started/resumed
+    # line — emitting it earlier would create events.jsonl and make the FIRST
+    # runner misread itself as a resume (the reaper test pins the trace order).
+    _receipt_concurrency(meta)                # once per runner process
     rs = Run(run)
     exit_graph[0] = rs.graph
     consumed, steering = set(), {}
