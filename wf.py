@@ -25,6 +25,7 @@ from wfcommon import (efp, graph_fingerprint, jload, validate_graph, node_rec, g
                       when_true, child_metrics, prune_states, dep_satisfied, active_child,
                       FP_RULE_VERSION, record_efp_valid, seat_forbidden_models, runs_root,
                       hermes_root, profile_home, find_run,
+                      DEFAULT_CONCURRENCY, DEFAULT_ITEM_CONCURRENCY, DEFAULT_RESUME_FLOOR_S,
                       hermes_home as _wfcommon_hermes_home)
 
 def _route_home(result):
@@ -808,6 +809,57 @@ def _retry_conf_params(meta):
         else DEFAULT_RETRY_BUDGET
     return tb, budget
 
+def _retry_conf(meta):
+    """#24: the run-level retry block from run.json meta (same door channel as
+    retry_backoff/retry_budget). Only `mode: "work-metered"` changes behavior —
+    anything absent or malformed is the legacy wall ladder, fail-closed."""
+    rt = meta.get("retry") if isinstance(meta.get("retry"), dict) else {}
+    mode = rt.get("mode") if rt.get("mode") in ("wall", "work-metered") else "wall"
+    floor = rt.get("resume_floor_s")
+    floor = floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) and floor >= 1 \
+        else DEFAULT_RESUME_FLOOR_S
+    return {"mode": mode, "resume_floor_s": floor}
+
+def _metered_remaining(r):
+    """Remaining wall a work-metered resume inherits: the dead attempt's APPLIED
+    wall minus its elapsed ms. No wall stamp (legacy record) = the wall is
+    unknown — return None and the caller falls back to today's identical fare."""
+    wall = r.get("wall")
+    if not isinstance(wall, (int, float)) or isinstance(wall, bool):
+        return None
+    ms = r.get("ms") if isinstance(r.get("ms"), (int, float)) else 0
+    return max(0.0, wall - ms / 1000.0)
+
+def _receipt_concurrency(meta):
+    """#24: at runner start, emit ONE concurrency.applied receipt diffing the
+    author's REQUEST against what THIS runner will actually APPLY, with the
+    author-vs-default provenance the door baked. A request the effective meta
+    cannot honor (stale meta from a hot-reloaded runner, hand-edited run.json)
+    is LOUD: mismatch set, so watchers diff requested-vs-applied without guess.
+    Legacy run.json (no knob keys) requests nothing: knobs={}, applied={defaults}."""
+    run = meta["_run"]
+    prov = meta.get("knobs_provenance") if isinstance(meta.get("knobs_provenance"), dict) else None
+    if prov is None:
+        # pre-door / hand-surgery meta: a knob key PRESENT in run.json was set by
+        # someone (that's how every wide run launched until #24) — report it as
+        # the request, author-side. No keys at all (legacy default run) => {}.
+        prov = {k: "author" for k in ("concurrency", "item_concurrency", "retry") if k in meta}
+    knobs = {k: v for k, v in sorted(prov.items()) if v == "author"
+             and k in ("concurrency", "item_concurrency", "retry")}
+    req = meta.get("_requested") if isinstance(meta.get("_requested"), dict) else None
+    if req is None:
+        req = {k: meta[k] for k in knobs}
+    else:
+        req = {k: v for k, v in req.items() if k != "knobs"}
+    applied = {"concurrency": meta.get("concurrency", DEFAULT_CONCURRENCY),
+               "item_concurrency": meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY)}
+    mismatch = {k: {"requested": req[k], "applied": applied[k]}
+                for k in ("concurrency", "item_concurrency")
+                if isinstance(req.get(k), int) and isinstance(applied.get(k), int)
+                and req[k] != applied[k]}
+    log(run, "concurrency.applied", requested=req, applied=applied, knobs=knobs,
+        **({"mismatch": mismatch} if mismatch else {}))
+
 _LOG_ACTIVITY_WINDOW_S = 120
 
 def _log_recent(lp, created):
@@ -1048,7 +1100,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
             "ms": ms, "final": final_reply, **evd}
 
 def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering=None, attempt=0, skey=None,
-              inputs="", index=None, resume_preamble=""):
+              inputs="", index=None, resume_preamble="", wall_s=None):
     run = meta["_run"]
     spawn_no = _next_spawn_no(meta, node, index)
     # #37: the machine preambles compose at the ONE spawn seam every path shares
@@ -1175,12 +1227,14 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     early_death = False
     extended = False
     first_msg_s = _first_message_s(meta)
-    wall = node.get("timeout", meta.get("node_timeout", 900))
+    # #24 work-metered resume: a bounded retry may hand the respawn the REMAINING
+    # wall instead of the identical fare (wall_s set = resume spawn; None = the
+    # same read as today — one read, both users, so a resume never re-fares).
+    wall = timeout_s = node.get("timeout", meta.get("node_timeout", 900)) if wall_s is None else wall_s
     deadline = t0 + wall if wall is not None else float("inf")
     silence_deadline = t0 + first_msg_s if first_msg_s > 0 else None
     rc = None
     tclass, treason = None, ""
-    timeout_s = node.get("timeout", meta.get("node_timeout", 900))
     final_reply = ""
     try:
         # #18 child liveness (replaces the blind blocking communicate): poll the
@@ -1252,9 +1306,10 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         if hv:
             return {"status": "partial", "error": f"timeout after {timeout_s}s "
                     "(answer harvested from stdout before the kill)",
-                    "error_class": "timeout", "ms": ms, "final": final_reply, **hv, **sk, **evd}
+                    "error_class": "timeout", "ms": ms, "wall": wall, "final": final_reply, **hv, **sk, **evd}
         return {"status": "failed", "error": f"timeout after {timeout_s}s",
-                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
+                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, "wall": wall,
+                "final": final_reply, **sk, **evd}
     # unsuccessful exit = failure, PERIOD — diagnostic prose on stdout must never
     # be committed as a successful result (fleet-review F: crash-with-prose).
     if rc != 0:
@@ -1488,7 +1543,13 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw):
     schema(no_json) / cancelled / spawn — permfails redrive byte-identically —
     and never a `partial` harvest (#4: harvested, so not retried). The
     re-drive is a fresh spawn: steer rides it via _steer_bake, the fresh
-    skey keeps it a fresh session, and node.retry logs the reason."""
+    skey keeps it a fresh session, and node.retry logs the reason.
+
+    #24 work-metered mode (run.json retry.mode, door-baked) changes ONLY the
+    timeout lane: the resume inherits the dead attempt's REMAINING wall (plus a
+    floor to make it worth driving) instead of the identical fare, and a SECOND
+    death at any wall dead-letters — honest failure, residue classified, never
+    a third spawn. Absent/malformed mode = the ladder above, as before."""
     run = meta["_run"]
     if r.get("status") != "failed" or r.get("harvest"):
         return r
@@ -1507,15 +1568,85 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw):
                 error_class=eclass, **ev_kw)
             return r
         meta["_retries_left"] -= 1
-    log(run, ev + ".retry", error_class=eclass,
-        reason=f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive",
-        **ev_kw)
+    cfg = _retry_conf(meta)
+    wall_s = None
+    reason = f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive"
+    if cfg["mode"] == "work-metered" and eclass == "timeout":
+        # #24: the resume inherits the REMAINING wall (liveness, not a bigger
+        # fare) instead of the identical wall that just killed this attempt.
+        remaining = _metered_remaining(r)
+        if remaining is not None:
+            wall_s = max(remaining, min(cfg["resume_floor_s"], remaining + cfg["resume_floor_s"]))
+            reason = (f"work-metered resume: {eclass} at {r.get('wall')}s wall with tool "
+                      f"progress — one resume on the remaining wall ({remaining:.0f}s left, "
+                      f"floor {cfg['resume_floor_s']}s), never a third spawn")
+    log(run, ev + ".retry", error_class=eclass, reason=reason,
+        **({"resume_wall_s": round(wall_s, 3)} if wall_s else {}), **ev_kw)
     al = list(r.get("attempts_log") or [])
     al.append({"attempt": len(al), "error_class": eclass, "at": now(), "resume": True})
-    r2 = respawn(resume_preamble=_resume_preamble(r))
+    r2 = respawn(resume_preamble=_resume_preamble(r), **({"wall_s": wall_s} if wall_s else {}))
     r2["attempts_log"] = al
     r2["attempts"] = (r2.get("spawn") + 1) if isinstance(r2.get("spawn"), int) else len(al) + 1
+    if wall_s is not None and r2.get("status") == "failed" \
+            and r2.get("error_class") == "timeout" and not r2.get("harvest"):
+        # #24: second death at ANY wall = dead-letter — residue classified in the
+        # payload, honest failure, and returning here guarantees no third spawn.
+        _dead_letter(run, ev, ev_kw, r, r2, cfg)
     return r2
+
+def _dead_letter(run, ev, ev_kw, r1, r2, cfg):
+    """#24 one-strike law: a work-metered node that died a SECOND time (any wall)
+    is dead-lettered, not re-driven. The payload classifies the residue so the
+    owner can bank it: which session ledgers carry tool progress, whether the
+    resume advanced the ledger, the walls both attempts got. Emitted exactly once
+    per node/item — the runner never spawns a third attempt."""
+    home = r2.get("profile_home") or r1.get("profile_home")
+    def _tc(rec):
+        try:
+            m = child_metrics(run.name, home).get(rec.get("skey") or "")
+        except Exception:
+            m = None
+        return (m or {}).get("tool_calls")
+    tc1, tc2 = _tc(r1), _tc(r2)
+    residue = "tool-ledger>0" if ((tc1 or 0) > 0 or (tc2 or 0) > 0) else "no-ledger-evidence"
+    log(run, "dead_letter", kind=ev,
+        reason="work-metered: second timeout death — one resume is the whole fare; "
+               "no third spawn, residue classified for the owner",
+        residue=residue,
+        attempt1={"error_class": r1.get("error_class"), "wall": r1.get("wall"),
+                  "ms": r1.get("ms"), "tool_calls": tc1, "skey": r1.get("skey")},
+        attempt2={"error_class": r2.get("error_class"), "wall": r2.get("wall"),
+                  "ms": r2.get("ms"), "tool_calls": tc2, "skey": r2.get("skey")},
+        resume_floor_s=cfg.get("resume_floor_s"),
+        log_paths=[r1.get("log_path"), r2.get("log_path")],
+        **ev_kw)
+
+def _width_tracker(meta, lock):
+    """#24: count concurrently-running children (solo nodes + fan-out items) and
+    log the peak per observation key as node.running_width. One dict in main();
+    cheap on the wave threads; observation only — never gates a spawn."""
+    state = {"live_by_node": {}, "peak_by_node": {}, "lock": threading.Lock()}
+    def track(nid):
+        class _T:
+            def __enter__(self_inner):
+                with state["lock"]:
+                    n = state["live_by_node"].get(nid, 0) + 1
+                    state["live_by_node"][nid] = n
+                    if n > state["peak_by_node"].get(nid, 0):
+                        state["peak_by_node"][nid] = n
+                return self_inner
+            def __exit__(self_inner, *exc):
+                with state["lock"]:
+                    state["live_by_node"][nid] -= 1
+                return False
+        return _T()
+    meta["_width"] = track
+    def flush(run):
+        with state["lock"]:
+            peaks, state["peak_by_node"] = dict(state["peak_by_node"]), {}
+        for nid, w in peaks.items():
+            log(run, "node.running_width", node=nid, running=w)
+    meta["_width_flush"] = flush
 
 def drain_inbox(run, consumed):
     """Return {node_id: [steering texts]} for un-consumed steering lines."""
@@ -1607,7 +1738,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                             "output": {"items": []}})
                 log(run, "node.failed", node=nid, error="fanout empty", error_class="fanout_empty", attempts=0)
                 return
-            cap = min(len(items), meta.get("item_concurrency", 8))
+            cap = min(len(items), meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY))
             results = [None] * len(items)
             lock = threading.Lock()
             # wf1.1 A5: the WAIT-SET and the COMMIT THRESHOLD are split. Waiting is
@@ -1711,7 +1842,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         log_path=str(run / "runner.log"), child_log_path=None, skey=None,
                         ms=0, attempts=0, attempts_log=[])
                     return
-                def spawn(resume_preamble=""):
+                def spawn(resume_preamble="", **kw):
                     if meta["_stop"].is_set() or fo_cancel.is_set():
                         return {"status": "failed", "error": "cancelled at quorum",
                                 "error_class": "cancelled", "ms": 0}
@@ -1733,9 +1864,11 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         return {**adopted, **_profile_evidence(node)}
                     sk = skey_for(run, byid, node, i)   # fresh nonce per spawn (retry respawns
                     log(run, "item.started", node=nid, index=i, skey=sk)   # are fresh sessions)
-                    return run_child(meta, node, byid, goal, node.get("context", ""),
-                                     fo.get("schema") or node.get("schema"), steering=steering,
-                                     skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble)
+                    with meta["_width"](nid):
+                        return run_child(meta, node, byid, goal, node.get("context", ""),
+                                         fo.get("schema") or node.get("schema"), steering=steering,
+                                         skey=sk, inputs=inputs_txt, index=i,
+                                         resume_preamble=resume_preamble, **kw)
                 try:
                     r = _transient_retry(meta, spawn(), spawn, "item", {"node": nid, "index": i})
                     r = _bounded_retry(meta, r, spawn, "item", {"node": nid, "index": i})
@@ -1767,6 +1900,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     skey=r.get("skey"), ms=r.get("ms"))
             with ThreadPoolExecutor(max_workers=cap) as ex:
                 list(ex.map(lambda t: one(*t), list(enumerate(items))))
+            meta["_width_flush"](run)   # #24: observed item width of THIS fan-out wave
             results = [r or {"status": "failed", "item": None, "error_class": "crashed", "ms": 0} for r in results]
             # sprint101 #7: stop-killed items are CANCELLED, not failures — they
             # count toward neither the failure list nor the quorum (hindsight-002946:
@@ -1831,12 +1965,13 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         error_class="incomplete_work", attempts=1)
         else:
             first = {"done": False}
-            def spawn(resume_preamble=""):
+            def spawn(resume_preamble="", **kw):
                 sk = solo_key if not first["done"] else skey_for(run, byid, node)
                 first["done"] = True
-                return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
-                                 node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
-                                 resume_preamble=resume_preamble)
+                with meta["_width"](nid):
+                    return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
+                                     node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
+                                     resume_preamble=resume_preamble, **kw)
             r = _transient_retry(meta, spawn(), spawn, "node", {"node": nid})
             r = _bounded_retry(meta, r, spawn, "node", {"node": nid})
             r = _stamp_served(meta, r, node)   # dad50be0: seat truth at the commit, never the alias
@@ -2109,6 +2244,8 @@ def main(run_id):
     meta["_run"] = run                      # Q1: spawn records + per-spawn logs
     meta["_spawn_n"] = {}                   # per (node,item) spawn counter for log names
     meta["_retries_left"] = _retry_conf_params(meta)[1]   # Q4 per-run retry budget
+    _width_tracker(meta, None)                # #24: observed fan-out width per node
+    _receipt_concurrency(meta)                # #24: requested-vs-applied receipt, once
     exit_graph = [jload(run / "graph.json")]
 
     def _stop_watcher():
@@ -2233,9 +2370,10 @@ def main(run_id):
                 else:
                     spawnable.append(n)
             if spawnable:
-                with ThreadPoolExecutor(max_workers=meta.get("concurrency", 4)) as ex:
+                with ThreadPoolExecutor(max_workers=meta.get("concurrency", DEFAULT_CONCURRENCY)) as ex:
                     list(ex.map(lambda n: run_agent_node(run, meta, rs.byid, n, outputs,
                                                          steering.pop(n["id"], None) or []), spawnable))
+                meta["_width_flush"](run)   # #24: peak children of THIS wave, per node
             continue  # top of loop: consume markers, recompute states
 
         m = consume_markers()
