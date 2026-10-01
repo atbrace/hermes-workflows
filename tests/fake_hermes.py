@@ -136,6 +136,49 @@ if _FAKE_MODE == "retry_progress" and "RESUME" in q:    # #5: transport death WI
         sys.exit(2)
     print("```json\n" + json.dumps({"result": "resumed"}) + "\n```")
     sys.exit(0)
+# ---- #24 work-metered retry modes (Lane knob tests; FAKE_MODE gated) ----
+# The ledger row helper: same shape as retry_progress — tool_call_count>0 is the
+# bounded-retry progress evidence; zero-ledger mode skips it entirely.
+def _fake_ledger_row(tools):
+    if "--continue" not in args:
+        return
+    import sqlite3
+    title = args[args.index("--continue") + 1]
+    c = sqlite3.connect(os.path.join(_FAKE_HOME, "state.db"))
+    c.execute("create table if not exists sessions (id text primary key, title text, model text, billing_provider text, input_tokens int, output_tokens int, "
+              "cache_read_tokens int, reasoning_tokens int, api_call_count int, tool_call_count int, estimated_cost_usd real, "
+              "last_activity_at real, last_activity_description text, ended_at real, started_at real)")
+    t = time.time()
+    c.execute("insert or replace into sessions values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              ("f-" + title, title, "fake", "fake", 0, 0, 0, 0, 1, tools, 0.0, t, "", t, t))
+    c.commit(); c.close()
+
+def _fake_attempt_count():
+    p = os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "attempts")
+    os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
+    cnt = int(open(p).read()) if os.path.exists(p) else 0
+    open(p, "w").write(str(cnt + 1))
+    return cnt
+
+def _fake_record_wall():
+    w = os.environ.get("HERMES_WF_SPAWN_WALL_S")
+    if w and os.environ.get("FAKE_ATTEMPT_DIR"):
+        with open(os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "walls.txt"), "a") as f:
+            f.write(w + "\n")
+
+if _FAKE_MODE in ("work_metered", "work_metered_dead", "work_metered_zero"):
+    _fake_record_wall()
+    cnt = _fake_attempt_count()
+    if _FAKE_MODE == "work_metered" and cnt > 0:
+        _fake_ledger_row(1)                  # resume advances the ledger, then commits
+        print("```json\n" + json.dumps({"result": "resumed"}) + "\n```")
+        sys.exit(0)
+    if _FAKE_MODE != "work_metered_zero":
+        _fake_ledger_row(1)                  # the dead attempt carried tool progress
+    # hang far past any wall the test may hand us (4s fare, ~2s metered resume);
+    # silence on the spawn log: no harvestable answer, the wall does the killing.
+    _t.sleep(float(os.environ.get("FAKE_HANG_SEC", "120")))
+    sys.exit(0)
 from pathlib import Path
 if _FAKE_MODE == "poll_steer":     # B1: child pulls baked steering through the real door
     # and prints what it got — proves the file protocol + cursor, not model compliance.
