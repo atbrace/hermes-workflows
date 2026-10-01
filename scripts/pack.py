@@ -42,6 +42,7 @@ INCLUDE_FILES = (
     ".graphifyignore",
     "tests/fake",
     "tests/fake_hermes.py",
+    "tests/wf_test_isolation.py",
     "tests/fixtures/mac-source.txt",
     "tests/test_fanout_ui.mjs",
     "wf.py",
