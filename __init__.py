@@ -2881,13 +2881,19 @@ def act_amend(args):
     meta = jload(r / "run.json", {}) or {}
     # An author-form amend of a composite run restamps run.json's include truth the
     # same way act_run writes it: the notes/provenance describing THIS graph, not
-    # the previous one. An expanded-form amend yields empty lists here, so the
-    # keys are left exactly as they stand (a plain run never grows them; a stale
-    # stamp on an already-expanded graph is honest only if it is refreshed).
+    # the previous one. SET-OR-REMOVE: fresh author-form provenance replaces the
+    # notes even when the new graph produces NONE (PR#84 review F-5: replacing a
+    # warning-bearing include with a clean one succeeded while run.json/status
+    # kept warning about the old graph's fixed scratch path — a stale note list
+    # describes a graph the run no longer carries). An expanded-form amend yields
+    # empty lists here, so the keys are left exactly as they stand (the
+    # intentional no-op: a plain run never grows them).
     if _includes:
         meta["includes"] = _includes
-    if _include_notes:
-        meta["include_notes"] = _include_notes
+        if _include_notes:
+            meta["include_notes"] = _include_notes
+        else:
+            meta.pop("include_notes", None)
     if meta.get("name") != new["name"] or _includes or _include_notes:
         meta["name"] = new["name"]
         mtmp = r / f"run.json.{os.getpid()}.tmp"
