@@ -831,7 +831,7 @@ def _metered_remaining(r):
     return max(0.0, wall - ms / 1000.0)
 
 def _receipt_concurrency(meta):
-    """#24: at runner start, emit ONE concurrency.applied receipt diffing the
+    """#100: at runner start, emit ONE concurrency.applied receipt diffing the
     author's REQUEST against what THIS runner will actually APPLY, with the
     author-vs-default provenance the door baked. A request the effective meta
     cannot honor (stale meta from a hot-reloaded runner, hand-edited run.json)
@@ -2269,7 +2269,7 @@ def main(run_id):
     meta["_spawn_n"] = {}                   # per (node,item) spawn counter for log names
     meta["_retries_left"] = _retry_conf_params(meta)[1]   # Q4 per-run retry budget
     _width_tracker(meta, None)                # #24: observed fan-out width per node
-    _receipt_concurrency(meta)                # #24: requested-vs-applied receipt, once
+    _receipt_concurrency(meta)                # #100: requested-vs-applied receipt, once
     exit_graph = [jload(run / "graph.json")]
 
     def _stop_watcher():
