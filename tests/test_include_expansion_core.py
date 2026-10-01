@@ -363,7 +363,11 @@ g5 = {"name": "m",
       "include": [{"as": "rev", "use": "review", "seeds": {"artifact": "/x"},
                    "exports": {"approve": "ship_gate"}}],
       "nodes": [agent("tail", after=["ship_gate"], inputs=["ship_gate.answer"]),
-                gate("cond", after=["rev__kick"], when="out.ship_gate.ok == True")]}
+                # #68 ancestry: the `when` head must be a direct after-parent of the
+                # gate once exports rewrites it (ship_gate -> rev__approve), so the
+                # mapped ref rides the after list alongside the subtree entry point.
+                gate("cond", after=["rev__kick", "rev__approve"],
+                     when="out.ship_gate.ok == True")]}
 exp5, _ = wfcommon.expand_includes(g5, reader)
 n5 = byids(exp5)
 check(n5["tail"]["after"] == ["rev__approve"]

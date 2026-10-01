@@ -1519,6 +1519,7 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
     expanded = [dict(n) for n in nodes]          # parent nodes, rewritten after grafting
     merged = []                                  # grafted included nodes, decl order
     exports_map = {}                             # public_name -> namespaced id
+    export_claims = []                           # [(public, alias, ns_id)] — F-4 pass 1
     full_ns = set()                              # every generated alias__id
     inner_bare = set()                           # every child inner id (bare-ref refuse)
     child_scratch_seen = set()                   # paths in previously expanded graphs
@@ -1621,6 +1622,14 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
         child_scratch_seen |= child_paths
 
         # --- exports: inner_id -> public_name, verified against the child ids ---
+        # PR#84 review F-4: the namespace-shadowing half is a TWO-PASS check —
+        # claims are collected here and measured after the loop against the
+        # COMPLETE fused namespace. The old in-loop check saw only namespaced ids
+        # generated SO FAR: include A exporting `s` as `b__s` passed, then include
+        # B minted a real `b__s` node, and the parent-ref mapper preferred the
+        # real node — A's exported verdict silently resolved to B's, and only the
+        # reverse declaration order refused. Declaration order must never decide
+        # which shelf a public name points at.
         for inner, public in (inc.get("exports") or {}).items():
             ns_id = f"{alias}{_INCLUDE_NS_SEP}{inner}"
             if not isinstance(inner, str) or ns_id not in nsset:
@@ -1632,10 +1641,8 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
             if public in exports_map:
                 own(alias, f"exports public name {public!r} collides with include "
                            f"'{exports_map[public].split(_INCLUDE_NS_SEP, 1)[0]}'")
-            if public in parent_ids or public in full_ns or public in aliases:
-                own(alias, f"exports public name {public!r} shadows an existing "
-                           f"node id or include alias")
             exports_map[public] = ns_id
+            export_claims.append((public, alias, ns_id))
 
         if nsset & (parent_ids | full_ns):
             clash = sorted(nsset & (parent_ids | full_ns))[0]
@@ -1658,6 +1665,20 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
             own(alias, f"merged graph would exceed the size cap "
                        f"({INCLUDE_BYTES_MAX} bytes) — do not include graphs this "
                        f"large into an already-large parent")
+
+    # --- F-4 pass 2: export claims vs the COMPLETE fused namespace. By here
+    # full_ns holds every alias__id of EVERY include (pass 1 only saw the ones
+    # generated so far), parent_ids and aliases were closed before the loop — so
+    # every refusal below is order-independent. `public != ns_id` keeps the
+    # benign self-shape (a public name that IS the claim's own namespaced id:
+    # the ref mapper resolves it to the same node) out of the refusal, matching
+    # the old in-loop position's tolerance; everything else shadowing any real
+    # id, alias, or namespace is refused no matter which include came first.
+    for public, alias, ns_id in export_claims:
+        if public != ns_id and (public in parent_ids or public in aliases
+                                or public in full_ns):
+            own(alias, f"exports public name {public!r} shadows an existing "
+                       f"node id or include alias")
 
     # --- parent ref sites rewritten against the include boundary (step 7) ---
     def map_site(nid, site, h):
