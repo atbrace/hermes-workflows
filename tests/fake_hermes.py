@@ -163,6 +163,7 @@ def _fake_attempt_count():
 def _fake_record_wall():
     w = os.environ.get("HERMES_WF_SPAWN_WALL_S")
     if w and os.environ.get("FAKE_ATTEMPT_DIR"):
+        os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
         with open(os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "walls.txt"), "a") as f:
             f.write(w + "\n")
 
