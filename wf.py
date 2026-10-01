@@ -227,6 +227,17 @@ def _wake_gen(run):
     except Exception:
         return 0
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Credentials must NEVER ride a redirect (NEW blocker): urlopen's default
+    handler follows 30x with a GET and carries Authorization + the session header
+    cross-origin, and the 2xx at the end would be recorded as delivered. This
+    handler hands the 3xx back to the caller as the response instead; notify
+    records it as NOT delivered and retries stay pointed at the configured host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+_WAKE_OPENER = urllib.request.build_opener(_NoRedirect)
+
 def notify(run, event, text, key=None):
     """Push ONE lifecycle transition to the owner session stamp. Owner-null (tests,
     CLI, tool hosts without a session env) writes NOTHING — the door's silent
@@ -278,10 +289,17 @@ def notify(run, event, text, key=None):
                 headers={"Content-Type": "application/json", hdr: str(sid),
                          "Idempotency-Key": identity,
                          **({"Authorization": f"Bearer {secret}"} if secret else {})})
-            with urllib.request.urlopen(req, timeout=WAKE_TIMEOUT_S) as resp:
-                rec["delivered"] = 200 <= resp.status < 300
-                if not rec["delivered"]:
-                    rec["error"] = f"HTTP {resp.status}"
+            with _WAKE_OPENER.open(req, timeout=WAKE_TIMEOUT_S) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                if 300 <= status < 400:
+                    # A redirect is NOT a delivery: nothing followed, nothing
+                    # forwarded; probe undelivered so the retry re-drives.
+                    rec["delivered"] = False
+                    rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
+                else:
+                    rec["delivered"] = 200 <= status < 300
+                    if not rec["delivered"]:
+                        rec["error"] = f"HTTP {status}"
         except urllib.error.HTTPError as e:
             rec["delivered"] = False
             rec["error"] = f"HTTP {e.code}"
