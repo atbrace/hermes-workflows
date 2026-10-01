@@ -196,10 +196,16 @@ check("D7 schema description documents include",
 check("D7 the caps-pin closer is kept verbatim",
       desc.endswith("Any key outside these closed sets is rejected at run/amend with "
                     "errors:[{node, field, msg}] for EVERY defect."))
-check("D7 source lines inside the graph-description block stay < 520 chars (grep-shape pin)",
-      all(len(l) <= 520 for l in
-          (BUILD / "__init__.py").read_text().splitlines()
-          if l.strip().startswith('"') and ("include" in l or "Composite graphs" in l)))
+# F-6 (review): a runtime schema-surface assertion, not an implementation-text/
+# line-width grep. What the schema must guarantee is that the AGENT-VISIBLE surface
+# (the parameter schema itself, whatever its source lines look like) fully names the
+# composite contract: directive keys, namespacing, the strip-on-expand storage law,
+# the save(run_id) exception, and the shared error envelope.
+check("D7 the runtime graph schema names the whole composite contract",
+      all(f in desc for f in ("`include:[{as, use, seeds?, exports?}]`", "alias__<id>",
+                              "include-STRIPPED", "save(run_id)", "include_notes",
+                              "errors:[{node:'include:<alias>', field, msg}]")),
+      "missing a contract surface in the schema description")
 
 # ---------- D8: provenance + include_notes on a shared-path fixture ------------
 meta2 = {"name": "d8", "include": [
@@ -352,6 +358,168 @@ try:
           bad14 is None and _reads == ["pollib"], f"reads={_reads}")
 finally:
     hw._library_reader = _orig_lr
+
+# ---------- D15: direct-vs-include differential validation (PR#84 review F-2) ---
+# A graph that direct submission REFUSES must be refused through the include door
+# too — same strictness, named include envelope, zero run dirs. The shelf is now
+# measured with the shared full validator (structural + node) before any lossy
+# top-level projection or policy merge touches it.
+for _label, _patch in [("unknown graph key", {"typo_key": 1}),
+                       ("bad defaults", {"defaults": {"timeout": -1}}),
+                       ("bad policy", {"model_policy": {"require_model": 0}}),
+                       ("bad provenance", {"provenance": {"unknown": 1}})]:
+    (LIB / "d15child.json").write_text(json.dumps(
+        {"name": "d15child", "nodes": [{"id": "s", "type": "echo", "output": "ok"}],
+         **_patch}))
+    before = dirs()
+    r = call(action="run", graph={"name": "d15", "include": [{"as": "x", "use": "d15child"}],
+                                  "nodes": [{"id": "p", "type": "echo", "output": "1"}]})
+    check(f"D15 {_label}: direct submission refuses",
+          bool(call(action="run", dry_run=True, graph=json.loads(
+              (LIB / "d15child.json").read_text())).get("errors")))
+    check(f"D15 {_label}: include refuses with the named envelope",
+          "error" in r and any(str(e.get("node", "")).startswith("include:x")
+                               for e in r.get("errors", [])), json.dumps(r)[:160])
+    check(f"D15 {_label}: no run dir", before == dirs())
+# a malformed NODE id in the child: the old node-only checker TypeErrors on
+# set(ids) BEFORE normalizing; the full validator normalizes first and the door
+# must answer with the errors envelope, never a trace.
+(LIB / "d15child.json").write_text(json.dumps(
+    {"name": "d15child", "nodes": [{"id": ["bad"], "type": "echo", "output": "ok"}]}))
+before = dirs()
+r = call(action="run", graph={"name": "d15", "include": [{"as": "x", "use": "d15child"}],
+                              "nodes": [{"id": "p", "type": "echo", "output": "1"}]})
+check("D15 malformed child id envelope: errors rows, no TypeError trace",
+      "error" in r and "Traceback" not in json.dumps(r)
+      and "TypeError" not in json.dumps(r)
+      and any(str(e.get("node", "")).startswith("include:x") for e in r.get("errors", [])),
+      json.dumps(r)[:200])
+check("D15 malformed child id: no run dir", before == dirs())
+# a MALFORMED PARENT require_model must not be repaired by the policy merge
+# ('false' is truthy -> the old OR wrote boolean True and passed; direct
+# submission refuses the same string).
+(LIB / "d15child.json").write_text(json.dumps(
+    {"name": "d15child", "model_policy": {"forbidden_models": ["m-x"]},
+     "nodes": [{"id": "s", "type": "echo", "output": "ok"}]}))
+before = dirs()
+r = call(action="run", dry_run=True, graph={"name": "d15p",
+              "include": [{"as": "x", "use": "d15child"}],
+              "model_policy": {"require_model": "false"},
+              "nodes": [{"id": "p", "type": "echo", "output": "1"}]})
+check("D15 malformed parent require_model refused pre-merge (no silent True)",
+      bool(r.get("errors")) and "require_model" in json.dumps(r), json.dumps(r)[:200])
+check("D15 malformed parent policy: no run dir", before == dirs())
+r = call(action="run", dry_run=True, graph={"name": "d15q",
+              "include": [{"as": "x", "use": "d15child"}],
+              "model_policy": {"require_model": 0},
+              "nodes": [{"id": "p", "type": "echo", "output": "1"}]})
+check("D15 int require_model:0 refused too (no truthy coercion either way)",
+      bool(r.get("errors")) and "require_model" in json.dumps(r), json.dumps(r)[:200])
+
+# ---------- D16: echo output joins the seed/survivor surface (PR#84 F-3) --------
+# An included echo's string output is rendered by include seeds, and a surviving
+# {run.KEY} there is refused before any write (the runner commits echo output
+# VERBATIM — a literal placeholder used to land as a done node's verdict).
+(LIB / "echolib.json").write_text(json.dumps(
+    {"name": "echolib", "nodes": [
+        {"id": "s", "type": "echo", "output": "verdict={run.MISSING}"}]}))
+seeded = {"name": "d16", "include": [{"as": "x", "use": "echolib",
+                                      "seeds": {"OTHER": "v"}}],
+          "nodes": [{"id": "p", "type": "echo", "output": "1"}]}
+before = dirs()
+r = call(action="run", graph=seeded, run_context={"OTHER": "v"})
+check("D16 unbound echo-output ref refuses the run (no write, no done placeholder)",
+      "error" in r and "run.MISSING" in json.dumps(r) and before == dirs(),
+      json.dumps(r)[:200])
+r = call(action="run", graph={"name": "d16b", "include": [{"as": "x", "use": "echolib",
+                                                          "seeds": {"MISSING": "ship"}}],
+                              "nodes": [{"id": "p", "type": "echo", "output": "1"}]})
+check("D16 seed covers the echo surface (the SAME ref renders clean)",
+      bool(r.get("run_id")), json.dumps(r)[:160])
+if r.get("run_id"):
+    w = call(action="wait", run_id=r["run_id"], timeout=60)
+    n = json.loads((ROOT / r["run_id"] / "nodes" / "x__s.json").read_text())
+    check("D16 seeded echo commits the rendered output",
+          w.get("status") == "done" and n.get("output") == "verdict=ship",
+          json.dumps(n)[:160])
+    call(action="stop", run_id=r["run_id"])
+# include-free echo bytes stay verbatim (the golden law): a {run.X} in a PLAIN
+# graph's echo output is NOT refused — plain-graph leniency is untouched.
+r = call(action="run", graph={"name": "d16-lenient", "nodes": [
+    {"id": "a", "type": "echo", "output": "say {run.NOTHING}"}]})
+check("D16b include-free echo output keeps verbatim leniency (golden bytes)",
+      bool(r.get("run_id")), json.dumps(r)[:120])
+if r.get("run_id"):
+    w = call(action="wait", run_id=r["run_id"], timeout=60)
+    n = json.loads((ROOT / r["run_id"] / "nodes" / "a.json").read_text())
+    check("D16b plain echo output committed byte-verbatim",
+          n.get("output") == "say {run.NOTHING}", json.dumps(n)[:160])
+    call(action="stop", run_id=r["run_id"])
+
+# ---------- D17: export collisions are order-independent (PR#84 review F-4) ----
+(LIB / "alpha.json").write_text(json.dumps(
+    {"name": "alpha", "nodes": [{"id": "s", "type": "echo", "output": {"verdict": "ship"}}]}))
+(LIB / "beta.json").write_text(json.dumps(
+    {"name": "beta", "nodes": [{"id": "s", "type": "echo", "output": {"verdict": "hold"}}]}))
+a_dir = {"as": "a", "use": "alpha", "exports": {"s": "b__s"}}
+b_dir = {"as": "b", "use": "beta"}
+# every parent ref surface that could silently resolve the shadowed name
+surfaces = {
+    "after": [{"id": "judge", "type": "echo", "after": ["b__s"], "output": "j"}],
+    "when": [{"id": "judge", "type": "gate", "after": ["beta__s"], "question": "q",
+              "when": "out.b__s.verdict == 'ship'"}],
+    "inputs": [{"id": "judge", "type": "echo", "after": ["beta__s"], "output": "j",
+                "inputs": ["b__s.verdict"]}],
+}
+for sname, pnodes in surfaces.items():
+    for order in ([a_dir, b_dir], [b_dir, a_dir]):
+        r = call(action="run", dry_run=True,
+                 graph={"name": "d17", "include": list(order), "nodes": pnodes})
+        check(f"D17 {sname} surface, order {[d['as'] for d in order]}: refused",
+              "error" in r and "shadows" in json.dumps(r), json.dumps(r)[:180])
+
+# ---------- D18: author-form amend DROPS stale include_notes (PR#84 F-5) --------
+# first composite: an include whose fixed scratch path shares the parent's ->
+# warnings persist. Replacement author form: a CLEAN include, no warnings. After
+# the amend, run.json AND status must stop naming the old graph's path.
+(LIB / "oldscratch.json").write_text(json.dumps(
+    {"name": "oldscratch", "nodes": [
+        {"id": "w", "type": "agent", "goal": "use /tmp/wf-inc-stale"}]}))
+_orig_spawn = hw._spawn_runner
+hw._spawn_runner = lambda r: 0        # persistence-only: nothing is launched
+try:
+    r = call(action="run", graph={"name": "d18",
+                                  "include": [{"as": "old", "use": "oldscratch"}],
+                                  "nodes": [{"id": "p", "type": "agent",
+                                             "goal": "use /tmp/wf-inc-stale"}]})
+    rid18 = r.get("run_id")
+    check("D18 warning-bearing composite launches with notes",
+          bool(rid18) and any("fixed path" in n for n in r.get("include_notes", [])),
+          json.dumps(r)[:160])
+    m = json.loads((ROOT / rid18 / "run.json").read_text())
+    check("D18 run.json carries the stale-capable notes",
+          any("old" in n for n in m.get("include_notes", [])), json.dumps(m)[:160])
+    r2 = call(action="amend", run_id=rid18, graph={"name": "d18",
+                  "include": [{"as": "new", "use": "revlib", "seeds": {"VERDICT": "go"}}],
+                  "nodes": [{"id": "p", "type": "echo", "output": "clean"}]})
+    check("D18 clean-include amend succeeds", r2.get("ok"), json.dumps(r2)[:160])
+    m2 = json.loads((ROOT / rid18 / "run.json").read_text())
+    check("D18 warning -> no-warning persistence: notes cleared, not inherited",
+          "include_notes" not in m2
+          and [i["alias"] for i in m2.get("includes", [])] == ["new"],
+          json.dumps(m2)[:200])
+    st = call(action="status", run_id=rid18)
+    check("D18 status no longer surfaces the old warning",
+          not st.get("include_notes"), json.dumps(st.get("include_notes")))
+    # expanded-form amend still leaves the (now absent) stamp untouched
+    g18 = json.loads((ROOT / rid18 / "graph.json").read_text())
+    call(action="amend", run_id=rid18, graph=g18)
+    m3 = json.loads((ROOT / rid18 / "run.json").read_text())
+    check("D18 expanded-form amend keeps the no-op (no notes reappear)",
+          "include_notes" not in m3 and m3.get("includes") == m2.get("includes"),
+          json.dumps(m3)[:200])
+finally:
+    hw._spawn_runner = _orig_spawn
 
 shutil.rmtree(HOME, ignore_errors=True)
 print(f"{'ALL PASS' if ok else 'FAILURES PRESENT'} ({_nchecks} door contracts)")

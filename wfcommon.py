@@ -1804,8 +1804,11 @@ def expand_includes(graph, library_reader):
 
 def include_provenance(graph, library_reader):
     """[{alias, name, source_digest}] for every include a graph uses — the stamp the
-    door writes into run.json so each expanded run records which shelf BYTES it ran
-    with. Walks the author form (include keys intact), recursively, in declaration
+    door writes into run.json so each expanded run records which shelf's node bytes
+    it ran with. source_digest hashes the canonical `nodes` list only (its standing
+    contract): it pins node content, NOT include directives, seed values, or
+    model_policy — an edit outside `nodes` keeps the digest (PR#84 review F-6: the
+    prose says exactly this, never promising whole-author-file integrity). Walks the author form (include keys intact), recursively, in declaration
     order, inner-aliased under their parents (`outer__inner`); digests are over the
     raw library entries as read (shelf bytes, not the expansion). [] when the graph
     carries no includes (a stripped/expanded graph is honestly provenance-less here:
