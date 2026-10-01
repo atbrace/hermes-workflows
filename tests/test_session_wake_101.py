@@ -65,6 +65,8 @@ class _Sink(BaseHTTPRequestHandler):
         body = self.rfile.read(n)
         sinks.append({"path": self.path,
                       "session_header": self.headers.get("X-Hermes-Session-Id", ""),
+                      "idem": self.headers.get("Idempotency-Key", ""),
+                      "auth": self.headers.get("Authorization", ""),
                       "body": json.loads(body.decode() or "{}")})
         self.send_response(202)
         self.end_headers()
@@ -258,7 +260,7 @@ try:
             check("timeout attempt probe-records, delivered=false (retryable)",
                   len(w8a) == 1 and w8a[0].get("delivered") is False, w8a)
             hang_done.set()                    # release the stalled handler thread
-            os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)   # fast sink now
+            os.environ.pop("WF_WAKE_SINK_PORT", None)   # drive() stamps the fast sink
             before = len(sinks)
             _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
             w8b = wakes(r8)
@@ -294,6 +296,158 @@ try:
           (r9 / "runner_exit.json").exists()
           and "crashed" in json.loads((r9 / "runner_exit.json").read_text()).get("reason", ""),
           str((r9 / "runner_exit.json").read_text() if (r9 / "runner_exit.json").exists() else ""))
+    # ---- 10. a retry of a timed-out attempt carries the SAME Idempotency-Key as
+    #          the timed-out attempt: the server-side dedupe identity (F5). The
+    #          owner may be nudged at-least-once; the PAID TURN must not run
+    #          twice, so every attempt of one (run, event, key) rides one stable
+    #          header value. ----
+    r10 = mk("w10", G_HOLD, OWNER)
+    hang_done10 = threading.Event()
+
+    class _Hang10(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            hang_done10.wait(30)
+            self.send_response(202); self.end_headers(); self.wfile.write(b"{}")
+        def log_message(self, *a):
+            pass
+
+    hang10 = ThreadingHTTPServer(("127.0.0.1", 0), _Hang10)
+    threading.Thread(target=hang10.serve_forever, daemon=True).start()
+    try:
+        _saved = _wf.WAKE_TIMEOUT_S
+        _wf.WAKE_TIMEOUT_S = 0.5
+        try:
+            os.environ["WF_WAKE_SINK_PORT"] = str(hang10.server_address[1])
+            _wf.notify(r10, "gate.held", f"Workflow run {r10.name} is HELD at g1.", "held-x")
+            hang_done10.set()
+            os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)
+            before10 = len(sinks)
+            _wf.notify(r10, "gate.held", f"Workflow run {r10.name} is HELD at g1.", "held-x")
+            got = sinks[before10:]
+            idem = [s["idem"] for s in got]
+            check("retry POST carries a non-empty Idempotency-Key", bool(idem) and all(idem), str(got))
+            check("one stable idempotency identity across the retry",
+                  len(set(idem)) == 1, str(idem))
+        finally:
+            _wf.WAKE_TIMEOUT_S = _saved
+    finally:
+        hang_done10.set()
+        hang10.shutdown()
+        os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)
+
+    # ---- 11. a generic stdlib error must NEVER persist the bearer secret (F4):
+    #          a config key with a newline makes http.client raise ValueError whose
+    #          repr embeds `Bearer <secret>`. The probe records the failure type,
+    #          not the message. ----
+    r11 = mk("w11", G_HOLD, OWNER)
+    out11 = drive(r11, {"WF_WAKE_SINK_PORT": "", "API_SERVER_PORT": str(SINK_PORT),
+                        "API_SERVER_KEY": "SYNTH-SECRET-WITH-NEWLINE\nDO-NOT-PERSIST"}).stdout.strip()
+    check("bad-header key keeps the run alive (fail-open)",
+          out11.startswith(f"WORKFLOW_HELD {r11.name} g1"), out11)
+    probe11 = (r11 / "wake.jsonl").read_text() if (r11 / "wake.jsonl").exists() else ""
+    check("secret never persisted in wake probe",
+          "DO-NOT-PERSIST" not in probe11 and "SYNTH-SECRET" not in probe11
+          and "Bearer" not in probe11, probe11)
+    check("failure recorded with typed error, not raw repr",
+          bool(probe11) and json.loads(probe11.splitlines()[0]).get("delivered") is False, probe11)
+
+    # ---- 12. a redirect is NOT a delivery and must not forward credentials:
+    #          sink A answers 302 -> sink B. If the client followed it, B would
+    #          receive the Authorization bearer + session header cross-origin and
+    #          the ledger would claim delivered. (NEW blocker) ----
+    fwd = []
+
+    class _Redir(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{sinkB.server_address[1]}/wake")
+            self.end_headers()
+        def log_message(self, *a):
+            pass
+
+    class _SinkB(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            fwd.append({"auth": self.headers.get("Authorization", ""),
+                        "session": self.headers.get("X-Hermes-Session-Id", "")})
+            self.send_response(202); self.end_headers(); self.wfile.write(b"{}")
+        def log_message(self, *a):
+            pass
+
+    sinkA = ThreadingHTTPServer(("127.0.0.1", 0), _Redir)
+    sinkB = ThreadingHTTPServer(("127.0.0.1", 0), _SinkB)
+    threading.Thread(target=sinkA.serve_forever, daemon=True).start()
+    threading.Thread(target=sinkB.serve_forever, daemon=True).start()
+    r12 = mk("w12", G_HOLD, OWNER)
+    (tmp / "config.yaml").write_text(
+        "platforms:\n  api_server:\n    host: 127.0.0.1\n"
+        f"    port: {sinkA.server_address[1]}\n    key: SYNTH-REDIR-KEY\n")
+    out12 = drive(r12, {"WF_WAKE_SINK_PORT": ""}).stdout.strip()
+    check("redirect keeps the run alive (fail-open)",
+          out12.startswith(f"WORKFLOW_HELD {r12.name} g1"), out12)
+    check("no cross-origin credential forward",
+          all(not f["auth"] and not f["session"] for f in fwd), str(fwd))
+    w12 = wakes(r12)
+    check("redirect recorded as NOT delivered",
+          bool(w12) and w12[0].get("delivered") is False, w12)
+    sinkA.shutdown(); sinkB.shutdown()
+
+    # ---- 13. fail-open encompasses wake PREPARATION and PROBE READS (F3): a
+    #          decided HELD run must exit 0 even when (a) wake.jsonl holds a
+    #          non-dict JSON line, (b) wake.jsonl is a directory, (c) config.yaml
+    #          parses to a non-mapping root. (d) config ${VAR} refs are expanded
+    #          like core's own loader, and an IPv6 host is bracketed. ----
+    (tmp / "config.yaml").unlink(missing_ok=True)
+    r13a = mk("w13a", G_HOLD, OWNER); (r13a / "wake.jsonl").write_text("[]\n")
+    out = drive(r13a)
+    check("non-dict probe line keeps HELD exit 0", out.returncode == 0, str(out))
+    r13b = mk("w13b", G_HOLD, OWNER); (r13b / "wake.jsonl").mkdir()
+    out = drive(r13b)
+    check("wake.jsonl directory keeps HELD exit 0", out.returncode == 0, str(out))
+    (tmp / "config.yaml").write_text("- 1\n")
+    r13c = mk("w13c", G_HOLD, OWNER)
+    out = drive(r13c, {"WF_WAKE_SINK_PORT": ""})
+    check("non-mapping config root keeps HELD exit 0", out.returncode == 0, str(out))
+    (tmp / "config.yaml").write_text(
+        "platforms:\n  api_server:\n    host: '::1'\n"
+        "    port: 8642\n    key: ${WAKE_TEST_KEY}\n")
+    os.environ["WAKE_TEST_KEY"] = "expanded-key"
+    try:
+        import wf as _wf2
+        _saved_home = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = str(tmp)
+        try:
+            ep = _wf2._wake_endpoint()
+        finally:
+            if _saved_home is not None:
+                os.environ["HERMES_HOME"] = _saved_home
+        check("endpoint expands ${VAR} refs and brackets IPv6 (core parity)",
+              bool(ep) and ep[0] == "http://[::1]:8642/v1/chat/completions"
+              and ep[1] == "expanded-key", str(ep))
+    finally:
+        os.environ.pop("WAKE_TEST_KEY", None)
+        (tmp / "config.yaml").unlink(missing_ok=True)
+
+    # ---- 14. terminal dedupe is per TRANSITION, not once-per-run/event (finding
+    #          5): a second failed decision (gen advanced in events.jsonl) is a
+    #          NEW transition and must wake; a respawn of the SAME decision stays
+    #          deduped; the crash double-net (same gen) fires exactly one wake. ----
+    r14 = mk("w14", G_HOLD, OWNER)
+    before14 = len(sinks)
+    _wf.notify(r14, "run.failed", "first failure")
+    with open(r14 / "events.jsonl", "a") as f:
+        f.write(json.dumps({"ts": "x", "event": "run.blocked"}) + "\n")
+    _wf.notify(r14, "run.failed", "second failure after amend")
+    w14 = wakes(r14)
+    check("two terminal decisions = two transitions = two wakes",
+          len(w14) == 2 and len(sinks) == before14 + 2
+          and w14[0].get("key") != w14[1].get("key"), str(w14))
+    _wf.notify(r14, "run.failed", "second failure re-driven")
+    check("same terminal decision stays deduped once delivered",
+          len(wakes(r14)) == 2 and len(sinks) == before14 + 2, str(wakes(r14)))
 finally:
     _sink_srv.shutdown()
     shutil.rmtree(tmp, ignore_errors=True)
