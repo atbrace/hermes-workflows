@@ -2,7 +2,7 @@
   "template": "triage-route",
   "receipt_kind": "author-run",
   "revision": "v3 (prune-law fix after peer-estate clean-run FAIL)",
-  "author_estate": "austin-exec (homelab profile, devbox)",
+  "author_estate": "author estate (homelab seat, devbox)",
   "graph_file": "examples/triage-route.workflow.json",
   "graph_sha256": "291d4e8d6ed7d0bbbfbca71a37a0788372a4cc767b23e5d2282cf8dfcdef2d6f",
   "source_digest": "52559c3cfb6ff966f4c282e8d956287e0f81f523d19b64f20ef52411d451ed31",
