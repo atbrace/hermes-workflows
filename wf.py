@@ -145,11 +145,12 @@ WAKE_TIMEOUT_S = 10.0   # fail-open: a wake must never stall a runner exit
 def _wake_endpoint():
     """Where to POST a wake, host config first (mirrors the api_server adapter's own
     precedence: config platforms.api_server host/port win over the env fallbacks;
-    key: config `key` > API_SERVER_KEY). WF_WAKE_SINK_PORT — the ONE environment
-    hook, test/sidecar-only (the regression test and the dogfood rig stand a local
-    sink up on it; a production host never sets it) — short-circuits the endpoint.
-    Returns (url, key, header-path) or None when the host runs no reachable API
-    server."""
+    key: config `key` > API_SERVER_KEY; `${VAR}` refs expand exactly like core's own
+    loader and an IPv6 host gets its URL brackets). WF_WAKE_SINK_PORT — the ONE
+    environment hook, test/sidecar-only (the regression test and the dogfood rig
+    stand a local sink up on it; a production host never sets it) — short-circuits
+    the endpoint. Returns (url, key, header-path) or None when the host runs no
+    reachable API server."""
     port = os.environ.get("WF_WAKE_SINK_PORT", "").strip()
     if port:
         return f"http://127.0.0.1:{port}/wake", "", "X-Hermes-Session-Id"
@@ -157,17 +158,21 @@ def _wake_endpoint():
         cfg = wfcommon._yaml_load((wfcommon.hermes_home() / "config.yaml").read_text()) or {}
     except Exception:
         cfg = {}
-    api = ((cfg.get("platforms") or {}).get("api_server") or {})
+    api = wfcommon._expand_config_values((cfg.get("platforms") or {}).get("api_server") or {})
+    if not isinstance(api, dict):
+        api = {}
     host = str(api.get("host") or os.environ.get("API_SERVER_HOST") or "127.0.0.1")
     if host in ("0.0.0.0", "::", "*"):
         host = "127.0.0.1"
     try:
-        port = str(int(api.get("port") or os.environ.get("API_SERVER_PORT") or 8642))
+        port = str(int(str(api.get("port") or os.environ.get("API_SERVER_PORT") or 8642)))
     except (TypeError, ValueError):
         return None
     key = str(api.get("key") or os.environ.get("API_SERVER_KEY") or "")
     if not key:
         return None   # session continuation is 403-gated without it (core's own rule)
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"                        # F2: a bare IPv6 host needs URL brackets
     return f"http://{host}:{port}/v1/chat/completions", key, "X-Hermes-Session-Id"
 
 def _wake_already(run, event, key):
