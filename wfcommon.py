@@ -566,6 +566,45 @@ ECHO_KEYS = {"id", "type", "after", "output"}
 # 1.1 (RATIFY F5): opt-in library provenance block, written by the door's `save` ONLY when
 # `source` is supplied or the saving door runs under a named profile. Top-level graph key.
 PROVENANCE_KEYS = {"owner", "source", "saved_at", "source_digest"}
+
+# ---------- library entry normalizer (#50, R10 migration law) ----------
+# A library file is either the 1.1 BARE form (the graph object itself — the bytes
+# every pre-#50 `save` wrote, which must keep loading and listing verbatim) or the
+# #50 ENVELOPE {"meta": {description?, tags?}, "graph": {...}}. Anything else is an
+# UNKNOWN shape: the door QUARANTINES the entry — listed with a typed refusal reason,
+# never a crash, never replayable (F-2 #62: one corrupt file must not take discovery,
+# the typo nudge, or /wf down with it). Returns {meta, graph, description, tags,
+# envelope} for a usable entry, or {"invalid": "invalid: <why>"} for a refused one —
+# always a dict, callers key on the "invalid" marker / the presence of "graph".
+def library_entry(data):
+    if not isinstance(data, dict):
+        return {"invalid": "invalid: not a JSON object"}
+    if isinstance(data.get("graph"), dict):
+        if isinstance(data.get("nodes"), list):
+            return {"invalid": "invalid: ambiguous file — carries both envelope"
+                               " (graph:) and bare (nodes:) markers"}
+        meta = data.get("meta")
+        meta = meta if isinstance(meta, dict) else {}
+        graph = data["graph"]
+        envelope = True
+    elif isinstance(data.get("nodes"), list):
+        meta, graph, envelope = {}, data, False
+    else:
+        return {"invalid": "invalid: neither a bare graph (no nodes[] list)"
+                           " nor a {meta, graph} envelope"}
+    if not graph.get("nodes") or not isinstance(graph.get("nodes"), list):
+        return {"invalid": "invalid: graph has no non-empty nodes[] list"}
+    for i, n in enumerate(graph["nodes"]):
+        if not isinstance(n, dict):
+            return {"invalid": f"invalid: nodes[{i}] is not an object"}
+    description = meta.get("description")
+    if not isinstance(description, str) or not description.strip():
+        description = graph.get("description")
+    tags = meta.get("tags")
+    tags = [t for t in tags if isinstance(t, str) and t.strip()] \
+        if isinstance(tags, list) else []
+    return {"meta": meta, "graph": graph, "description": description,
+            "tags": tags, "envelope": envelope}
 # #32 (publish-as-file): top-level `grammar` names the dialect a shared file was written
 # in. Absent = "wf/1" (every pre-#32 file is a wf/1 file); unknown = fail-closed with the
 # reader's supported list, so a newer dialect is refused honestly instead of misrun.
