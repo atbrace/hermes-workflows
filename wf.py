@@ -199,7 +199,12 @@ def notify(run, event, text, key=None):
     if not run.is_dir():
         return
     meta = jload(run / "run.json", {}) or {}
-    owner = meta.get("owner") or {}
+    owner = meta.get("owner")
+    # Defensive on shape (R10): the wake needs the door's dict stamp
+    # {session_id, ...}; any other truthy value (legacy strings in older/fixed-up
+    # run.json files) is not a delivery target — degrade silently, never crash.
+    if not isinstance(owner, dict):
+        return
     sid = owner.get("session_id")
     if not sid:
         return

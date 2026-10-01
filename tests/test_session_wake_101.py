@@ -217,6 +217,13 @@ try:
     w6 = wakes(r6)
     check("delivery failure recorded, not swallowed silently",
           bool(w6) and w6[0].get("delivered") is False, w6)
+
+    # ---- 7. legacy/foreign owner shape (a bare string, not the dict stamp):
+    #         degrade silently — never a crash, never a wake (R10 migration law) ----
+    r7 = mk("w7", G_HOLD, "ignored")          # run.json owner: "some-string"
+    out7 = drive(r7).stdout.strip()
+    check("non-dict owner degrades silently", out7.startswith(f"WORKFLOW_HELD {r7.name} g1"), out7)
+    check("non-dict owner writes no wake probe", not (r7 / "wake.jsonl").exists(), str(wakes(r7)))
 finally:
     _sink_srv.shutdown()
     shutil.rmtree(tmp, ignore_errors=True)
