@@ -61,10 +61,64 @@ def _inline_graph_size_error(graph):
 GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
               "provenance",   # 1.1 (RATIFY F5): opt-in library provenance block, door-written
               "grammar",      # #32: dialect tag of a shared file ("wf/1"; absent = wf/1)
-              "concurrency", "item_concurrency",  # #100: optional run-level limits
+              "concurrency", "item_concurrency", "retry",  # #100: optional run-level limits + #24 retry mode
               "include"}      # composite graphs: shelved-DAG expansion annotation; STRIPPED on
                               # expand, so a committed graph.json never carries it (only the
                               # library author form does)
+KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance", "_requested")
+
+def _knob_errors(graph):
+    """#24: reject malformed knob values with the repo's {node, field, msg} shape.
+    Type rules mirror the validator's house style; the cap keeps a typo'd width
+    from opening thousands of child processes at once."""
+    errs = []
+    for key in ("concurrency", "item_concurrency"):
+        if key in graph:
+            v = graph[key]
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} must be a positive int (cap {_common.CONCURRENCY_CAP})"})
+            elif v > _common.CONCURRENCY_CAP:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} {v} exceeds cap {_common.CONCURRENCY_CAP}"})
+    if "retry" in graph:
+        rt = graph["retry"]
+        if not isinstance(rt, dict):
+            errs.append({"node": None, "field": "retry", "msg": "retry must be an object"})
+        else:
+            for k in sorted(set(rt) - _common.RETRY_KEYS):
+                errs.append({"node": None, "field": "retry",
+                             "msg": "unknown key; allowed: " + json.dumps(sorted(_common.RETRY_KEYS))})
+            if "mode" in rt and rt["mode"] not in _common.RETRY_MODES:
+                errs.append({"node": None, "field": "retry.mode",
+                             "msg": f"invalid retry.mode {rt['mode']!r}; allowed: {sorted(_common.RETRY_MODES)}"})
+            if "resume_floor_s" in rt:
+                rf = rt["resume_floor_s"]
+                if not isinstance(rf, (int, float)) or isinstance(rf, bool) or rf < 1:
+                    errs.append({"node": None, "field": "retry.resume_floor_s",
+                                 "msg": "resume_floor_s must be a positive number of seconds"})
+    return errs
+
+def _knob_bake(graph):
+    """#24: (effective values, author-vs-default provenance, requested) from a
+    graph that _knob_errors accepted. Door-written. A graph carrying NO knob
+    bakes NOTHING (returns empty dicts): the run.json key set stays frozen for
+    pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks."""
+    if not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+        return {}, {}, {}
+    effective, provenance = {}, {}
+    for key, dflt in (("concurrency", _common.DEFAULT_CONCURRENCY),
+                      ("item_concurrency", _common.DEFAULT_ITEM_CONCURRENCY)):
+        author = isinstance(graph.get(key), int) and not isinstance(graph.get(key), bool)
+        effective[key] = graph[key] if author else dflt
+        provenance[key] = "author" if author else "default"
+    author_retry = isinstance(graph.get("retry"), dict)
+    if author_retry:
+        effective["retry"] = dict(graph["retry"])
+    provenance["retry"] = "author" if author_retry else "default"
+    requested = {k: effective[k] for k in ("concurrency", "item_concurrency", "retry")
+                 if provenance[k] == "author"}
+    return effective, provenance, requested
 
 def _model_names_valid(names):
     return isinstance(names, list) and all(isinstance(n, str) and n.strip() for n in names)
@@ -149,7 +203,11 @@ def _validation_error(graph):
     never diverge in strictness again. This side keeps the door-specific node
     normalization (author-forged route_verified stripping) and composes it with
     the shared node-level validator."""
-    errs = list(_common.structural_graph_errors(graph))
+    # #24: `retry` joins the shared structural key set door-side; the knob
+    # shape rules (_knob_errors) run right after so widths AND retry are
+    # refused in one call.
+    errs = list(_common.structural_graph_errors(graph, extra_keys=("retry",)))
+    errs.extend(_knob_errors(graph))     # #24: knob family (concurrency/item_concurrency/retry)
     nodes = graph.get("nodes")
     # The shared validator assumes hashable ids and iterable dependency lists.
     # Normalize only those invalid shapes in a copy, collecting their errors while
@@ -2600,6 +2658,15 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta["includes"] = includes
     if include_notes:
         meta["include_notes"] = include_notes
+    # #24 knob family: bake the EFFECTIVE widths + retry mode with author-vs-default
+    # provenance, and the author's REQUEST (what validation saw) so the runner can
+    # receipt requested-vs-applied. Absent knobs => no keys land (legacy shape).
+    _eff, _prov, _req = _knob_bake(graph)
+    meta.update(_eff)
+    if _prov:
+        meta["knobs_provenance"] = _prov
+    if _req:
+        meta["_requested"] = _req
     (r / "run.json").write_text(json.dumps(meta))
     # AUTHORITY LAW (owner ruling, PR#97 review): every owner-facing automatic wake
     # is RUNNER-AUTHORED protocol text; graph-authored prose (gate questions etc.)
@@ -3146,8 +3213,24 @@ def act_amend(args):
             meta["include_notes"] = _include_notes
         else:
             meta.pop("include_notes", None)
+    # #24: an amend REPLACES the graph, so it re-bakes the knob family from the
+    # NEW graph — a knob the new graph dropped returns to default with provenance
+    # flipped. No knobs anywhere (old and new graph) => run.json untouched.
+    _old_meta = dict(meta)
+    _stripped = False
+    for _k in KNOB_META_KEYS:
+        _stripped = (_k in meta) or _stripped
+        meta.pop(_k, None)
+    _eff, _prov, _req = _knob_bake(new)
+    meta.update(_eff)
+    if _prov:
+        meta["knobs_provenance"] = _prov
+    if _req:
+        meta["_requested"] = _req
+    _knobs_moved = meta != _old_meta
     if meta.get("name") != new["name"] or _includes or _include_notes:
         meta["name"] = new["name"]
+    if _knobs_moved or meta.get("name") != _old_meta.get("name"):
         mtmp = r / f"run.json.{os.getpid()}.tmp"
         mtmp.write_text(json.dumps(meta, ensure_ascii=False))
         os.replace(mtmp, r / "run.json")
