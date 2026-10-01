@@ -1544,7 +1544,17 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
         # inner-first: recursively expand the child BEFORE namespacing it
         child = _expand_include_pass(entry, library_reader, notes,
                                      chain + (use,), depth + 1)
-        cerr = validate_graph_errors(child)
+        # PR#84 review F-2: the shelf is measured with validate_graph_full — the
+        # SAME complete structural+node validator a submitted graph gets at the
+        # door — not the node-only validate_graph_errors. Before this, the lossy
+        # top-level projection (fused = parent keys minus include) dropped a
+        # child's unknown graph key / bad defaults / bad provenance before the
+        # door ever saw them: refused when submitted directly, silently accepted
+        # when included. The full pass ALSO runs before any hashable-id contact
+        # (validate_graph_errors' duplicate-id `set(ids)` used to TypeError on
+        # id:["bad"] and leak a trace) — a malformed child now gets the named
+        # include-envelope refusal, same contract as direct submission.
+        cerr = validate_graph_full(child)
         if cerr:
             e = cerr[0]
             where = e["node"] or "graph"
@@ -1555,22 +1565,20 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
         # model may not stop forbidding it because someone included it. The
         # child is already recursively expanded, so a nested composite's merged
         # policy rides up transitively at this level. Anything malformed here is
-        # a named refusal, never a silent drop.
+        # a named refusal, never a silent drop. The rules are ONE list with the
+        # door's (model_policy_errors): an int/str require_model:0 that direct
+        # submission refuses can no longer slip in as truthy through the bool().
         cp = child.get("model_policy")
         if cp is not None:
-            if not isinstance(cp, dict) or set(cp) - {"require_model", "forbidden_models"}:
-                own(alias, f"library entry {use!r} has an invalid model_policy "
-                           f"(object of require_model?/forbidden_models? only)")
+            cperr = model_policy_errors(cp)
+            if cperr:
+                own(alias, f"library entry {use!r} has an invalid model_policy: "
+                           + "; ".join(cperr))
             if cp.get("require_model") is not None:
-                child_require_aliases.append((alias, bool(cp["require_model"])))
+                child_require_aliases.append((alias, cp["require_model"]))
             _fb = cp.get("forbidden_models")
-            if _fb is not None:
-                if not isinstance(_fb, list) or any(
-                        not isinstance(x, str) or not x.strip() for x in _fb):
-                    own(alias, f"library entry {use!r} model_policy."
-                               f"forbidden_models must be a list of non-empty strings")
-                if _fb:
-                    child_policies.append((alias, list(_fb)))
+            if _fb:
+                child_policies.append((alias, list(_fb)))
         child_nodes, nsset = _include_namespace_child(child, alias, use)
 
         # --- seed contract: render {run.KEY} inside the subtree ONLY ---
@@ -1692,6 +1700,19 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
     # (set semantics, deterministic sorted order) into the parent's policy;
     # require_model ORs upward below; other child top-level keys (defaults, ...)
     # are NOT carried and are noted where meaningful.
+    # PR#84 review F-2: the PARENT's model_policy is type-checked BEFORE the
+    # forbidden union / require_model OR run, with the same model_policy_errors
+    # list the door uses. Without this the merge itself repaired a malformed
+    # parent: require_model:'false' is truthy, `want = pol.get(...) or any(...)`
+    # kept it, and the write-back stored boolean True — a policy that direct
+    # submission refuses emerged from composition as a coerced floor. Malformed
+    # parent policy is now a named refusal, never a silent repair. (Checked on
+    # any composition that touches the policy — union OR require propagation.)
+    if (child_policies or child_require_aliases) and "model_policy" in fused:
+        _perr = model_policy_errors(fused["model_policy"])
+        if _perr:
+            own(None, "parent model_policy is invalid before a child policy can "
+                      "merge into it: " + "; ".join(_perr))
     if child_policies:
         if "model_policy" in fused and not isinstance(fused["model_policy"], dict):
             own(None, "parent model_policy must be an object before a child policy "

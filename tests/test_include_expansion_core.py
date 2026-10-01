@@ -343,11 +343,14 @@ expp3, notes3 = wfcommon.expand_includes(
 check("nested child policies union transitively",
       expp3["model_policy"]["forbidden_models"]
       == ["bad-a", "bad-b", "comp-x", "shared-x"], expp3.get("model_policy"))
-# malformed child policy is a named refusal, never a silent drop or a crash
+# malformed child policy is a named refusal, never a silent drop or a crash.
+# PR#84 review F-2: the shelf now goes through validate_graph_full, so an unknown
+# policy key is refused by the standalone-validation pass itself (shared rules
+# with direct submission) before the fuse-step policy check is ever reached.
 LIB["polbad"] = {"name": "polbad", "model_policy": {"nope": 1}, "nodes": [agent("k")]}
-refuses("child model_policy with unknown keys refused (named, standalone-valid shape)",
+refuses("child model_policy with unknown keys refused (named, via full standalone validation)",
         {"name": "m", "include": [{"as": "pb", "use": "polbad"}], "nodes": []},
-        reader, "invalid model_policy")
+        reader, "unknown policy key")
 LIB["polbad2"] = {"name": "polbad2", "model_policy": {"forbidden_models": "x"},
                   "nodes": [agent("k")]}
 refuses("child forbidden_models non-list refused",
