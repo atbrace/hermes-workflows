@@ -90,12 +90,15 @@ def _knob_errors(graph):
                                  "msg": "resume_floor_s must be a positive number of seconds"})
     return errs
 
-def _knob_bake(graph):
+def _knob_bake(graph, bake_all=False):
     """#24: (effective values, author-vs-default provenance, requested) from a
     graph that _knob_errors accepted. Door-written. A graph carrying NO knob
     bakes NOTHING (returns empty dicts): the run.json key set stays frozen for
-    pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks."""
-    if not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+    pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
+    bake_all=True (amend over a run.json that already carried knobs): the widths
+    bake to their defaults with provenance "default" — a key that was once
+    stamped stays stamped, so watchers never lose author-vs-default truth."""
+    if not bake_all and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
         return {}, {}, {}
     effective, provenance = {}, {}
     for key, dflt in (("concurrency", _common.DEFAULT_CONCURRENCY),
@@ -2422,7 +2425,7 @@ def act_amend(args):
     for _k in KNOB_META_KEYS:
         _stripped = (_k in meta) or _stripped
         meta.pop(_k, None)
-    _eff, _prov, _req = _knob_bake(new)
+    _eff, _prov, _req = _knob_bake(new, bake_all=_stripped)
     meta.update(_eff)
     if _prov:
         meta["knobs_provenance"] = _prov
