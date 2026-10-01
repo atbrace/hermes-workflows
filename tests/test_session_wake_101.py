@@ -260,7 +260,7 @@ try:
             check("timeout attempt probe-records, delivered=false (retryable)",
                   len(w8a) == 1 and w8a[0].get("delivered") is False, w8a)
             hang_done.set()                    # release the stalled handler thread
-            os.environ.pop("WF_WAKE_SINK_PORT", None)   # drive() stamps the fast sink
+            os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)   # fast sink for the retry
             before = len(sinks)
             _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
             w8b = wakes(r8)

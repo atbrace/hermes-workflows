@@ -16,6 +16,7 @@ downstream result stale — downstream nodes re-run or re-hold; unchanged chains
 """
 import json, os, re, signal, socket, subprocess, sys, threading, time
 import fcntl
+import hashlib
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -193,13 +194,26 @@ def _wake_already(run, event, key):
         pass
     return False
 
+def _wake_gen(run):
+"""Transition counter: lines already in events.jsonl (the run's own ledger).
+    Two notifications separated by a new ledger line are separated by a real state
+    change — that is what makes a re-made terminal decision (failed, amended, failed
+    again) a NEW transition while a respawn of the same decision stays deduped."""
+    try:
+        return sum(1 for l in (run / "events.jsonl").read_text().splitlines() if l.strip())
+    except Exception:
+        return 0
+
 def notify(run, event, text, key=None):
     """Push ONE lifecycle transition to the owner session stamp. Owner-null (tests,
     CLI, tool hosts without a session env) writes NOTHING — the door's silent
     degradation, unchanged. Each ATTEMPT records in <run>/wake.jsonl (the probe);
-    a duplicate of a delivered transition writes nothing. Delivery failure is
-    loud in the probe and NEVER raises into the run loop — the run's own state
-    was already decided; a dead endpoint must not cost the run its exit."""
+    a duplicate of a delivered transition writes nothing. The POST carries a stable
+    Idempotency-Key — sha256(run|event|key|generation) — so the owner may be nudged
+    at-least-once while the server-side dedupe guarantees the PAID TURN runs at most
+    once per transition (F5). Delivery failure is loud in the probe and NEVER raises
+    into the run loop — the run's own state was already decided; a dead endpoint must
+    not cost the run its exit."""
     if not run.is_dir():
         return
     meta = jload(run / "run.json", {}) or {}
@@ -212,11 +226,21 @@ def notify(run, event, text, key=None):
     sid = owner.get("session_id")
     if not sid:
         return
+    # Identity: an EXPLICIT caller key already names the transition exactly
+    # (gate id + definition fingerprint; crash reason) — it must survive a
+    # runner respawn, so no generation is mixed in. A DEFAULTED key is just
+    # the event name: two distinct decisions of the same class (failed,
+    # amended, failed again) only differ by what the ledger says happened in
+    # between, so the generation distinguishes them (finding 5) while a
+    # respawn of the SAME delivered decision still dedupes.
+    gen = _wake_gen(run) if key is None else 0
     key = event if key is None else key
-    if _wake_already(run, event, key):
+    identity = hashlib.sha256(
+        f"{run.name}\0{event}\0{key}\0{gen}".encode()).hexdigest()[:32]
+    if _wake_already(run, event, identity):
         return
     rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
-           "key": key, "text": text}
+           "key": identity, "gen": gen, "text": text}
     ep = _wake_endpoint()
     if ep is None:
         rec["delivered"] = False
@@ -229,6 +253,7 @@ def notify(run, event, text, key=None):
                 data=json.dumps({"model": "hermes-agent", "stream": False,
                                  "messages": [{"role": "user", "content": text}]}).encode(),
                 headers={"Content-Type": "application/json", hdr: str(sid),
+                         "Idempotency-Key": identity,
                          **({"Authorization": f"Bearer {secret}"} if secret else {})})
             with urllib.request.urlopen(req, timeout=WAKE_TIMEOUT_S) as resp:
                 rec["delivered"] = 200 <= resp.status < 300
