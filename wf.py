@@ -252,8 +252,10 @@ def notify(run, event, text, key=None):
     degradation, unchanged. Each ATTEMPT records in <run>/wake.jsonl (the probe);
     a duplicate of a delivered transition writes nothing. The POST carries a stable
     Idempotency-Key — sha256(run|event|key|generation) — so the owner may be nudged
-    at-least-once while the server-side dedupe guarantees the PAID TURN runs at most
-    once per transition (F5). Delivery failure is loud in the probe and NEVER raises
+    at-least-once; this leg guarantees delivered-or-recorded per transition (F5).
+    Collapsing duplicate nudges into one paid turn is the server-side consumer's
+    contract, outside this repo — not a guarantee made here. Delivery failure is loud
+    in the probe and NEVER raises
     into the run loop — the run's own state was already decided; a dead endpoint must
     not cost the run its exit. Nothing caller-computed is interpolated into the probe
     before the generic fail-open net; a crash in preparation records a typed line."""
