@@ -129,7 +129,8 @@ def kill_tree(r):
         pass
 
 
-with tempfile.TemporaryDirectory(prefix="reaper8-", dir=HERE) as td:
+with tempfile.TemporaryDirectory(prefix="reaper8-", dir=HERE,
+                                 ignore_cleanup_errors=True) as td:
     home = Path(td) / "home"
     runs = home / "workflows"
     runs.mkdir(parents=True)
