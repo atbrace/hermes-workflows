@@ -1,0 +1,21 @@
+{
+  "template": "quorum-probe",
+  "receipt_kind": "peer-clean-run",
+  "reviewer_estate": "peer estate (cross-estate clean-run seat)",
+  "graph_file": "examples/quorum-probe.workflow.json",
+  "graph_sha256": "ec47ee1602a1f8dbe928ddbdf6e5f35203bba5e2bc8e53db9668d639e940e9ce",
+  "source_digest": "6c69aadae66178809bc0540ff2ef3a1b726bb3e0f5b0314c559a6fda01affa2b",
+  "tested_head": "4c00cef (PR #108 head; digests verified byte-equal to the author receipt pins)",
+  "run_id": "20261001-205401-quorum-probe-peer108",
+  "runs_root": "peer estate profile workflows root",
+  "verdict": "PASS - both folded modes walk exactly as claimed on a cold estate; one non-blocking admission note (see capability_note)",
+  "race_shape_proof": "probe_race committed at quorum 2/3 (host-kernel, utc-clock done; sleep-marshal item.finished failed error_class=cancelled). The report node itemizes the incomplete set EXACTLY: dispatched roster of 3, answered 2, cancelled-at-quorum named, with the engine's cancel evidence quoted (had output at quorum moment: log_bytes=74, work_files=1). No full-roster claim anywhere in the leaf output.",
+  "coverage_shape_proof": "probe_coverage barrier committed 3/3 statuses, but reconcile judged archive-lane's self-declared offline obs ('No commands executed') a gap DESPITE its done status - exactly the law the description states - and verdict reads 'COVERAGE GAP: archive-lane answered nothing'. The synth chain survived with after_partial semantics (report done, not darkened).",
+  "runner_exit": {
+    "reason": "done",
+    "at": "2026-10-01T20:55:24+00:00",
+    "graph_fingerprint": "42d3240199bff120"
+  },
+  "capability_note": "NON-BLOCKING, admission-observability: the report node's after_partial key is a REQUIRED capability that only engine >= #91 (fa08e95) accepts. The cold launch first hit this estate's long-lived tool-door PROCESS, which had loaded the validator before #91 deployed: launch refused pre-spawn (fail-closed, zero cost) while the same tree accepted the graph through a fresh door import. The template is right; the event that made it legible was the validator's closed-set error, not a WOFS required-capability declaration. Suggested (optional, W2-flavored): name after_partial in the file's description as an engine-capability floor so a reader can lint 'will my door accept this?' without a doomed launch. Strict mode honored: unknown key refused BEFORE any write or spawn, which is the correct cross-estate behavior.",
+  "notes": "Zero run_context seeds needed (verified: no {run.*} refs in any spawned prompt, grep-0). Self-contained probes: no estate paths, no vendor ids, zero scrub hits on this estate's audit of the shipped file. Cold-clone workflow: fresh clone -> fetch PR head -> validate [] on shared validator -> launch. Two laps of the author's own claims reproduced verbatim on independent hardware."
+}
