@@ -298,7 +298,14 @@ def notify(run, event, text, key=None):
             rec["error"] = "timeout: read window closed before a response (retryable)"
         except Exception as e:
             rec["delivered"] = False
-            rec["error"] = f"{type(e).__name__}: {e}"
+            # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
+            # http.client raises ValueError("Invalid header value b'Bearer
+            # <secret>'") for a key with a newline. Record the TYPE only (plus
+            # a secret-free suffix for a ValueError, whose argument is the raw
+            # bytes with the secret embedded); never the raw repr.
+            rec["delivered"] = False
+            suffix = (" (header value rejected)" if isinstance(e, ValueError) else "")
+            rec["error"] = f"{type(e).__name__}{suffix}"
     try:
         with open(run / "wake.jsonl", "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
