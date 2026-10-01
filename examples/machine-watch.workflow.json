@@ -1,0 +1,34 @@
+{
+  "grammar": "wf/1",
+  "name": "machine-watch",
+  "description": "Deterministic scheduled watcher: a machine gate polls a check command at a fixed cadence and costs ZERO tokens while parked; the run releases only when the check exits 0. LAUNCH LAW (the whole point): always launch with run args lane_key=<team>/<watch-name> — a second dispatch while the incumbent is unfinished is DEDUPED by the engine (no spawn; the incumbent's run_id comes back), so cron double-fire cannot double-run the watch. Seeds (run_context map, ALL required): 'watch_name' = human label echoed into the report; 'check_cmd' = one shell line whose exit 0 means the watched condition is clear (e.g. 'test -f /ready.flag && pgrep -f worker >/dev/null'). The bootstrap node writes check_cmd verbatim to /tmp/machine-watch-example/check_cmd.txt; the gate polls that file through a fixed probe — edit the file to retarget the watch without touching the graph. This gate carries NO question: a machine wait that also asks a human is the hybrid-gate ambiguity both estates' validators currently under-enforce — a timeout here fails the run loudly and the scheduler's next deduped dispatch retries it; human escalation is composed around it, not inside it. Scratch root /tmp/machine-watch-example is shared handoff state: one watch per root, or change both the bootstrap goal and the probe path together. every_s/timeout_s are policy, not work: raise them for production cadence (>=30s polling recommended) without changing any node fingerprint.",
+  "provenance": {
+    "owner": "hermes-workflows",
+    "source": "hermes-workflows/examples/machine-watch.workflow.json"
+  },
+  "nodes": [
+    {
+      "id": "bootstrap",
+      "type": "agent",
+      "max_turns": 6,
+      "goal": "Install the watch probe. 1) mkdir -p /tmp/machine-watch-example. 2) Delete any stale state: rm -f /tmp/machine-watch-example/check_cmd.txt /tmp/machine-watch-example/last_probe.json (a leftover check from a previous watch must never poll for the wrong condition). 3) Write this exact command, verbatim, as a single line to /tmp/machine-watch-example/check_cmd.txt:\n{run.check_cmd}\n4) Read the file back and compare it byte-for-byte to what you were given. Reply with ONLY fenced json {\"watch_name\": \"{run.watch_name}\", \"check_cmd\": \"<the verbatim line>\", \"state_written\": true} — state_written only if the read-back matched."
+    },
+    {
+      "id": "watch",
+      "type": "gate",
+      "after": ["bootstrap"],
+      "wait": {
+        "until_argv": ["/usr/bin/python3", "-c", "import pathlib,subprocess,sys; S=pathlib.Path('/tmp/machine-watch-example'); C=S/'check_cmd.txt'\ntry: cmd=C.read_text().strip()\nexcept OSError: sys.exit(2)\nrc=subprocess.run(cmd,shell=True).returncode\nS.joinpath('last_probe.json').write_text(str(rc))\nsys.exit(0 if rc==0 else 1)"],
+        "every_s": 3,
+        "timeout_s": 300
+      }
+    },
+    {
+      "id": "report",
+      "type": "agent",
+      "after": ["watch"],
+      "max_turns": 4,
+      "goal": "The machine gate 'watch' released when the polled check exited 0 (its committed answer in ## Inputs carries attempt + waited_s + last_exit). Read /tmp/machine-watch-example/last_probe.json. For the watch named in the bootstrap payload, reply with ONLY fenced json {\"released\": true, \"attempts\": <int from the gate answer>, \"waited_s\": <int from the gate answer>, \"report\": \"<one line: watch_name cleared after N polls, last probe exit E>\"}"
+    }
+  ]
+}
