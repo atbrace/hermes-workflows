@@ -14,14 +14,17 @@ Staleness law (wfcommon.efp): each stored result is verified under its stamped r
 against the current graph (own def + all ancestors' defs). An amend upstream makes
 downstream result stale — downstream nodes re-run or re-hold; unchanged chains replay.
 """
-import json, os, re, signal, subprocess, sys, threading, time
+import json, os, re, signal, socket, subprocess, sys, threading, time
 import fcntl
+import urllib.error
+import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import wfcommon
 from wfcommon import (efp, graph_fingerprint, jload, validate_graph, node_rec, gate_answer_valid,
                       when_true, child_metrics, prune_states, dep_satisfied, active_child,
                       FP_RULE_VERSION, record_efp_valid, seat_forbidden_models, runs_root,
@@ -149,6 +152,118 @@ def log(run, ev, **kw):
 
 def emit(line):
     print(line, flush=True)
+
+# ---------- owner-session wake (lifecycle TRANSITIONS only) ----------
+# The WORKFLOW_* stdout lines above are the runner's log voice and stay exactly as
+# they are (runner.log is the door's redirect). This path is the ADDITIVE push: the
+# run's state transitions also reach the session stamped in run.json `owner`
+# (door: absent => manual resume => this path stays silent too). It mirrors core's
+# wake self-post (gateway/wake.py: POST /v1/chat/completions carrying the raw
+# X-Hermes-Session-Id + API_SERVER_KEY bearer — the contract the background-process
+# completion watcher rides) because the runner is a separate process and cannot
+# import the gateway's async deliver_wake directly. Same wire, same session.
+
+WAKE_TIMEOUT_S = 10.0   # fail-open: a wake must never stall a runner exit
+
+def _wake_endpoint():
+    """Where to POST a wake, host config first (mirrors the api_server adapter's own
+    precedence: config platforms.api_server host/port win over the env fallbacks;
+    key: config `key` > API_SERVER_KEY). WF_WAKE_SINK_PORT / WF_WAKE_GATEWAY_URL +
+    WF_WAKE_GATEWAY_KEY override for tests and sidecar sinks. Returns
+    (url, key, header-path) or None when the host runs no reachable API server."""
+    port = os.environ.get("WF_WAKE_SINK_PORT", "").strip()
+    if port:
+        return f"http://127.0.0.1:{port}/wake", "", "X-Hermes-Session-Id"
+    base = os.environ.get("WF_WAKE_GATEWAY_URL", "").strip()
+    if base:
+        return base.rstrip("/") + "/v1/chat/completions", os.environ.get("WF_WAKE_GATEWAY_URL_KEY", os.environ.get("API_SERVER_KEY", "")), "X-Hermes-Session-Id"
+    try:
+        cfg = wfcommon._yaml_load((wfcommon.hermes_home() / "config.yaml").read_text()) or {}
+    except Exception:
+        cfg = {}
+    api = ((cfg.get("platforms") or {}).get("api_server") or {})
+    host = str(api.get("host") or os.environ.get("API_SERVER_HOST") or "127.0.0.1")
+    if host in ("0.0.0.0", "::", "*"):
+        host = "127.0.0.1"
+    try:
+        port = str(int(api.get("port") or os.environ.get("API_SERVER_PORT") or 8642))
+    except (TypeError, ValueError):
+        return None
+    key = str(api.get("key") or os.environ.get("API_SERVER_KEY") or "")
+    if not key:
+        return None   # session continuation is 403-gated without it (core's own rule)
+    return f"http://{host}:{port}/v1/chat/completions", key, "X-Hermes-Session-Id"
+
+def _wake_already(run, event, key):
+    """Transition-only guard: an already-DELIVERED (event, key) is never re-pinged —
+    a runner respawn parked at the same gate hold (same definition fingerprint)
+    must not double-notify. A failed attempt is NOT a delivered transition: the
+    next pass re-attempts (at-least-once on the owner, zero on duplicates). A
+    changed `_def` key (amend re-holds a redesigned gate) IS a new transition."""
+    try:
+        for l in (run / "wake.jsonl").read_text().splitlines():
+            try:
+                rec = json.loads(l)
+            except Exception:
+                continue
+            if rec.get("event") == event and rec.get("key") == key and rec.get("delivered"):
+                return True
+    except FileNotFoundError:
+        pass
+    return False
+
+def notify(run, event, text, key=None):
+    """Push ONE lifecycle transition to the owner session stamp. Owner-null (tests,
+    CLI, tool hosts without a session env) writes NOTHING — the door's silent
+    degradation, unchanged. Each ATTEMPT records in <run>/wake.jsonl (the probe);
+    a duplicate of a delivered transition writes nothing. Delivery failure is
+    loud in the probe and NEVER raises into the run loop — the run's own state
+    was already decided; a dead endpoint must not cost the run its exit."""
+    if not run.is_dir():
+        return
+    meta = jload(run / "run.json", {}) or {}
+    owner = meta.get("owner") or {}
+    sid = owner.get("session_id")
+    if not sid:
+        return
+    key = event if key is None else key
+    if _wake_already(run, event, key):
+        return
+    rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
+           "key": key, "text": text}
+    ep = _wake_endpoint()
+    if ep is None:
+        rec["delivered"] = False
+        rec["error"] = "no reachable api_server (enable platforms.api_server + API_SERVER_KEY)"
+    else:
+        url, secret, hdr = ep
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"model": "hermes-agent", "stream": False,
+                                 "messages": [{"role": "user", "content": text}]}).encode(),
+                headers={"Content-Type": "application/json", hdr: str(sid),
+                         **({"Authorization": f"Bearer {secret}"} if secret else {})})
+            with urllib.request.urlopen(req, timeout=WAKE_TIMEOUT_S) as resp:
+                rec["delivered"] = 200 <= resp.status < 300
+                if not rec["delivered"]:
+                    rec["error"] = f"HTTP {resp.status}"
+        except urllib.error.HTTPError as e:
+            rec["delivered"] = False
+            rec["error"] = f"HTTP {e.code}"
+        except socket.timeout:
+            # The connection was admitted; the wake turn may outlive our read
+            # window — the gateway continues it server-side.
+            rec["delivered"] = True
+            rec["note"] = "read window closed; the gateway continues the wake turn"
+        except Exception as e:
+            rec["delivered"] = False
+            rec["error"] = f"{type(e).__name__}: {e}"
+    try:
+        with open(run / "wake.jsonl", "a") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:                      # probe un-writable: loud on stderr (runner.log), never fatal
+        print(f"WORKFLOW_WAKE_RECORD_FAILED {run.name} {event} ({e})", file=sys.stderr, flush=True)
 
 _LOCK_FD = None  # kept open for process lifetime — closing it would release the flock
 
@@ -3382,10 +3497,12 @@ def main(run_id):
     meta = jload(run / "run.json", {}) or {}
     if not jload(run / "graph.json", {}):
         emit(f"WORKFLOW_FAILED {run_id} (no graph.json)")
+        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: no graph.json.")
         write_runner_exit(run, "crashed: no graph.json"); sys.exit(2)
     err = validate_graph(jload(run / "graph.json")["nodes"])
     if err:
         emit(f"WORKFLOW_FAILED {run_id} (graph invalid: {err})")
+        notify(run, "run.failed", f"Workflow run {run_id} FAILED before start: graph invalid: {err}")
         write_runner_exit(run, "crashed: graph invalid", err); return
     if not meta.get("hermes_bin"):
         import shutil as _sh
@@ -3618,6 +3735,10 @@ def main(run_id):
             log(run, "gate.held", node=gate["id"], question=gate.get("question"),
                 options=gate.get("options"), context=gate.get("context"))
             emit(f"WORKFLOW_HELD {run_id} {gate['id']}")
+            notify(run, "gate.held",
+                   f"Workflow run {run_id} is HELD at gate '{gate['id']}': "
+                   f"{gate.get('question', '')} — answer with the workflow release action.",
+                   key=f"{gate['id']}:{efp(rs.byid, gate)}")
             ht = gate.get("hold_timeout")
             if ht is None:
                 return f"held at {gate['id']}"
@@ -3663,11 +3784,16 @@ def main(run_id):
             log(run, "run.blocked", failed=[n["id"] for n in failed], blocked=blocked,
                 unconverged=unconverged, blocked_by=blockers)
             emit(f"WORKFLOW_FAILED {run_id} ({','.join(n['id'] for n in failed)})")
+            notify(run, "run.failed",
+                   f"Workflow run {run_id} FAILED: nodes "
+                   f"{','.join(n['id'] for n in failed)} — status shows the error.")
             return "blocked by failed " + ",".join(n["id"] for n in failed)
         if all(states[n["id"]] in ("done", "partial", "skipped") for n in rs.nodes):   # #4: a harvested partial closes the run
             finalize(run, rs.graph, "done")
             return "done"
         emit(f"WORKFLOW_FAILED {run_id} (graph stuck — check after/refs)")
+        notify(run, "run.failed",
+               f"Workflow run {run_id} FAILED: graph stuck (check after/refs).")
         return "graph stuck"
 
     # Q1 runner_exit: EVERY exit path records {reason, at} — the loop's verdict
@@ -3711,6 +3837,9 @@ def finalize(run, graph, status):
     (run / "summary.md").write_text("\n".join(lines) + "\n")
     log(run, f"run.{status}")
     emit(f"WORKFLOW_{status.upper()} {run.name}")
+    notify(run, f"run.{status}",
+           f"Workflow run {run.name} is {status.upper()}. summary.md is written; "
+           f"status shows the node outputs.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3 or sys.argv[1] != "run":
