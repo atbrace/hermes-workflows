@@ -13,7 +13,9 @@ Part A (door, in-process, fake bin): graph-level keys accepted + validated with 
 repo's reject shape; run/amend bakes the effective value + provenance into run.json;
 a missing knob adds NO keys (key-set frozen for pre-existing run.json readers).
 Part B (runner subprocess + fake hermes): concurrency.applied receipt with observed
-width; loud mismatch receipt; legacy run.json (no knobs) still launches; work-metered
+receipt; loud mismatch receipt; a knob-free run emits NOTHING (ratified: zero
+concurrency.applied / node.running_width events, no wall stamp, no spawn-wall env —
+the legacy event stream stays byte-identical to the frozen capture) yet launches; work-metered
 timeout retry (second spawn resumes, inherits ~remaining wall, emits dead_letter
 exactly once, never a third spawn); a zero-ledger hang stays wall-only (2 spawns).
 
@@ -163,6 +165,12 @@ def widths(r, nid):
 WAVE = {"name": "w", "nodes": [{"id": "w", "type": "agent",
                                 "fanout": {"items": ["i1", "i2", "i3", "i4", "i5"], "goal": "SLEEP 0.6 {item}"}}]}
 
+def attempt_walls(d):
+    shutil.rmtree(d, ignore_errors=True)
+    return d
+
+BASE_ATTEMPTS = HOME / "attempts"
+
 # B1: applied receipt + observed width, knob honored (no knob set today produces this)
 r = mk("knob-b-width", WAVE["nodes"], {"item_concurrency": 2})
 out = wf("knob-b-width")
@@ -178,13 +186,27 @@ if evs:
 ws = widths(r, "w")
 check("observed width honored the knob (max 2)", ws and max(ws) == 2, ws)
 
-# B2: legacy run.json (no knob keys) -> receipt with defaults, run behavior unchanged
+# B2: knob-free run (no knob keys in run.json) => NO receipts, per the ratified
+# contract: the event stream of a knob-free run stays byte-identical to the
+# frozen capture. Zero concurrency.applied, zero node.running_width; and for the
+# death side, a knob-free timeout record carries no 'wall' key and the child's
+# spawn env carries no HERMES_WF_SPAWN_WALL_S line (the fake records a wall line
+# into walls.txt only when that env is actually set).
 r = mk("knob-b-legacy", WAVE["nodes"], {})
 out = wf("knob-b-legacy")
-check("legacy run completes", out.startswith("WORKFLOW_DONE"), out)
-evs = [e for e in events(r) if e["event"] == "concurrency.applied"]
-check("legacy run still receipts", len(evs) == 1 and evs[0]["knobs"] == {}, evs)
-check("legacy defaults applied", evs and evs[0]["applied"] == {"concurrency": 4, "item_concurrency": 8}, evs)
+check("knob-free run completes", out.startswith("WORKFLOW_DONE"), out)
+check("knob-free run: zero concurrency.applied events",
+      not [e for e in events(r) if e["event"] == "concurrency.applied"], events(r))
+check("knob-free run: zero node.running_width events",
+      not [e for e in events(r) if e["event"] == "node.running_width"], events(r))
+r = mk("knob-b-legacy-deaths", [{"id": "z", "type": "agent", "goal": "hang"}],
+       {"node_timeout": 3})
+ad = attempt_walls(BASE_ATTEMPTS / "knob-b-legacy-deaths")
+wf("knob-b-legacy-deaths", extra={"FAKE_MODE": "hang", "FAKE_ATTEMPT_DIR": str(ad)}, timeout=120)
+check("knob-free timeout death: no 'wall' key in the node record",
+      "wall" not in rec_of(r, "z"), rec_of(r, "z"))
+check("knob-free spawn: no HERMES_WF_SPAWN_WALL_S env line",
+      not (ad / "walls.txt").exists(), (ad / "walls.txt").read_text() if (ad / "walls.txt").exists() else "")
 
 # B3: LOUD receipt when a graph asked wider than capacity
 r = mk("knob-b-mismatch", [{"id": "m", "type": "agent", "goal": "x"}],
@@ -198,11 +220,6 @@ check("mismatch does not block the run", out.startswith("WORKFLOW_DONE"), out)
 
 # B4: work-metered timeout, RESUMER FINISHES — hang child with ledger progress dies
 # at the wall; the ONE resume spawn inherits the remaining wall and commits.
-def attempt_walls(d):
-    shutil.rmtree(d, ignore_errors=True)
-    return d
-
-BASE_ATTEMPTS = HOME / "attempts"
 r = mk("knob-b-metered", [{"id": "h", "type": "agent", "goal": "RESUME hang"}],
        {"node_timeout": 4, "retry": {"mode": "work-metered", "resume_floor_s": 2}})
 ad = attempt_walls(BASE_ATTEMPTS / "knob-b-metered")
@@ -246,9 +263,10 @@ check("zero-ledger death never re-driven", len(logs) == 1, str([p.name for p in 
 check("no dead_letter for zero-ledger (fail-closed as before)",
       not [e for e in events(r) if e["event"] == "dead_letter"], events(r))
 
-# B7: default mode unchanged — the legacy ladder re-drives at the IDENTICAL wall
+# B7: explicit wall mode — the legacy ladder re-drives at the IDENTICAL wall
+# (the knob opted in, so the spawn env carries the wall the fake records)
 r = mk("knob-b-legacy-retry", [{"id": "q", "type": "agent", "goal": "RESUME hang"}],
-       {"node_timeout": 4})
+       {"node_timeout": 4, "retry": {"mode": "wall"}})
 ad = attempt_walls(BASE_ATTEMPTS / "knob-b-legacy-retry")
 out = wf("knob-b-legacy-retry", extra={"FAKE_MODE": "work_metered", "FAKE_ATTEMPT_DIR": str(ad)})
 walls = [float(x) for x in (ad / "walls.txt").read_text().split()] if (ad / "walls.txt").exists() else []
