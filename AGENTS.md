@@ -183,6 +183,16 @@ verify-list). Its seats pin CAPABILITY CLASSES (`council_a`, `council_b`) bound
 through `settings.models` — no vendor model id appears in the file; an unbound
 class fails the launch closed. Author-run receipt:
 [receipts/blind-council/author-run.json](receipts/blind-council/author-run.json).
+[examples/triage-route.workflow.json](examples/triage-route.workflow.json) is a
+queue-triage TEMPLATE (intake -> classifier -> complementary `when` gate pair
+with `on_skip: prune`, routing exactly one arm: human escalation with the gate
+answer consumed as data, or a rule-driven batch fan-out). The classifier emits a
+`has_urgent` boolean because the gate grammar cannot see array length, and each arm
+hangs ONLY on its route gate (prune law: a node skips when ALL its `after` deps
+skip — a shared classifier dep resurrects the dead arm); the fan-out head is an
+arm-scoped `batch-prep` forwarding the routine set, not the classifier itself.
+Author-run receipt:
+[receipts/triage-route/author-run.json](receipts/triage-route/author-run.json).
 [examples/quorum-probe.workflow.json](examples/quorum-probe.workflow.json) folds
 the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
 report must state the cancelled straggler set honestly, beside a no-quorum barrier
