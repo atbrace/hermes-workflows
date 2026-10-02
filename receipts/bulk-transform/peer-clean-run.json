@@ -1,6 +1,6 @@
 {
   "template": "bulk-transform",
-  "pr": "https://github.com/jacobhausler/hermes-workflows/pull/137",
+  "pr": "this repo, pull 137",
   "status": "PASS",
   "from": "the peer estate (zero-context door path)",
   "head_verified": "642fc4c8a7dcb937e6dafef25483d731d5e87faf",
