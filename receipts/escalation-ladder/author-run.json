@@ -3,8 +3,8 @@
   "receipt_kind": "author-run",
   "author_estate": "author estate (homelab seat, devbox)",
   "graph_file": "examples/escalation-ladder.workflow.json",
-  "graph_sha256": "8f99261eaccdcdcc1da731f3fb7bb1b4397c62002838e0b25fbe01bdfa5e53ed",
-  "source_digest": "3ce796aab8ce0f4b726be4e985ab1b5d804cd4ebd806fb2022a84231020c8b9e",
+  "graph_sha256": "bc2c9d11c1fa60106f487dc741f4ba4c10b5d03e17fc3ddaf6f89cf136537557",
+  "source_digest": "9b4d5498c6e7075f88d1f37870792b53c7aac259bab9e8d93a6633a04c13f65d",
   "both_arms_walked": {
     "verified_lap": {
       "run_id": "20261002-175510-escalation-ok-author",
@@ -17,5 +17,16 @@
   },
   "what_the_lap_proves": "(1) the when-pair routes on the VERIFIER verdict, exactly one arm per lap, both directions walked; (2) the fresh-seat verifier is not a recap: on the failed lap it independently re-probed and contradicted nothing - on the ok lap it added probes (cat -A, negative grep for the old value) beyond the builder's check; (3) no auto-retry loop exists: the escalate context names the receiver's scheduler as the retry owner, matching v0.1 core (no loop idiom); (4) the land arm answers gate data strictly (land_gate.answer read as data).",
   "hygiene": "two seeds (target, attempt_note) literal-baked; zero {run.*} refs in prompts (grep-verified); no vendor ids or estate paths in-file; make_public 0 scrub hits.",
-  "notes": "engine: current plugin tree post-#110. validate [] at shipped bytes. The two-lap design is deliberate: a template that teaches escalation must exercise the escalation."
+  "notes": "engine: current plugin tree post-#110. validate [] at shipped bytes. The two-lap design is deliberate: a template that teaches escalation must exercise the escalation.",
+  "p2_fix": {
+    "defect": "peer lap 20261002-192458 at cdcaaabb: verifier caught a FABRICATED baseline proof (builder cp -p of an already-modified file, mtime witness) -> verdict failed, but verify died cap_exhausted (partial-harvest), route gates carried no after_partial, both blocked_by_partial_ancestor, escalate NEVER held. The packet was produced, then darkened.",
+    "fix": "after_partial:true on BOTH route gates (legal since the engine gained the gate-side partial key - e68544a3 lineage, in main validator; my first attempt bounced on a stale local door tree, the floor is real), verify re-briefed as judge-only (open/probe/decide/answer, no re-doing work) + max_turns 12. NOTE the proposed router-agent alternative was REJECTED mid-flight: GATE_KEYS at main does admit after_partial, so the graph needs no extra node.",
+    "re_lap": {
+      "run_id": "20261002-200803-escalation-contradict-v2",
+      "fixture": "byte-stable contradictory brief: set retry=3 AND stay byte-identical to a named pristine copy",
+      "outcome": "escalate HELD at 0 blocked_by_partial events (the exact failure is gone); builder this lap acted honestly instead of deceiving - rolled back its edit when cmp vs the pristine copy failed, left bytes identical, self-reported the rollback; verifier independently FAILED the brief with cat -A/grep/cmp/sha256 probes (a contradiction, not a cap); released abandon, closeout escalated-abandon with the packet, run.done.",
+      "boundary": "the deceptive-builder shape emerged at the PEER door and is not re-forced here: my re-lap proves the PACKET-SURVIVAL law (route + hold no longer darken on a partial) and walks honest-builder-vs-impossible-brief; the lie-caught pair remains the peer lap record at cdcaaabb."
+    },
+    "engine_floor": "requires gate-side after_partial (main validator, post-#91 lineage): a door process older than e68544a3 refuses the launch pre-spawn with the closed-set validator error - fail-closed, zero cost (proved on my own stale tree during this fix)."
+  }
 }
