@@ -71,17 +71,20 @@ FAKE = str(HERE / "fake")
 OWNER_SID = "wake-mx-owner"
 
 # ---- sinks: A records deliveries, B is the redirect target (GET + POST + headers)
-A = []          # deliveries to the configured endpoint
+A = []          # scenario-local deliveries to the configured endpoint
+ALL_A = []      # immutable census: every owner POST across the whole matrix
 B = []          # anything that reached the redirect target, with headers
 MODE = {"status": 202, "redirect": None}
 
 class _A(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        A.append({"session": self.headers.get("X-Hermes-Session-Id", ""),
-                  "idem": self.headers.get("Idempotency-Key", ""),
-                  "auth": self.headers.get("Authorization", ""),
-                  "body": json.loads(body.decode() or "{}")})
+        rec = {"session": self.headers.get("X-Hermes-Session-Id", ""),
+               "idem": self.headers.get("Idempotency-Key", ""),
+               "auth": self.headers.get("Authorization", ""),
+               "body": json.loads(body.decode() or "{}")}
+        A.append(rec)
+        ALL_A.append(rec)
         status, redir = MODE["status"], MODE["redirect"]
         self.send_response(status)
         if redir:
@@ -280,30 +283,29 @@ try:
                graph={"name": r.name, "nodes": [G1[0], dict(G1[1], question="definition B"),
                                                 G1[2]]})
     ok_b = ok_a and bool(am1.get("ok")) and wait_until(lambda: len(wakes(r)) == 2)
-    rel = call(action="release", run_id=r.name, gate_id="g1", answer="yes")
-    ok_rel = ok_b and rel.get("ok") and wait_until(lambda: any(
-        w.get("event") == "run.done" for w in wakes(r)))
-    rel_done = wait_until(lambda: not hw.runner_alive(r), timeout=15)
+    # Revert B -> A while the SAME hold remains parked. No release/run.done is
+    # allowed between amendments: this is the maintainer's exact live-hold shape.
     am2 = call(action="amend", run_id=r.name,
                graph={"name": r.name, "nodes": [G1[0], dict(G1[1], question="definition A"),
-                                                G1[2]]}) if rel_done else {"error": "?"}
-    ok_a2 = bool(am2.get("ok")) and wait_until(lambda: len(events(r, "gate.held")) == 3)
+                                                G1[2]]})
+    ok_a2 = ok_b and bool(am2.get("ok")) and wait_until(lambda: len(wakes(r)) == 3)
     time.sleep(0.5)
     w = wakes(r)
     held = [x for x in w if x.get("event") == "gate.held"]
     ids = {x.get("id") for x in held}
-    # every delivered row POSTed exactly once, all instances distinct (held A1/B,
-    # the run.done between, and the reverted A2 — 4 decisions, 4 keys)
-    check("A->B->A: three held transitions, three delivered rows",
-          ok_a and ok_b and ok_rel and ok_a2 and len(held) == 3
+    check("parked A->B->A: three held transitions, three delivered rows",
+          ok_a and ok_b and ok_a2 and len(held) == 3
           and all(x.get("delivered") for x in held),
-          f"a={ok_a} b={ok_b}({am1}) rel={ok_rel}({rel}) a2={ok_a2}({am2}) rows={w}")
-    check("A->B->A: the reverted A is a NEW instance (id not reused, 1 POST/row)",
+          f"a={ok_a} b={ok_b}({am1}) a2={ok_a2}({am2}) rows={w}")
+    check("parked A->B->A: reverted A is a NEW instance (1 POST/row)",
           len(ids) == 3 and len(A[b:]) == len(w) == len({x["idem"] for x in A[b:]}),
           f"ids={ids} posts={len(A[b:])} rows={len(w)}")
-    check("A->B->A: held count on the ledger is exactly 3 (no per-tick noise)",
+    check("parked A->B->A: held ledger count exactly 3 (no per-tick noise)",
           len(events(r, "gate.held")) == 3, str(events(r, "gate.held")))
-    call(action="stop", run_id=r.name)
+    rel = call(action="release", run_id=r.name, gate_id="g1", answer="yes")
+    check("parked A->B->A: release after third hold completes",
+          rel.get("ok") and wait_until(lambda: any(x.get("event") == "run.done" for x in wakes(r))),
+          str(rel))
     try:
         p.communicate(timeout=15)
     except Exception:
@@ -353,8 +355,51 @@ try:
           f"rc={out.returncode} out={out.stdout[:200]}")
     check("crash runner_exit.json stamped (net untouched)",
           (r / "runner_exit.json").exists(), "")
+    first_crash_id = w[0].get("id") if w else None
+    first_crash_post = A[b:b + 1]
+    if first_crash_post:
+        crash_content = first_crash_post[0]["body"]["messages"][0]["content"]
+        check("crash owner text is fixed runner protocol",
+              crash_content.startswith("[runner-authored/v1]"), crash_content)
+        check("crash owner text excludes exception prose",
+              "TypeError" not in crash_content and "runner crashed (" not in crash_content,
+              crash_content)
 
-    # ================= 5. missing endpoint: typed error, stable class =====================
+    # A genuinely later crash with the same reason and unchanged graph revision is
+    # a NEW lifecycle decision. The old str(e)|rev identity suppresses this POST.
+    out2 = drive(r)
+    time.sleep(0.3)
+    w2 = wakes(r)
+    later_posts = A[b:]
+    check("later same-reason crash: second runner still re-raises",
+          out2.returncode == 1 and "WORKFLOW_" not in out2.stdout,
+          f"rc={out2.returncode} out={out2.stdout[:200]}")
+    check("later same-reason crash: two delivered decisions and two POSTs",
+          len(w2) == 2 and len(later_posts) == 2
+          and all(x.get("delivered") for x in w2),
+          f"rows={w2} posts={later_posts}")
+    check("later same-reason crash: fresh transition id and Idempotency-Key",
+          len({x.get("id") for x in w2}) == 2
+          and len({x.get("idem") for x in later_posts}) == 2
+          and first_crash_id in {x.get("id") for x in w2},
+          f"rows={w2} posts={later_posts}")
+
+    # ================= 5. pre-start validator prose never reaches owner text =============
+    r = mk("wake-mx-invalid", [{"id": "ok", "type": "echo", "output": "x"}])
+    (r / "graph.json").write_text(json.dumps({"name": r.name, "nodes": [
+        {"id": f"{INJ}!", "type": "echo", "output": "x"}]}))
+    b = len(A)
+    drive(r)
+    sent = A[b:]
+    check("pre-start invalid graph delivers one run.failed wake", len(sent) == 1, str(sent))
+    if sent:
+        invalid_content = sent[0]["body"]["messages"][0]["content"]
+        check("pre-start owner text is fixed runner protocol",
+              invalid_content.startswith("[runner-authored/v1]"), invalid_content)
+        check("validator injection marker absent from owner text", INJ not in invalid_content,
+              invalid_content)
+
+    # ================= 6. missing endpoint: typed error, stable class =====================
     b = len(A)
     r = mk("wake-mx-noep", [{"id": "g", "type": "gate", "question": "x?",
                              "options": ["y"]}])
@@ -439,7 +484,25 @@ try:
               A == [], str(A))
 
 finally:
-    # ---- the whole-matrix scan: EVERY wake.jsonl written here is secret-free ----
+    # ---- whole-wire authority scan: EVERY owner POST is fixed runner protocol ----
+    bad_protocol = []
+    leaked_prose = []
+    for i, rec in enumerate(ALL_A):
+        try:
+            content = rec["body"]["messages"][0]["content"]
+        except Exception:
+            bad_protocol.append(f"{i}:malformed")
+            continue
+        if not content.startswith("[runner-authored/v1]"):
+            bad_protocol.append(f"{i}:{content[:120]}")
+        if INJ in content or "TypeError" in content or "runner crashed (" in content:
+            leaked_prose.append(f"{i}:{content[:160]}")
+    check("every owner POST uses fixed runner-authored protocol text",
+          bad_protocol == [], str(bad_protocol))
+    check("no graph/validator/exception prose appears in any owner POST",
+          leaked_prose == [], str(leaked_prose))
+
+    # ---- the whole-ledger scan: EVERY wake.jsonl written here is secret-free ----
     leaks = []
     for f in RUNS.rglob("wake.jsonl"):
         try:
