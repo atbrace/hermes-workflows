@@ -188,6 +188,14 @@ the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
 report must state the cancelled straggler set honestly, beside a no-quorum barrier
 that reconciles survivors against an explicit master catalog so a dead lane prints
 as a loud coverage gap, never silent loss. Two author laps, one per mode.
+[examples/census-fanout.workflow.json](examples/census-fanout.workflow.json) is a
+census TEMPLATE (fan-out auditing N generic machine items with a DETERMINISTIC
+TALLY): an echo roster node carries the master item list, a no-quorum barrier
+audits every item against `{item, observed, ok}`, and the tally synth READS
+`audit.all_results` against the roster — every item answered or NAMED missing,
+counts computed from the record, never prose. One item (battery-gauge) is a
+designed dead gauge so the tally's loud-row law is exercised on every run; the
+report node consumes the tally via `after_partial`. Two author laps.
 
 ### 3d. Failures, resume, amend
 
