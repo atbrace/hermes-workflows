@@ -124,7 +124,8 @@ def base_env(**over):
     e = dict(os.environ)
     for k in ("WF_RUNS_ROOT", "API_SERVER_KEY", "API_SERVER_HOST", "API_SERVER_PORT"):
         e.pop(k, None)
-    e.update(HERMES_HOME=str(tmp), WF_WAKE_SINK_PORT=str(PORT_A),
+    e.update(HERMES_HOME=str(tmp), WF_RUNS_ROOT=str(RUNS),
+             WF_WAKE_SINK_PORT=str(PORT_A),
              HERMES_WF_HERMES_BIN=FAKE, FAKE_LOG=str(tmp / "fake.log"),
              HERMES_SESSION_ID=OWNER_SID, HERMES_UI_SESSION_ID="wake-mx-ui",
              HERMES_SESSION_PLATFORM="api_server")
@@ -135,13 +136,14 @@ def base_env(**over):
 
 # ---- the door (library), with the owner session env of the launching turn ----
 for k, v in base_env().items():
-    if k.startswith("HERMES_") or k == "FAKE_LOG":
+    if k.startswith("HERMES_") or k in ("FAKE_LOG", "WF_RUNS_ROOT"):
         os.environ[k] = v
-os.environ.pop("WF_RUNS_ROOT", None)
 os.environ["WF_WAKE_SINK_PORT"] = str(PORT_A)
 spec = importlib.util.spec_from_file_location("hw_mx", ROOT / "__init__.py")
 hw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hw)
+import wf_test_isolation as _wake_mx_iso  # noqa: E402
+_wake_mx_iso.install(hw)
 
 def call(**a):
     return json.loads(hw.handle(a))
