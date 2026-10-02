@@ -2,7 +2,7 @@
   "template": "exchange-run",
   "receipt_kind": "peer-clean-run",
   "status": "pass",
-  "from": "peer estate (second independent seat), three laps at the peer door on the shipped bytes",
+  "from": "peer estate (second independent seat), four laps at the peer door on the shipped bytes: A cold launch, B save-from-run-id, B2 save-from-file (provenance leg), C SIGKILL crash-resume — every run_id enumerated in laps[] below",
   "template_bytes": {
     "sha256": "b216164425fd711ffc89dc7bc1b2eec41d6c22e46203db414f48fe0d8362c327",
     "source_digest": "bb39e93bc5c26c8eb9e2944249a1aa21c8147950bf35884304e67d0446339ab7",
