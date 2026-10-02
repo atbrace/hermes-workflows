@@ -201,6 +201,14 @@ as a loud coverage gap, never silent loss. The two fan-outs are sibling nodes wi
 branch gates, so every author/peer lap walks both folded modes in a single launch;
 laps exist per-engine-side, not per-mode.
 [examples/bulk-transform.workflow.json](examples/bulk-transform.workflow.json) is a barrier-fan-out TEMPLATE (declared manifest -> per-file transform lanes -> audit that reconciles all_results against the manifest via an ancestor `inputs:` ref and re-checks the filesystem itself; evidence-without-command is a failed lane). Smoke-run on the author estate: [receipts/bulk-transform/author-run.json](receipts/bulk-transform/author-run.json).
+[examples/exchange-run.workflow.json](examples/exchange-run.workflow.json) is the
+byte-portability TEACHING PAIR — the file itself is the artifact that travels the
+save → library → re-run loop (the loop's verbs, told in the description; the proof
+laps live in the author receipt, never in node prose). An echo commits the token at
+zero tokens, a courier copies it as pure data from its declared input, and the leaf
+proves the hand-off only by re-reading both committed records from its `## Inputs` —
+never from chat memory. No node names a model; children ride seat defaults.
+Author-run receipt: [receipts/exchange-run/author-run.json](receipts/exchange-run/author-run.json).
 
 ### 3d. Failures, resume, amend
 
