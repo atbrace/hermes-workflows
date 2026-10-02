@@ -1,0 +1,21 @@
+{
+  "template": "escalation-ladder",
+  "receipt_kind": "author-run",
+  "author_estate": "author estate (homelab seat, devbox)",
+  "graph_file": "examples/escalation-ladder.workflow.json",
+  "graph_sha256": "8f99261eaccdcdcc1da731f3fb7bb1b4397c62002838e0b25fbe01bdfa5e53ed",
+  "source_digest": "3ce796aab8ce0f4b726be4e985ab1b5d804cd4ebd806fb2022a84231020c8b9e",
+  "both_arms_walked": {
+    "verified_lap": {
+      "run_id": "20261002-175510-escalation-ok-author",
+      "path": "build fixed the real defect -> verify independently confirmed (re-ran grep probe itself, exit 0, old port line gone) -> route-verified live / route-failed pruned -> land_gate held for human -> released 'land' -> land recorded -> closeout outcome=landed, runner_exit done."
+    },
+    "failed_lap": {
+      "run_id": "20261002-175510-escalation-fail-author",
+      "path": "build applied a DELIBERATELY WRONG fix (comment-only, port still invalid) with honest self-verdict not-fixed -> verifier's own probe FAILED it (the probe outranks any claim - verification asymmetry walked in the hard direction) -> route-failed live / route-verified pruned -> escalate gate held with the full packet -> released 'abandon' -> closeout outcome=escalated-abandon with the packet as the record, runner_exit done."
+    }
+  },
+  "what_the_lap_proves": "(1) the when-pair routes on the VERIFIER verdict, exactly one arm per lap, both directions walked; (2) the fresh-seat verifier is not a recap: on the failed lap it independently re-probed and contradicted nothing - on the ok lap it added probes (cat -A, negative grep for the old value) beyond the builder's check; (3) no auto-retry loop exists: the escalate context names the receiver's scheduler as the retry owner, matching v0.1 core (no loop idiom); (4) the land arm answers gate data strictly (land_gate.answer read as data).",
+  "hygiene": "two seeds (target, attempt_note) literal-baked; zero {run.*} refs in prompts (grep-verified); no vendor ids or estate paths in-file; make_public 0 scrub hits.",
+  "notes": "engine: current plugin tree post-#110. validate [] at shipped bytes. The two-lap design is deliberate: a template that teaches escalation must exercise the escalation."
+}
