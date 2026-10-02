@@ -198,6 +198,7 @@ the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
 report must state the cancelled straggler set honestly, beside a no-quorum barrier
 that reconciles survivors against an explicit master catalog so a dead lane prints
 as a loud coverage gap, never silent loss. Two author laps, one per mode.
+[examples/bulk-transform.workflow.json](examples/bulk-transform.workflow.json) is a barrier-fan-out TEMPLATE (declared manifest -> per-file transform lanes -> audit that reconciles all_results against the manifest via an ancestor `inputs:` ref and re-checks the filesystem itself; evidence-without-command is a failed lane). Smoke-run on the author estate: [receipts/bulk-transform/author-run.json](receipts/bulk-transform/author-run.json).
 
 ### 3d. Failures, resume, amend
 
