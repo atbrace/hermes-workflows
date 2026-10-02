@@ -22,5 +22,5 @@
   ],
   "root_cause": "LAW A: fanout.items_from head must be in the fan-out node's own after (validator). LAW B: prune_states skips a node only when ALL after deps are skipped. v2 satisfied A by adding classify to batch-run.after, so B never pruned the arm while classify stayed done (peer-estate lap mutated a ledger mid human-gate-hold). v3: arm-scoped batch-prep hangs only on route-batch (prunes cleanly), pulls classify via inputs ref, re-emits routine verbatim as the fan-out head; escalate arm symmetric. Prune law + route semantics + release law stated in description.",
   "lap_history": "v1 found the action_target gap; v2 passed the batch arm, FAILED the peer estate's urgent arm; v3 walks BOTH arms live on this estate.",
-  "notes": "Engine collision filed as a sys bead (upstream fix candidate). The in-template mitigation is portable regardless of which upstream fix lands."
+  "notes": "Engine collision filed upstream as an issue against the engine repo (fix candidate). The in-template mitigation is portable regardless of which upstream fix lands."
 }
