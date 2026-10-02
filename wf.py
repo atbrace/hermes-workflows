@@ -449,15 +449,12 @@ def notify(run, event, key=None, graph=None):
     (tests, CLI, tool hosts without a session env) writes NOTHING — the door's
     silent degradation, unchanged. The transition instance (B3 law) is a
     deterministic identity — sha256(run|event|discriminant) over ledger-backed
-    facts, computed BEFORE any endpoint is touched — so a retry/respawn of the
-    SAME decision reuses the instance (one delivered row, one POST, one stable
-    Idempotency-Key) while every genuinely new decision — gate A→B→A,
-    FAILED→DONE→FAILED→DONE, a catchable crash — mints a fresh one. The POST
-    carries that identity as Idempotency-Key: the pinned-core route's idempotent
-    wrapper replays an in-flight/finished turn instead of starting a second owner
-    turn, so a lost response (client timeout, killed before the ack) cannot
-    double-charge the session even though our probe keeps the attempt retryable
-    (at-least-once POST, exactly-once turn — proven by the pinned-core probe).
+    facts, computed BEFORE any endpoint is touched — so a retry of the SAME
+    decision reuses the instance while every genuinely new decision — gate A→B→A,
+    FAILED→DONE→FAILED→DONE, a later catchable crash — mints a fresh one. The POST
+    carries that identity as Idempotency-Key. At the pinned-core route, the measured
+    in-window retry replays one started/completed owner turn; this is not a timeless
+    dedupe claim across cache eviction, core restart, or an unmeasured delay.
     Each ATTEMPT records in <run>/wake.jsonl (the probe); a duplicate of a
     DELIVERED instance writes nothing. AUTHORITY LAW (r5): this function takes no
     text parameter at all. The owner-facing content is generated here from
@@ -540,10 +537,10 @@ def notify(run, event, key=None, graph=None):
             # so we cannot claim the turn was queued. Recording delivered=True
             # here let the guard suppress the retry FOREVER: a transient gateway
             # stall permanently lost the transition. Probe it as undelivered; the
-            # next pass retries under the SAME instance id — its Idempotency-Key
-            # makes the pinned-core consumer replay the in-flight turn instead of
-            # starting a second owner turn (the exactly-one-turn law this PR
-            # proves at the CI-pinned route).
+            # next pass retries under the SAME instance id. At the pinned-core
+            # route, the measured in-window retry replays one started/completed
+            # turn under that Idempotency-Key; no claim is made after cache expiry
+            # or a core restart.
             rec["delivered"] = False
             rec["error"] = "timeout: read window closed before a response (retryable)"
         except Exception as e:
