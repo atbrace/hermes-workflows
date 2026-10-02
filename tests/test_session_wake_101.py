@@ -255,19 +255,19 @@ try:
         try:
             e8 = env(); e8["WF_WAKE_SINK_PORT"] = str(hang_srv.server_address[1])
             os.environ["WF_WAKE_SINK_PORT"] = e8["WF_WAKE_SINK_PORT"]
-            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            _wf.notify(r8, "gate.held", key="held-def")
             w8a = wakes(r8)
             check("timeout attempt probe-records, delivered=false (retryable)",
                   len(w8a) == 1 and w8a[0].get("delivered") is False, w8a)
             hang_done.set()                    # release the stalled handler thread
             os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)   # fast sink for the retry
             before = len(sinks)
-            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            _wf.notify(r8, "gate.held", key="held-def")
             w8b = wakes(r8)
             check("timeout does NOT suppress the retry: second attempt delivers",
                   len(w8b) == 2 and w8b[1].get("delivered") is True
                   and len(sinks) == before + 1, w8b)
-            _wf.notify(r8, "gate.held", f"Workflow run {r8.name} is HELD at g1.", "held-def")
+            _wf.notify(r8, "gate.held", key="held-def")
             check("a DELIVERED transition stays deduped (retry ends at success)",
                   len(wakes(r8)) == 2 and len(sinks) == before + 1, wakes(r8))
         finally:
@@ -287,9 +287,11 @@ try:
         # the maintainer-verified crash trigger (tests/test_systemexit_stamp.py #3).
     out9 = drive(r9).stdout.strip()
     w9 = wakes(r9)
-    check("crash wake fires exactly once",
+    check("crash wake fires exactly once with safe runner protocol",
           len(w9) == 1 and w9[0].get("event") == "run.failed"
-          and "crashed" in w9[0].get("text", ""), w9)
+          and w9[0].get("text", "").startswith("[runner-authored/v1]")
+          and "TypeError" not in w9[0].get("text", "")
+          and "runner crashed (" not in w9[0].get("text", ""), str(w9))
     check("crash path stdout vocabulary unchanged (no new line)",
           "WORKFLOW_" not in out9, out9)
     check("crash still stamps runner_exit.json (net untouched)",
@@ -320,11 +322,11 @@ try:
         _wf.WAKE_TIMEOUT_S = 0.5
         try:
             os.environ["WF_WAKE_SINK_PORT"] = str(hang10.server_address[1])
-            _wf.notify(r10, "gate.held", f"Workflow run {r10.name} is HELD at g1.", "held-x")
+            _wf.notify(r10, "gate.held", key="held-x")
             hang_done10.set()
             os.environ["WF_WAKE_SINK_PORT"] = str(SINK_PORT)
             before10 = len(sinks)
-            _wf.notify(r10, "gate.held", f"Workflow run {r10.name} is HELD at g1.", "held-x")
+            _wf.notify(r10, "gate.held", key="held-x")
             got = sinks[before10:]
             idem = [s["idem"] for s in got]
             check("retry POST carries a non-empty Idempotency-Key", bool(idem) and all(idem), str(got))
