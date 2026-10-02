@@ -59,7 +59,7 @@
       ],
       "max_turns": 8,
       "shape": "recon",
-      "goal": "Classify every item from the intake payload (in ## Inputs) using the owner's standing rule, applied verbatim:\nRULE: {run.decision_rule}\nBuckets (an item goes in exactly one):\n- routine: the rule says how to handle it AND no human judgment is needed\n- urgent: the rule or its evidence says it must not wait for the batch\n- ambiguous: the rule does not clearly cover it\nReply with ONLY fenced json {\"has_urgent\": true|false, \"routine\": [{\"id\": \"<id>\", \"action\": \"<what the rule says to do>\"}], \"urgent\": [{\"id\": \"<id>\", \"evidence\": \"<why it must not wait>\"}], \"ambiguous\": [{\"id\": \"<id>\", \"why\": \"<the gap in the rule>\"}], \"rule_citations\": \"<one line: which part of the rule drove each bucket>\"}\nhas_urgent MUST be true iff the urgent array is non-empty — the branch gates read that boolean (the gate grammar cannot see array length).",
+      "goal": "Classify every item from the intake payload (in ## Inputs) using the owner's standing rule, applied verbatim:\nRULE: {run.decision_rule}\nBuckets (an item goes in exactly one):\n- routine: the rule says how to handle it AND no human judgment is needed\n- urgent: the rule or its evidence says it must not wait for the batch\n- ambiguous: the rule does not clearly cover it\nReply with ONLY fenced json {\"has_urgent\": true|false, \"routine\": [{\"id\": \"<id>\", \"action\": \"<what the rule says to do>\"}], \"urgent\": [{\"id\": \"<id>\", \"evidence\": \"<why it must not wait>\"}], \"ambiguous\": [{\"id\": \"<id>\", \"why\": \"<the gap in the rule>\"}], \"rule_citations\": \"<one line: which part of the rule drove each bucket>\"}\nhas_urgent MUST be true iff the urgent array is non-empty — the branch gates read that boolean (the gate grammar cannot see array length).\nAlso set \"routine_empty\": true iff the ROUTINE bucket is empty after routing every item (an empty queue is a legal classification outcome — never invent an item to fill it).",
       "schema": {
         "type": "object",
         "properties": {
@@ -86,13 +86,17 @@
           },
           "rule_citations": {
             "type": "string"
+          },
+          "routine_empty": {
+            "type": "boolean"
           }
         },
         "required": [
           "has_urgent",
           "routine",
           "urgent",
-          "ambiguous"
+          "ambiguous",
+          "routine_empty"
         ]
       }
     },
@@ -114,7 +118,7 @@
       "after": [
         "classify"
       ],
-      "when": "out.classify.has_urgent == False",
+      "when": "out.classify.has_urgent == False and out.classify.routine_empty == False",
       "on_skip": "prune",
       "wait": {
         "wait_s": 0.01
@@ -131,7 +135,7 @@
       ],
       "max_turns": 4,
       "shape": "recon",
-      "goal": "Hand the routine set to the batch lanes. From the classify payload (## Inputs): if has_urgent is true, reply {\"routine\": [], \"skipped\": \"urgent arm active — belt on the prune law\"} and do nothing else.\nOtherwise re-emit the routine array VERBATIM (no re-classifying, no additions): {\"routine\": [<each {id, action} exactly as classify wrote it>], \"count\": <int>}\nThis node exists because the fan-out grammar requires its items_from head in the lane's own `after` — and an `after` edge to classify would resurrect this arm while the human holds the urgent gate (prune law: all deps must be skipped; a live classifier dep keeps the arm alive).",
+      "goal": "Hand the routine set to the batch lanes. From the classify payload (## Inputs): if has_urgent is true, reply {\"routine\": [], \"skipped\": \"urgent arm active — belt on the prune law\"} and do nothing else.\nOtherwise (route-batch only fires on a non-empty routine set; if you are running, the queue has work): re-emit the routine array VERBATIM (no re-classifying, no additions): {\"routine\": [<each {id, action} exactly as classify wrote it>], \"count\": <int>}\nThis node exists because the fan-out grammar requires its items_from head in the lane's own `after` — and an `after` edge to classify would resurrect this arm while the human holds the urgent gate (prune law: all deps must be skipped; a live classifier dep keeps the arm alive).",
       "schema": {
         "type": "object",
         "properties": {
@@ -198,6 +202,29 @@
       ]
     },
     {
+      "id": "route-empty",
+      "type": "gate",
+      "after": [
+        "classify"
+      ],
+      "when": "out.classify.has_urgent == False and out.classify.routine_empty == True",
+      "on_skip": "prune",
+      "wait": {
+        "wait_s": 0.01
+      }
+    },
+    {
+      "id": "empty-notice",
+      "type": "echo",
+      "after": [
+        "route-empty"
+      ],
+      "output": {
+        "queue_empty": true,
+        "note": "the routine queue was empty: zero items classified routine, zero lanes dispatched, zero actions taken. The batch side CLOSED, it did not fail."
+      }
+    },
+    {
       "id": "batch-run",
       "type": "agent",
       "after": [
@@ -234,14 +261,15 @@
       "type": "agent",
       "after": [
         "handle-urgent",
-        "batch-run"
+        "batch-run",
+        "empty-notice"
       ],
       "inputs": [
         "classify"
       ],
       "max_turns": 6,
       "shape": "review",
-      "goal": "Write the triage closeout from the payloads in ## Inputs. One arm will be absent — that is correct (the losing branch was pruned); say which arm ran. Cover: items seen, per-bucket counts, what was done per item with evidence, the ambiguous set the owner must rule on (list every one — they are the rule-gap backlog), and the gate answer if escalation ran.\nReply with ONLY fenced json {\"lane\": \"urgent|batch\", \"seen\": <int>, \"done\": [\"<id: action + evidence>\"], \"ambiguous_for_owner\": [\"<id: the gap>\"], \"gate\": \"<released option + reason, or 'not reached'>\"}",
+      "goal": "Write the triage closeout from the payloads in ## Inputs. If empty-notice is your batch-side payload, the queue was empty: report lane \"batch\", done [], and say plainly that zero routine items existed - the batch side CLOSED, never imply work ran. One arm will be absent — that is correct (the losing branch was pruned); say which arm ran. Cover: items seen, per-bucket counts, what was done per item with evidence, the ambiguous set the owner must rule on (list every one — they are the rule-gap backlog), and the gate answer if escalation ran.\nReply with ONLY fenced json {\"lane\": \"urgent|batch\", \"seen\": <int>, \"done\": [\"<id: action + evidence>\"], \"ambiguous_for_owner\": [\"<id: the gap>\"], \"gate\": \"<released option + reason, or 'not reached'>\"}",
       "schema": {
         "type": "object",
         "properties": {
