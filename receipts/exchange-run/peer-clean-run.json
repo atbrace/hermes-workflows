@@ -6,7 +6,7 @@
   "template_bytes": {
     "sha256": "b216164425fd711ffc89dc7bc1b2eec41d6c22e46203db414f48fe0d8362c327",
     "source_digest": "bb39e93bc5c26c8eb9e2944249a1aa21c8147950bf35884304e67d0446339ab7",
-    "verification": "recomputed at this head from the shipped file with the engine's own source_digest before any lap spent a token; template bytes unchanged by this receipt"
+    "verification": "recomputed from the shipped file with the engine's own source_digest before any lap spent a token, and re-verified IDENTICAL at the later branch head c293ffe (docs-only receipt change) — the three laps below ran node-identical bytes across both heads"
   },
   "gates_at_bytes": {
     "validate_graph": "[] (current-main validator)",
@@ -48,7 +48,7 @@
   ],
   "reader_derivation_notes": [
     "graph_fingerprint lives in runner_exit.json (with reason + fp_rule_version), NOT run.json — run.json carries fp_rule_version but no fingerprint; a cold reader who looks in the wrong file finds none. Recommend the verify node's notes line (or the description) name runner_exit.json as the fingerprint's home.",
-    "the shelf-copy provenance block is door-written save semantics; the template file itself carries none. A cold reader diffing examples/exchange-run.workflow.json against a shelved graph.json should expect name + provenance as the only deltas, nodes byte-equal."
+    "the shelf-copy provenance block is door-written save semantics; the template file itself carries none. Boundary a cold reader WILL hit (measured on my three graph.json copies): run-dir copies bake budget defaults (e.g. agent timeout) into node defs, so example-vs-run diffs on those keys too; what is provably byte-equal is (a) node defs between the direct-launch and shelf-launch run dirs and (b) source identity across all three — the template's source_digest, the library row's source_digest, and the recomputed digest agree, and budgets are excluded from fingerprint identity, which is why one fingerprint covers all three runs. State the comparison you ran (canonical node defs vs raw graph.json bytes) before claiming 'same bytes' — the author receipt's c293ffe restatement says this canonically; this receipt defers to its wording."
   ],
   "engine_floor": "peer door runs the current-main validator lineage (same fail-closed posture witnessed on the census-fanout peer receipt); observed clean, no refusal at this head.",
   "verdict": "PASS — the save -> library -> re-run -> SIGKILL -> resume -> replay-skip -> byte-equality loop stands end-to-end on the peer estate's real door verbs: one fingerprint across three runs and two estates, and the resumed verifier still proves exchange from committed records it never re-spawned."
