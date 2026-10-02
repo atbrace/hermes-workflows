@@ -187,6 +187,11 @@ skip — a shared classifier dep resurrects the dead arm); the fan-out head is a
 arm-scoped `batch-prep` forwarding the routine set, not the classifier itself.
 Author-run receipt:
 [receipts/triage-route/author-run.json](receipts/triage-route/author-run.json).
+[examples/quorum-probe.workflow.json](examples/quorum-probe.workflow.json) folds
+the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
+report must state the cancelled straggler set honestly, beside a no-quorum barrier
+that reconciles survivors against an explicit master catalog so a dead lane prints
+as a loud coverage gap, never silent loss. Two author laps, one per mode.
 
 ### 3d. Failures, resume, amend
 
