@@ -183,6 +183,11 @@ verify-list). Its seats pin CAPABILITY CLASSES (`council_a`, `council_b`) bound
 through `settings.models` — no vendor model id appears in the file; an unbound
 class fails the launch closed. Author-run receipt:
 [receipts/blind-council/author-run.json](receipts/blind-council/author-run.json).
+[examples/quorum-probe.workflow.json](examples/quorum-probe.workflow.json) folds
+the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
+report must state the cancelled straggler set honestly, beside a no-quorum barrier
+that reconciles survivors against an explicit master catalog so a dead lane prints
+as a loud coverage gap, never silent loss. Two author laps, one per mode.
 
 ### 3d. Failures, resume, amend
 
