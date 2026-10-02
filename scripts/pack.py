@@ -27,6 +27,7 @@ INCLUDE_FILES = (
     "dashboard/plugin_api.py",
     "desktop/plugin.js",
     "examples/approve-publish.json",
+    "examples/blind-council.workflow.json",
     "examples/branch-on-verdict.json",
     "examples/gated-publish.workflow.json",
     "examples/triage-route.workflow.json",

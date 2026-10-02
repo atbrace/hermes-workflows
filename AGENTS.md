@@ -177,6 +177,12 @@ lifecycle TEMPLATE (alert-triggered incident: verdict-branch gate pair, machine
 recovery probe with human escalation, merge-gated close) meant to be adapted —
 its `run_context` seeds and the sweep-adapter contract are the swap points; it
 validates but is not smoke-run (real lanes need your stack).
+[examples/blind-council.workflow.json](examples/blind-council.workflow.json) is
+a review-council TEMPLATE (blind independent seats -> synthesis with mandatory
+verify-list). Its seats pin CAPABILITY CLASSES (`council_a`, `council_b`) bound
+through `settings.models` — no vendor model id appears in the file; an unbound
+class fails the launch closed. Author-run receipt:
+[receipts/blind-council/author-run.json](receipts/blind-council/author-run.json).
 [examples/triage-route.workflow.json](examples/triage-route.workflow.json) is a
 queue-triage TEMPLATE (intake -> classifier -> complementary `when` gate pair
 with `on_skip: prune`, routing exactly one arm: human escalation with the gate
