@@ -195,7 +195,9 @@ audits every item against `{item, observed, ok}`, and the tally synth READS
 `audit.all_results` against the roster — every item answered or NAMED missing,
 counts computed from the record, never prose. One item (battery-gauge) is a
 designed dead gauge so the tally's loud-row law is exercised on every run; the
-report node consumes the tally via `after_partial`. Two author laps.
+report node consumes the tally via `after_partial`. Two author laps — honest
+(dead gauge as a loud red row) and severed (a child cut from the record becomes
+a NAMED missing row): [receipts/census-fanout/author-run.json](receipts/census-fanout/author-run.json).
 
 ### 3d. Failures, resume, amend
 

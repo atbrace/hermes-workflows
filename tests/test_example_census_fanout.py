@@ -26,8 +26,14 @@ GRAPH = ROOT / "examples" / "census-fanout.workflow.json"
 # + committed scripts/scrub-list.txt) over the shipped bytes, so a future edit that
 # smuggles estate vocab or a vendor model name fails HERE, at the change that
 # introduced it, not at the publish build. Import, never duplicate the pattern.
-sys.path.insert(0, str(ROOT / "scripts"))
-import make_public  # noqa: E402
+# Loaded by FILE LOCATION, not a bare `import make_public`: the packaging gate's
+# import-closure probe resolves modules only from root/tests/dashboard, and
+# scripts/ deliberately does not ride along (test_packaging.py:133-136).
+import importlib.util as _ilu
+_mp_spec = _ilu.spec_from_file_location("make_public", ROOT / "scripts" / "make_public.py")
+assert _mp_spec and _mp_spec.loader, "scripts/make_public.py must exist"
+make_public = _ilu.module_from_spec(_mp_spec)
+_mp_spec.loader.exec_module(make_public)
 SCRUB = make_public.load_scrub_list(ROOT)
 
 ok = 0

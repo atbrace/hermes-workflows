@@ -1,0 +1,6 @@
+{
+  "template": "census-fanout",
+  "receipt_kind": "peer-clean-run",
+  "status": "pending_peer",
+  "from": "austin-exec estate"
+}
