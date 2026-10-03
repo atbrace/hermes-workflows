@@ -32,7 +32,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 import wfcommon  # noqa: E402
 
-RAW = (ROOT / "examples" / "exchange-run.workflow.json").read_text(encoding="utf-8")
+RAW = (ROOT / "examples" / "basics" / "exchange-run.workflow.json").read_text(encoding="utf-8")
 g = json.loads(RAW)
 nodes = {n["id"]: n for n in g["nodes"]}
 

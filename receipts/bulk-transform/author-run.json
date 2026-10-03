@@ -2,7 +2,7 @@
   "template": "bulk-transform",
   "receipt_kind": "author-run",
   "author_estate": "author estate (homelab seat, devbox)",
-  "graph_file": "examples/bulk-transform.workflow.json",
+  "graph_file": "examples/build/bulk-transform.workflow.json",
   "graph_sha256": "ba944f8dcd81647490a830bef9af68f29ea116b0bdfa8f48aa2627681254f11c",
   "source_digest": "1aea73e1d227a5fba523eb0bcc5dd21d397052ff189428563e0170a0f2bcd683",
   "run_id": "20261002-175510-bulk-transform-author",

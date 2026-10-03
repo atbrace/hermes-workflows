@@ -22,7 +22,7 @@ import wfcommon  # noqa: E402
 SEAT_ONLY = "must not assume, guess, or address what they said"
 MERGE_LAW = "You merge council verdicts"
 
-g = json.load(open(ROOT / "examples" / "blind-council.workflow.json"))
+g = json.load(open(ROOT / "examples" / "review" / "blind-council.workflow.json"))
 baked = wfcommon.apply_graph_defaults(copy.deepcopy(g))
 nodes = {n["id"]: n for n in baked["nodes"]}
 
@@ -52,7 +52,7 @@ check("open_items" not in sctx and "open_items" not in nodes["synthesis"].get("g
       "synthesis prose names only schema fields (open_items removed; ledger is `risks`)")
 
 # schema teeth: verify_list stays required
-check("verify_list" in json.load(open(ROOT / "examples" / "blind-council.workflow.json"))
+check("verify_list" in json.load(open(ROOT / "examples" / "review" / "blind-council.workflow.json"))
       ["nodes"][3]["schema"]["required"], "verify_list remains a required synthesis field")
 
 print(f"test_example_blind_council: {ok} checks PASS")

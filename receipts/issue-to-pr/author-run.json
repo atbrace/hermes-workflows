@@ -2,7 +2,7 @@
   "template": "issue-to-pr",
   "receipt_kind": "author-run",
   "author_provenance": "the author's own machine, run 2026-10-03",
-  "graph_file": "examples/issue-to-pr.workflow.json",
+  "graph_file": "examples/release/issue-to-pr.workflow.json",
   "graph_sha256": "2f26f6ebabf6a6ec10283db3c85d37671149f0929e2931fb9525d422d455d320",
   "source_digest": "4dbbac0b47ba86d8b3ecd89a4f595c3ba7c487ac3653a38ba159dee92a973385",
   "engine": "plugin tree at 7c7f0d9 (1.2.0 line); door invoked from the worktree so enum/after_partial grammar and its runner pair share a version",

@@ -3,7 +3,7 @@
   "receipt_kind": "author-run",
   "revision": "v3 (prune-law fix after peer-estate clean-run FAIL) PROVENANCE restamp: provenance.owner -> role wording per publish-scrub; per portable law 10 provenance is annotation-only, so source_digest (52559c3c) is UNCHANGED and every walked lap ran node-identical bytes; only the file sha moved.",
   "author_estate": "author estate (homelab seat, devbox)",
-  "graph_file": "examples/triage-route.workflow.json",
+  "graph_file": "examples/build/triage-route.workflow.json",
   "graph_sha256": "26758b8e61ad555be0c0bb3dfb63b78fcfc33bb0bfe90847e923c21f8dcb65db",
   "source_digest": "5028f75585e59d990571dfd494dfba9d9fa2039668bac835fc5a463073b9cc30",
   "runs": [

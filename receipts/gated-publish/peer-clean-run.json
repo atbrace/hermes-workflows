@@ -2,7 +2,7 @@
   "template": "gated-publish",
   "receipt_kind": "peer-clean-run",
   "reviewer_estate": "peer estate (cross-estate clean-run seat)",
-  "graph_file": "examples/gated-publish.workflow.json",
+  "graph_file": "examples/release/gated-publish.workflow.json",
   "graph_sha256": "11a1b9961968fe9e4707461a5272d77bafb116f1924a8765aec0149027414386",
   "source_digest": "cbff0a2c812e8b0b17b45581d5eac3767bf167b7cc723b51c2c6917c7e86e32a",
   "tested_head": "4b7adc9 (PR #98 head; v2 rewrite of the template — supersedes the PASS-with-required-fix receipt filed against b267283, whose parse-node defect class is resolved by deleting parse and flowing approve.answer via inputs)",

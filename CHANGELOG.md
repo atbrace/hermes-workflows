@@ -16,6 +16,10 @@
   precision guard: the same capture dying late keeps its existing
   classification; `unknown model` stays `unresolved_model` territory. Pin:
   `tests/test_config_input_tmuu.py` (fake mode `cfgtypos`).
+- examples/ reorganized into role subdirectories (`basics/`, `build/`,
+  `review/`, `release/`, `ops/`) with a map README describing each template,
+  what it teaches, and the receipts proving its arms; packaging and structural
+  tests follow the new paths.
 
 - #116 — confidence_substrate: engine-stamped fallback when a pinned confidence
   route is quota-dead. The owner declares a sanctioned fallback substrate once
