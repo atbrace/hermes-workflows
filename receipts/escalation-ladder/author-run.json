@@ -2,7 +2,7 @@
   "template": "escalation-ladder",
   "receipt_kind": "author-run",
   "author_estate": "author estate (homelab seat, devbox)",
-  "graph_file": "examples/escalation-ladder.workflow.json",
+  "graph_file": "examples/review/escalation-ladder.workflow.json",
   "graph_sha256": "bc2c9d11c1fa60106f487dc741f4ba4c10b5d03e17fc3ddaf6f89cf136537557",
   "source_digest": "9b4d5498c6e7075f88d1f37870792b53c7aac259bab9e8d93a6633a04c13f65d",
   "both_arms_walked": {

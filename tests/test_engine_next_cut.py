@@ -25,7 +25,9 @@ class EngineNextCut(unittest.TestCase):
                     "FAKE_LOG": str(self.home / "fake.log")}
 
     def example(self, name):
-        return json.loads((ROOT / "examples" / f"{name}.json").read_text())
+        hits = sorted((ROOT / "examples").rglob(f"{name}.json"))
+        assert hits, f"example {name} not found"
+        return json.loads(hits[0].read_text())
 
     def run_graph(self, name, graph):
         run = self.home / "workflows" / name

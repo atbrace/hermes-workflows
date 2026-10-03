@@ -2,7 +2,7 @@
   "template": "gated-publish",
   "receipt_kind": "peer-clean-run",
   "reviewer_estate": "austin-exec (homelab profile, devbox)",
-  "graph_file": "examples/gated-publish.workflow.json",
+  "graph_file": "examples/release/gated-publish.workflow.json",
   "graph_sha256": "ed5d6d89ac74140a4c31a989a4544ce424654f1f0bbd15c02ea0b7fd7b3d8b4b",
   "source_digest": "ecd487f7f2cef56c4c928124378d39d676dd2520600141eddfee030a03f0586f",
   "verdict": "PASS — with one required follow-up fix (see required_fix; re-pin receipt after patch)",

@@ -2,7 +2,7 @@
   "template": "gated-publish",
   "receipt_kind": "author-run",
   "author_estate": "repo-owner estate (WOFS Core-10 #4 author)",
-  "graph_file": "examples/gated-publish.workflow.json",
+  "graph_file": "examples/release/gated-publish.workflow.json",
   "template_sha256": "ec265a01a78d120d03c22d9f06023099731a4f7c2a6edc22e2674a527e032ba2",
   "source_digest": "97b75a8624c5850e257876e4da6d3ea2563921252911f7b038ef32d7439ac3b4",
   "graph_fingerprint": "28410e79d55eee2f",

@@ -90,10 +90,11 @@ output, string-field `enum`s, graph-level `defaults` (precedence: explicit node
 key > `shape` preset > `defaults`) and `model_policy` — the authoritative
 vocabulary is [references/grammar.md](references/grammar.md); the bundled
 authoring skill keeps a compressed working copy in [SKILL.md](SKILL.md).
-Runnable templates in [examples/](examples/): provider smoke, approve-then-publish,
-branch-on-verdict, machine watcher, incident lifecycle, blind review council,
-queue triage, quorum-vs-barrier contrast, bulk transform, census with a
-deterministic tally, escalation ladder, and the portable-file walk-in.
+Runnable templates in [examples/](examples/), grouped by role —
+`basics/` (one idea each), `build/` (fan-out and ledgers), `review/`
+(independent judgment), `release/` (issue→PR, release lifecycle, gates and
+watchers), `ops/` (incidents). [examples/README.md](examples/README.md) is the
+map: one line per template, what it teaches, and which arm its receipts proved.
 
 ## What a run leaves behind
 

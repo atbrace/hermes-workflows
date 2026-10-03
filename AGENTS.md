@@ -162,30 +162,30 @@ decorative gate release itself (`gate.auto_released`); `hold_timeout` alone logs
 succeed, the rest are cancelled; without it the fan-out waits for every item;
 `goal` is optional when items carry their own. Machine gates: `wait:{"wait_s":N}` or
 `wait:{"until_argv":[…],"every_s":60,"timeout_s":3600}`. Tested examples:
-[examples/approve-publish.json](examples/approve-publish.json),
-[examples/branch-on-verdict.json](examples/branch-on-verdict.json).
-[examples/gated-publish.workflow.json](examples/gated-publish.workflow.json) is a
+[examples/basics/approve-publish.json](examples/basics/approve-publish.json),
+[examples/basics/branch-on-verdict.json](examples/basics/branch-on-verdict.json).
+[examples/release/gated-publish.workflow.json](examples/release/gated-publish.workflow.json) is a
 human-gated publish TEMPLATE built from the approve-publish seed (draft -> owner
 gate -> complementary `when`+`on_skip:"prune"` pair on the answer -> exactly one
 arm; no node names a vendor model — role vocabulary lives in prose, routing is the
 seat default). Launch seeds `run_context:{"artifact":"<name>"}`. Validate + author
 run tested (receipts/gated-publish/).
-[examples/machine-watch.workflow.json](examples/machine-watch.workflow.json) is a
+[examples/release/machine-watch.workflow.json](examples/release/machine-watch.workflow.json) is a
 scheduled-watcher TEMPLATE (zero-token machine-gate poll, releases on exit 0;
 launch with `lane_key` so cron double-fire dedupes; timeout fails loudly for
 the next deduped dispatch). Validate + smoke-run tested.
-[examples/incident-response.json](examples/incident-response.json) is a full
+[examples/ops/incident-response.json](examples/ops/incident-response.json) is a full
 lifecycle TEMPLATE (alert-triggered incident: verdict-branch gate pair, machine
 recovery probe with human escalation, merge-gated close) meant to be adapted —
 its `run_context` seeds and the sweep-adapter contract are the swap points; it
 validates but is not smoke-run (real lanes need your stack).
-[examples/blind-council.workflow.json](examples/blind-council.workflow.json) is
+[examples/review/blind-council.workflow.json](examples/review/blind-council.workflow.json) is
 a review-council TEMPLATE (blind independent seats -> synthesis with mandatory
 verify-list). Its seats pin CAPABILITY CLASSES (`council_a`, `council_b`) bound
 through `settings.models` — no vendor model id appears in the file; an unbound
 class fails the launch closed. Author-run receipt:
 [receipts/blind-council/author-run.json](receipts/blind-council/author-run.json).
-[examples/triage-route.workflow.json](examples/triage-route.workflow.json) is a
+[examples/build/triage-route.workflow.json](examples/build/triage-route.workflow.json) is a
 queue-triage TEMPLATE (intake -> classifier -> complementary `when` gate pair
 with `on_skip: prune`, routing exactly one arm: human escalation with the gate
 answer consumed as data, or a rule-driven batch fan-out). The classifier emits a
@@ -195,15 +195,15 @@ skip — a shared classifier dep resurrects the dead arm); the fan-out head is a
 arm-scoped `batch-prep` forwarding the routine set, not the classifier itself.
 Author-run receipt:
 [receipts/triage-route/author-run.json](receipts/triage-route/author-run.json).
-[examples/quorum-probe.workflow.json](examples/quorum-probe.workflow.json) folds
+[examples/build/quorum-probe.workflow.json](examples/build/quorum-probe.workflow.json) folds
 the speed/coverage contrast into one file: a `quorum`-raced probe fan-out whose
 report must state the cancelled straggler set honestly, beside a no-quorum barrier
 that reconciles survivors against an explicit master catalog so a dead lane prints
 as a loud coverage gap, never silent loss. The two fan-outs are sibling nodes with no
 branch gates, so every author/peer lap walks both folded modes in a single launch;
 laps exist per-engine-side, not per-mode.
-[examples/bulk-transform.workflow.json](examples/bulk-transform.workflow.json) is a barrier-fan-out TEMPLATE (declared manifest -> per-file transform lanes -> audit that reconciles all_results against the manifest via an ancestor `inputs:` ref and re-checks the filesystem itself; evidence-without-command is a failed lane). Smoke-run on the author's deployment: [receipts/bulk-transform/author-run.json](receipts/bulk-transform/author-run.json).
-[examples/census-fanout.workflow.json](examples/census-fanout.workflow.json) is a
+[examples/build/bulk-transform.workflow.json](examples/build/bulk-transform.workflow.json) is a barrier-fan-out TEMPLATE (declared manifest -> per-file transform lanes -> audit that reconciles all_results against the manifest via an ancestor `inputs:` ref and re-checks the filesystem itself; evidence-without-command is a failed lane). Smoke-run on the author's deployment: [receipts/bulk-transform/author-run.json](receipts/bulk-transform/author-run.json).
+[examples/build/census-fanout.workflow.json](examples/build/census-fanout.workflow.json) is a
 census TEMPLATE (fan-out auditing N generic machine items with a DETERMINISTIC
 TALLY): an echo roster node carries the master item list, a no-quorum barrier
 audits every item against `{item, observed, ok}`, and the tally synth READS
@@ -213,8 +213,8 @@ designed dead gauge so the tally's loud-row law is exercised on every run; the
 report node consumes the tally via `after_partial`. Two author laps — honest
 (dead gauge as a loud red row) and severed (a child cut from the record becomes
 a NAMED missing row): [receipts/census-fanout/author-run.json](receipts/census-fanout/author-run.json).
-[examples/escalation-ladder.workflow.json](examples/escalation-ladder.workflow.json) is a verify-then-branch TEMPLATE (builder -> fresh independent verifier -> when-pair: verified lands behind a human gate, failed escalates to a human hold with the whole packet; core has NO loop idiom - retry ownership is spelled out, not implied). Both arms smoke-run: [receipts/escalation-ladder/author-run.json](receipts/escalation-ladder/author-run.json).
-[examples/exchange-run.workflow.json](examples/exchange-run.workflow.json) is the
+[examples/review/escalation-ladder.workflow.json](examples/review/escalation-ladder.workflow.json) is a verify-then-branch TEMPLATE (builder -> fresh independent verifier -> when-pair: verified lands behind a human gate, failed escalates to a human hold with the whole packet; core has NO loop idiom - retry ownership is spelled out, not implied). Both arms smoke-run: [receipts/escalation-ladder/author-run.json](receipts/escalation-ladder/author-run.json).
+[examples/basics/exchange-run.workflow.json](examples/basics/exchange-run.workflow.json) is the
 byte-portability TEACHING PAIR — the file itself is the artifact that travels the
 save → library → re-run loop (the loop's verbs, told in the description; the proof
 laps live in the author receipt, never in node prose). An echo commits the token at
