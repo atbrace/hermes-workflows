@@ -41,6 +41,7 @@ INCLUDE_FILES = (
     "examples/build/bulk-transform.workflow.json",
     "examples/release/release-lifecycle.workflow.json",
     "examples/release/issue-to-pr.workflow.json",
+    "examples/release/submit-pr.workflow.json",
     "examples/README.md",
     "examples/basics/smoke.json",
     "plugin.yaml",
