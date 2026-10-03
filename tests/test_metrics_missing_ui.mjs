@@ -113,13 +113,29 @@ const { ItemChips } = new Function('jsx', 'jsxs', '$fanItem', 'Dot', 'EDGE_TONE'
     `${grab('runHeaderModel')}; return runHeaderModel`)(
     NODE_TONE_H, new Set(['done', 'failed', 'stopped']),
     v => (typeof v === 'number' ? v : v ? Date.parse(v) || null : null), ms => `${Math.round(ms / 1000)}s`)
+  // agent-first (2026-10-03): the header names the launching agent; originLabel
+  // rides the injected deps (grab the exported function verbatim).
+  const oi = src.indexOf('export function originLabel(')
+  assert.ok(oi >= 0, 'plugin exports originLabel (agent-first header)')
+  const oend = src.indexOf('\n}', oi)
+  assert.ok(oend > oi, 'originLabel body located')
+  const originLabel = new Function(`${src.slice(oi, oend + 2).replace('export function', 'function')}; return originLabel`)()
   const { WorkflowsPage } = new Function('useQuery', 'useValue', '$selRun', 'listQuery', 'runQuery', 'box', 'Dot', 'statusLabel',
-    'Vitals', 'Badge', 'GraphView', 'Drawer', 'Timeline', 'EmptyState', 'ScrollArea', 'RunRow', 'Fragment', 'jsx', 'jsxs', 'runHeaderModel', 'PolishStyles',
+    'Vitals', 'Badge', 'GraphView', 'Drawer', 'Timeline', 'EmptyState', 'ScrollArea', 'RunRow', 'Fragment', 'jsx', 'jsxs', 'runHeaderModel', 'PolishStyles', 'originLabel',
     `${grab('WorkflowsPage')}; return { WorkflowsPage }`)(
     q => (q.queryKey?.[2] === 'run' ? { data: detail } : { data: { runs: [{ id: 'r1', status: 'running' }] } }),
     () => null, { get() { return null }, set() {} }, () => ({ queryKey: ['x', 'runs'] }), id => ({ queryKey: ['x', 'run', id] }),
     (t, ...k) => jsx('div', { children: k }), 'Dot', s => s, 'Vitals', 'Badge', 'GraphView', 'Drawer', 'Timeline',
-    'EmptyState', 'ScrollArea', 'RunRow', 'Fragment', jsx, jsxs, runHeaderModel, 'PolishStyles')
+    'EmptyState', 'ScrollArea', 'RunRow', 'Fragment', jsx, jsxs, runHeaderModel, 'PolishStyles', originLabel)
+  const nodes0 = walk(WorkflowsPage())
+  // Deep review #156 A2 flip: "originator on every row" is the law — an
+  // unattributable run shows the honest word, never silence and never a
+  // fabricated name.
+  assert.ok(texts(nodes0).some(t => t === '@unknown'), 'explicit @unknown chip when owner is absent (never fabricated, never silent)')
+  const chips0 = texts(nodes0).filter(t => /^@/.test(t))
+  assert.ok(chips0.length >= 1, 'at least one origin chip renders')
+  assert.ok(chips0.every(t => t === '@unknown'),
+            `every origin chip is the honest word, none invented: ${chips0}`)
   const nodes = walk(WorkflowsPage())
   assert.ok(!nodes.some(n => n.type === 'Vitals'), 'header shows no Vitals when run.metrics is absent')
   assert.ok(!texts(nodes).some(t => / live$/.test(t)), 'header shows no live count when metrics absent')

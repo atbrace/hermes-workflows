@@ -696,24 +696,58 @@ export function splitRuns(runs) {
   }
 }
 
-/** O4 pane grouping (owner directive 2026-10-02): RUNNING on top — ONLY a
- *  runner-backed status; a 'pending' row is structurally a never-started husk
- *  (run_state emits pending only when the runner is NOT alive AND events.jsonl
- *  is absent), so husks are not rendered at all — they were the "52 running,
- *  48 not" and the duplicate-label rows. HELD rows speak plainly: the run
- *  waits on its ORIGINATING AGENT, not the pane's reader. RECENTLY FINISHED
- *  replaced "NEEDS YOU" — a finished or failed run needs nothing from the
- *  reader either; it is an index, not a queue. Within each group, newest
- *  `updated` first. Pure, so node can test it without a DOM. */
-export function groupRuns(runs) {
+/** Originator label (owner directive 2026-10-03, agent-first pane): every run
+ *  row shows WHO launched it — a human explores agent runs, they don't own any.
+ *  Priority: resolved profile name (owner_profile, from the read model) > raw
+ *  session id > 'cron' for a cron-shaped session > the platform name >
+ *  'unknown'. An absent fact is never fabricated as a name. Pure, node-testable. */
+export function originLabel(owner, resolvedProfile) {
+  if (resolvedProfile) return resolvedProfile
+  const o = owner || {}
+  if (o.session_id) return String(o.session_id).startsWith('cron_') ? 'cron' : String(o.session_id)
+  if (o.platform) return String(o.platform)
+  return 'unknown'
+}
+
+/** Agent-first pane model (owner directive 2026-10-03): the pane is an INDEX
+ *  for a human viewer — they never launch runs, so there is no "mine" split.
+ *  RUNNING on top (any owner), every other status in THE REST descending by
+ *  last action (`updated`) — held/done/failed interleaved as history, never as
+ *  a queue addressed to the reader ('NEEDS YOU' stays dead). No caps: a human
+ *  explores every agent run like any other row. Husks (pending = runner dead +
+ *  no events.jsonl) stay unrendered. Each row gains `origin` via originLabel
+ *  over the census-wide session->profile map. Pure, node-testable. */
+export function paneModel(runs, profilesBySession) {
   const byUpdated = (a, b) => parseTime(b.updated) - parseTime(a.updated)
   const list = (runs || []).filter(r => r && r.status !== 'pending')
+    .map(r => ({
+      ...r,
+      origin: originLabel(r.owner,
+        r.owner_profile || safeProfileLabel(profilesBySession, r.owner?.session_id))
+    }))
   return {
     running: list.filter(r => r.status === 'running').sort(byUpdated),
-    held: list.filter(r => r.status === 'held').sort(byUpdated),
-    recent: list.filter(r => ['done', 'failed', 'stopped', 'interrupted'].includes(r.status)).sort(byUpdated)
+    rest: list.filter(r => r.status !== 'running').sort(byUpdated)
   }
 }
+
+/** Own-property-only session->profile read (est-wk7l): a persisted session id
+ *  that collides with an Object.prototype member (toString / constructor /
+ *  __proto__) must never resolve through the prototype chain — the pane would
+ *  print a native function or '[object Object]' as the agent's name. Only an
+ *  OWN, typed-string entry counts; anything else reads as no-resolution and the
+ *  row falls back honestly to its raw owner fields. */
+export function safeProfileLabel(map, sessionId) {
+  if (!map || sessionId === null || sessionId === undefined) return null
+  if (!Object.prototype.hasOwnProperty.call(map, String(sessionId))) return null
+  const v = map[String(sessionId)]
+  return typeof v === 'string' && v ? v : null
+}
+
+// O4 (owner 2026-10-02) had RUNNING + WAITING-ON-AGENT + RECENTLY FINISHED; the
+// agent-first revision (owner 2026-10-03) collapsed held into The Rest — a held
+// row is history between actions, not a section nagging the reader. groupRuns
+// is DELETED, paneModel is the one table (husk law rides unchanged).
 
 // Compact progress for the rail pills: `${nodes_done}/${nodes_total}`, and
 // '?' whenever either count is absent — an absent count is never fabricated
@@ -1964,6 +1998,11 @@ export function WorkflowsPage() {
                   jsx(Dot, { status: d.status }),
                   box('text-sm font-medium', d.name || d.id),
                   box('text-xs text-(--ui-text-tertiary)', statusLabel(d.status)),
+                  // Agent-first (2026-10-03): the record page names the launching
+                  // agent next to the state — the same fact the pane row shows,
+                  // honest 'unknown' included (deep review #156 A2 — one law,
+                  // both surfaces; never a fabricated name).
+                  jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', title: 'launched by this agent', children: `@${originLabel(d.owner, d.owner_profile)}` }),
                   hdr.elapsed ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: hdr.elapsedLabel }) : null,
                   d.metrics ? jsx(Vitals, { m: d.metrics, live: false, size: 'xs', cost: true }) : null,
                   d.metrics?.live ? jsx('span', { className: 'text-(--ui-text-tertiary)', style: { fontSize: 10 }, children: `${d.metrics?.live} live` }) : null,
@@ -2018,6 +2057,11 @@ function PaneRow({ run, thisChat }) {
       className: 'inline-flex min-w-0 items-center gap-1',
       children: [
         jsx('span', { className: 'truncate', children: run.name || run.id }),
+        // Agent-first (2026-10-03): who launched it, on EVERY row — including
+        // the honest word 'unknown' when the read model cannot attribute it
+        // (deep review #156 A2: 'originator on every row' is the law; silence
+        // was a contrary contract). Never a fabricated name.
+        jsx('span', { className: 'shrink-0 text-[0.6875rem] text-(--ui-text-tertiary)', title: `launched by @${run.origin || 'unknown'}`, children: `@${run.origin || 'unknown'}` }),
         thisChat ? jsx(PanelPill, { tone: 'muted', children: 'this chat' }) : null
       ]
     }),
@@ -2027,23 +2071,30 @@ function PaneRow({ run, thisChat }) {
   }, run.id)
 }
 
-function WorkflowsPane() {
+export function WorkflowsPane() {
   const { data } = useQuery(listQuery())
   // Same key pairing as SessionStrip: owner.session_id pairs with the runtime id,
   // both atoms live under host.state (sdk/index.ts:665-697 — see #23).
   const runtimeSid = useValue(focusAtom(host?.state?.focusedSessionId))
   const storedSid = useValue(focusAtom(host?.state?.focusedStoredSessionId))
-  const [showAllDone, setShowAllDone] = useState(false)
   const runs = data?.runs || []
   const owned = new Set(ownedRuns(runs, runtimeSid, storedSid).map(r => r.id))
-  const { running, held, recent } = groupRuns(runs)
+  // Agent-first index (owner 2026-10-03): a human viewer never launches runs,
+  // so there is no 'mine' ordering — RUNNING on top, The Rest by last action,
+  // every row labelled with its originating bot. The 'this chat' chip stays:
+  // it's a fact about the row, not an ownership gate.
+  const { running, rest } = paneModel(runs, null)
   // The census counts are the backend's full-census numbers (wfcommon
   // run_summary); absent means unknown, never a fabricated zero.
   const counts = data?.counts
   const census = counts
     ? `runs ${counts.total ?? '?'} · running ${counts.running ?? 0} · held ${counts.held ?? 0} · failed ${counts.failed ?? 0}`
     : 'runs unknown'
-  const recentShown = showAllDone ? recent : recent.slice(0, 10)
+  // Agent-first pane law (owner, est-wk7l round): THE REST renders EVERY row —
+  // no pane-level cap, no fold. paneModel is uncapped and the consumer must
+  // not re-introduce one (the old slice(0,10)+show-all fold made the PR body's
+  // "no caps on foreign runs" a lie; the render pin mounts the pane with >10
+  // foreign rows to keep them welded together).
   const group = (title, list) => (list.length
     ? [
         jsx(PanelSectionLabel, { children: `${title} · ${list.length}` }, title),
@@ -2057,14 +2108,10 @@ function WorkflowsPane() {
       className: 'min-h-0 flex-1',
       children: box(
         'flex flex-col gap-0.5 px-1 pb-2',
-        (running.length || held.length || recent.length)
+        (running.length || rest.length)
           ? [
               ...group('RUNNING', running),
-              ...group('WAITING ON AGENT', held),
-              ...group('RECENTLY FINISHED', recentShown),
-              !showAllDone && recent.length > 10
-                ? jsx(Button, { size: 'xs', variant: 'ghost', onClick: () => setShowAllDone(true), children: `show all ${recent.length}` }, 'show-all')
-                : null
+              ...group('THE REST', rest)
             ]
           : jsx(EmptyState, { title: 'No runs', description: 'Ask the agent to start a workflow.' })
       )
