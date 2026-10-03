@@ -553,7 +553,7 @@ WORKFLOW_PARAMS = {
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
         "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, fan-out goals/item goals and gate questions. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals."}, 
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
-        "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). Call `library` first and reuse its tag_vocab values VERBATIM — never coin a tag you have not seen. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags; an empty result's tag_match_counts says which term starved."},
+        "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). Call `library` first and reuse its tag_vocab values VERBATIM — never coin a tag you have not seen. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
         "why_not_library": {"type": "string", "description": "submit (REQUIRED, >=80 chars): why no library graph covered this task — name the entries you checked and the shape you needed. The receipt is what makes hand-rolling honest."},
         "lane": {"type": "string", "description": "submit (optional, <=128 chars): lane label carried beside the submission for the quartermaster's triage; no scheduling effect."},
         "kind": {"type": "string", "enum": ["submissions"], "description": "inbox (optional): 'submissions' = list workflow submit study items newest-first (read-only; promotion is a human decision). Omit inside a child spawn to pull baked steering as before."},
@@ -1423,7 +1423,16 @@ def act_save(args):
     if (desc is None or tags is None):
         prev_path = _lib_read(p.stem) if p.parent == library_root() else p
         if prev_path.exists():
-            prev = _common.library_entry(jload(prev_path))
+            # #70 peer review: the retain read must not be unguarded — jload
+            # returns None on corrupt bytes, which fell through to "no previous
+            # envelope" and SILENTLY WIPED a tagged entry's tags on re-shelve.
+            # Fail closed: refuse until the file is repaired or deleted.
+            prev_raw = jload(prev_path)
+            if prev_raw is None:
+                return {"error": f"cannot retain from unreadable entry '{p.stem}' "
+                                 "(corrupt JSON): repair or delete the file, then "
+                                 "resave with explicit tags/description"}
+            prev = _common.library_entry(prev_raw)
             pm = prev.get("meta") or {}
             # description: library_entry merged meta-over-graph, so this also picks
             # up a BARE entry's top-level description when the entry is re-shelved
@@ -1532,7 +1541,11 @@ def act_library(args):
         for t in r.get("tags") or []:
             vocab[t] = vocab.get(t, 0) + 1
     want = None
-    if args.get("tags"):
+    if args.get("tags") is not None:
+        # #70 peer review: ONE tags grammar across save and library —
+        # `tags:[]` is the #50 error on save, so the same arg on a query errors
+        # too rather than silently meaning match-all (an agent that learned the
+        # save law reads an empty array as meaningful). Omit tags for no filter.
         want, terr = _norm_tags(args["tags"])
         if terr:
             return {"error": terr}
