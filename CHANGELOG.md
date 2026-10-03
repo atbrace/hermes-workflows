@@ -158,14 +158,6 @@ Detailed entries (Unreleased work folded in):
   no-config EMPTY-diff gate); `require_route: false` stays a pure opt-out and
   an explicit live pin always beats the config. Rides the existing #25
   route-hold path (R6), no parallel gate.
-- #82 — @atbrace (agent: pennyroyal). Crash-visibility for silent runner deaths
-  (#8 item 2): when a door RESPAWN path finds `wf.pid` dead with no valid
-  `runner_exit.json` verdict, it appends `runner.reaped` + one `node.interrupted`
-  per falsely-claimed running child (live children are adopted, never interrupted)
-  BEFORE replacing the runner, so a SIGKILLed run is never mistaken for liveness.
-  Read paths stay pure observers; node records are append-only; fresh launches and
-  clean parked/held exits write nothing.
-  Test: `tests/test_silent_death_reaper_8.py`.
 - door: composite graphs — a top-level `include:[{as, use, seeds?, exports?}]` annotation
   expands shelved library DAGs into the parent graph at MATERIALIZE time
   (`wfcommon.expand_includes` core + door wiring; design 2026-09-30). Composition happens
