@@ -71,6 +71,9 @@ check("verify-pr anchors on the submit record, not remembered prose",
       "submit record" in nodes["verify-pr"]["goal"]
       and "title_sent" in nodes["verify-pr"]["goal"]
       and "draft" not in (nodes["verify-pr"].get("inputs") or []))
+check("verify-pr excuses title/body on the dedup path (updated=true predates this run)",
+      "updated=true" in nodes["verify-pr"]["goal"]
+      and "n/a" in nodes["verify-pr"]["goal"])
 check("closeout reports every arm",
       set((nodes["closeout"]["schema"]["properties"]["arm"].get("description") or "").replace("one of: ", "").split("|"))
       == {"submitted", "preflight-halt", "validate-halt", "held"})
