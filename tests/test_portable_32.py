@@ -6,7 +6,7 @@
     graph still RUNS (door run with the fake launcher reaches done).
 (2) `grammar` is a top-level annotation: def_hash / efp / graph_fingerprint /
     source_digest are byte-identical with and without it (golden-solo law).
-(3) examples/portable-review.workflow.json validates, and BOTH digests pinned in
+(3) examples/review/portable-review.workflow.json validates, and BOTH digests pinned in
     references/portable.md (file sha256 + nodes source_digest) equal the file's.
 Hermetic: fake launcher, sandboxed HOME.
 """
@@ -100,7 +100,7 @@ defs = [json.dumps(json.load(open(p / "graph.json"))["nodes"], sort_keys=True) f
 check(len(defs) == 2 and defs[0] == defs[1], "committed node defs byte-equal across absent/wf/1 runs")
 
 # --- (3) walk-in example validates and matches the doc-pinned digests -------------
-example = ROOT / "examples" / "portable-review.workflow.json"
+example = ROOT / "examples" / "review" / "portable-review.workflow.json"
 doc = (ROOT / "references" / "portable.md").read_text(encoding="utf-8")
 raw = example.read_bytes()
 graph = json.loads(raw)
@@ -117,7 +117,7 @@ check(file_sha == hashlib.sha256(raw).hexdigest(), "doc-pinned file sha256 == sh
       hashlib.sha256(raw).hexdigest())
 check(nodes_digest == wfcommon.source_digest(graph), "doc-pinned source_digest == source_digest(example)",
       wfcommon.source_digest(graph))
-check("examples/portable-review.workflow.json" in doc and "NO code" in doc,
+check("examples/review/portable-review.workflow.json" in doc and "NO code" in doc,
       "doc names the example and states that a wf/1 file carries no code")
 
 shutil.rmtree(HOME, ignore_errors=True)

@@ -16,6 +16,10 @@
   precision guard: the same capture dying late keeps its existing
   classification; `unknown model` stays `unresolved_model` territory. Pin:
   `tests/test_config_input_tmuu.py` (fake mode `cfgtypos`).
+- examples/ reorganized into role subdirectories (`basics/`, `build/`,
+  `review/`, `release/`, `ops/`) with a map README describing each template,
+  what it teaches, and the receipts proving its arms; packaging and structural
+  tests follow the new paths.
 - #54 — credential-window 429s get their own `ratelimit` error class and a bounded
   park. The child CLI's `Anthropic credentials are rate-limited for <model>` banner
   (hermes_cli/runtime_provider.py) used to classify as transport/unknown and burn

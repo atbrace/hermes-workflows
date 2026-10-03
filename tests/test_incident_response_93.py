@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import wf  # noqa: E402
 
-GRAPH = json.loads((ROOT / "examples/incident-response.json").read_text())
+GRAPH = json.loads((ROOT / "examples/ops/incident-response.json").read_text())
 GATE = next(n for n in GRAPH["nodes"] if n["id"] == "recovery-probe")
 CONVERGE = next(n for n in GRAPH["nodes"] if n["id"] == "converge")
 SCRATCH = "/tmp/incident-response-example"

@@ -19,7 +19,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 import wfcommon  # noqa: E402
 
-GRAPH = ROOT / "examples" / "issue-to-pr.workflow.json"
+GRAPH = ROOT / "examples" / "release" / "issue-to-pr.workflow.json"
 
 # scrub mirror: run scripts/make_public.py's OWN merged audit pattern over the
 # shipped bytes (import by FILE LOCATION, same law as test_example_census_fanout).

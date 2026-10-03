@@ -11,7 +11,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-GRAPH = json.loads((ROOT / 'examples/machine-watch.workflow.json').read_text())
+GRAPH = json.loads((ROOT / 'examples/release/machine-watch.workflow.json').read_text())
 
 
 def argv(root):

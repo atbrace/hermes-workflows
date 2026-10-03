@@ -2,7 +2,7 @@
   "template": "triage-route",
   "receipt_kind": "peer-clean-run",
   "reviewer_estate": "peer estate (cross-estate clean-run seat)",
-  "graph_file": "examples/triage-route.workflow.json",
+  "graph_file": "examples/build/triage-route.workflow.json",
   "graph_sha256": "f490199edcb08cc2c7f762e4c6b529c1a2efc75ba0e3b4b0f51b3a68fa1921b9",
   "source_digest": "52559c3cfb6ff966f4c282e8d956287e0f81f523d19b64f20ef52411d451ed31",
   "run_id": "20261001-013844-peer90v3-urgent-lap",

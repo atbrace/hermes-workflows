@@ -6,7 +6,7 @@
   "template_bytes": {
     "sha256": "b216164425fd711ffc89dc7bc1b2eec41d6c22e46203db414f48fe0d8362c327",
     "source_digest": "bb39e93bc5c26c8eb9e2944249a1aa21c8147950bf35884304e67d0446339ab7",
-    "verification": "recomputed from the shipped file with the engine's own source_digest before any lap spent a token; re-verified IDENTICAL at heads c293ffe and 77feed7, and at main post-merge (blob b2161644… unchanged by the #141 merge — checked with git show origin/main:examples/exchange-run.workflow.json). All four peer legs ran node-identical bytes across every head."
+    "verification": "recomputed from the shipped file with the engine's own source_digest before any lap spent a token; re-verified IDENTICAL at heads c293ffe and 77feed7, and at main post-merge (blob b2161644… unchanged by the #141 merge — checked with git show origin/main:examples/basics/exchange-run.workflow.json). All four peer legs ran node-identical bytes across every head."
   },
   "gates_at_bytes": {
     "validate_graph": "[] (current-main validator)",
@@ -37,7 +37,7 @@
     {
       "lap": "B2 save-from-FILE -> library -> re-run (provenance leg)",
       "run_id": "20261002-224237-peer141-exchange-file",
-      "mechanic_variant": "save from the committed example file (inline graph read from examples/exchange-run.workflow.json at this branch head), mirroring the author's shelf_provenance_proof leg.",
+      "mechanic_variant": "save from the committed example file (inline graph read from examples/basics/exchange-run.workflow.json at this branch head), mirroring the author's shelf_provenance_proof leg.",
       "observations": {
         "library_row": "source_digest bb39e93bc5c26c8eb9e2944249a1aa21c8147950bf35884304e67d0446339ab7 — IDENTICAL to the template file's own source_digest: the shelf row carries the file's identity, while lap B's run-id shelf row carried the run-dir digest a659c68c... (budgets baked in) and source null. Both rows are honest for their input; the difference is the SAVE SOURCE, not the engine.",
         "repro_note": "source is recorded ONLY when passed explicitly (save's source arg, <=200 chars) or when owner != default (__init__.py act_save); a bare save from a file path still yields source=null with the correct source_digest. The author's shelf proof shows a non-null source on their row — cold readers should pass source= at save time if they want the repo path on the row, not assume the door infers it.",

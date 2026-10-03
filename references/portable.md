@@ -15,9 +15,9 @@ There is no index, service, or marketplace: a workflow is published when someone
 
 ## Walk-in example
 
-`examples/portable-review.workflow.json` — recon → two-way fan-out review → summary, `grammar: "wf/1"` with a provenance block. Pinned:
+`examples/review/portable-review.workflow.json` — recon → two-way fan-out review → summary, `grammar: "wf/1"` with a provenance block. Pinned:
 
-- file sha256 (`sha256sum examples/portable-review.workflow.json`): `5111407e02f483b249bef292eec79f4aa8b760caf60a9b6f725c4a4c471c7b62`
+- file sha256 (`sha256sum examples/review/portable-review.workflow.json`): `5111407e02f483b249bef292eec79f4aa8b760caf60a9b6f725c4a4c471c7b62`
 - `source_digest` (canonical `nodes` JSON): `a4961c82014e102debfe254a3f022e958edc8c8a69da8df81be9b16341bf26b1`
 
 `tests/test_portable_32.py` asserts the example validates and that both digests still match this page; editing the example means re-pinning here in the same commit.

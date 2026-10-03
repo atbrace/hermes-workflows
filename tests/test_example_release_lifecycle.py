@@ -20,7 +20,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 import wfcommon  # noqa: E402
 
-GRAPH = ROOT / "examples" / "release-lifecycle.workflow.json"
+GRAPH = ROOT / "examples" / "release" / "release-lifecycle.workflow.json"
 
 import importlib.util as _ilu
 _mp_spec = _ilu.spec_from_file_location("make_public", ROOT / "scripts" / "make_public.py")

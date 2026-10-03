@@ -2,7 +2,7 @@
   "template": "machine-watch",
   "receipt_kind": "author-run",
   "author_estate": "estate seat (WOFS peer author)",
-  "graph_file": "examples/machine-watch.workflow.json",
+  "graph_file": "examples/release/machine-watch.workflow.json",
   "graph_sha256": "66ac78e53a7e6a722ae373b40505e4f40a129ee43d9c372cfb2d07b0250cfef7",
   "source_digest": "abbe5bd49fe9aec2ac729ddc26ba8f81608a1a31b512dcab4e27a5199ca49173",
   "run_id": "20261001-012844-core10-machine-watch-see",
