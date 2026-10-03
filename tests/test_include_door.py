@@ -26,6 +26,10 @@ import convention as tests/test_library.py). Covers the door lane of the design:
    and the merge is noted in run.json include_notes.
  - D14 expansion and provenance read each shelf entry ONCE (memoized reader: a
    shelf mutated between the passes can never stamp a digest of other bytes).
+ - D19 gate options[] and wait.until_argv[] join the seed-render/survivor
+   surface: unseeded refuses, seeded RENDERS into the committed bytes (the old
+   nested write-back only knew fanout), shelf bytes immutable, include-free
+   gate bytes keep verbatim leniency.
 """
 import importlib.util, json, os, shutil, sys, tempfile, time
 from pathlib import Path
@@ -520,6 +524,70 @@ try:
           json.dumps(m3)[:200])
 finally:
     hw._spawn_runner = _orig_spawn
+
+# ---------- D19: gate options[] + wait.until_argv[] join the surface (PR#84 round-2 P1)
+# Same class as D16/echo: `options` surface VERBATIM on the human release card and
+# `until_argv` is exec'd as fixed argv. An included gate's options/argv must (a)
+# refuse an unseeded {run.KEY} through the errors envelope and (b) actually RENDER
+# a seeded value — the old nested write-back assumed every nested field was
+# `fanout`, so even a supplied seed left both literals committed untouched.
+(LIB / "gatelib.json").write_text(json.dumps({
+    "name": "gatelib", "nodes": [
+        {"id": "g", "type": "gate", "question": "Question {run.Q}",
+         "options": ["yes {run.OPTION}", "no"],
+         "wait": {"until_argv": ["true", "{run.OPTION}"]}}]}))
+_d19_comp = {"name": "d19", "include": [{"as": "gx", "use": "gatelib"}],
+             "nodes": [{"id": "p", "type": "agent", "after": ["gx__g"], "goal": "read gx__g"}]}
+before = dirs()
+r = call(action="run", graph={**_d19_comp,
+                             "include": [{"as": "gx", "use": "gatelib",
+                                          "seeds": {"Q": "rendered"}}]})
+check("D19 unseeded OPTION in options/until_argv refuses (errors envelope, no run dir)",
+      ("error" in r or "errors" in r) and "OPTION" in json.dumps(r) and before == dirs(),
+      json.dumps(r)[:200])
+r = call(action="run", dry_run=True, graph={**_d19_comp,
+              "include": [{"as": "gx", "use": "gatelib", "seeds": {"Q": "rendered"}}]})
+check("D19 dry_run refuses too (was ok:true with committed literals)",
+      bool(r.get("errors") or "error" in r) and before == dirs(), json.dumps(r)[:200])
+# seeded: the value must actually LAND in options and until_argv (the stronger
+# adversary counterexample: supplying OPTION used to leave both literals in place)
+shelf_bytes = (LIB / "gatelib.json").read_bytes()
+_orig_spawn19 = hw._spawn_runner
+hw._spawn_runner = lambda rr: 0        # persistence-only: graph.json is the artifact under test
+try:
+    r = call(action="run", graph={**_d19_comp,
+                  "include": [{"as": "gx", "use": "gatelib",
+                               "seeds": {"Q": "rendered", "OPTION": "bound"}}]})
+    rid19 = r.get("run_id")
+    check("D19 seeded composite launches", bool(rid19), json.dumps(r)[:160])
+    if rid19:
+        g19 = json.loads((ROOT / rid19 / "graph.json").read_text())
+        n19 = next(n for n in g19["nodes"] if n["id"] == "gx__g")
+        check("D19 seeded renders into options[] (committed bytes)",
+              n19.get("options") == ["yes bound", "no"], json.dumps(n19)[:200])
+        check("D19 seeded renders into wait.until_argv[] (committed bytes)",
+              n19.get("wait", {}).get("until_argv") == ["true", "bound"],
+              json.dumps(n19)[:200])
+        check("D19 survivor sweep: committed graph carries no {run.*} in the subtree",
+              hw._unbound_include_refs(g19, [{"alias": "gx"}]) is None
+              and "{run." not in json.dumps(n19))
+    check("D19 shelf file bytes immutable through render",
+          (LIB / "gatelib.json").read_bytes() == shelf_bytes)
+finally:
+    hw._spawn_runner = _orig_spawn19
+# include-free golden bytes: a PLAIN graph's gate keeps verbatim options/argv
+# leniency (no include, no closed-seed contract — the pre-PR byte law).
+r = call(action="run", graph={"name": "d19-plain", "nodes": [
+    {"id": "g", "type": "gate", "question": "q {run.NOTHING}",
+     "options": ["yes {run.NOTHING}", "no"]}]})
+check("D19b include-free gate keeps verbatim leniency (golden bytes)",
+      bool(r.get("run_id")), json.dumps(r)[:120])
+if r.get("run_id"):
+    g19p = json.loads((ROOT / r["run_id"] / "graph.json").read_text())
+    n19p = next(n for n in g19p["nodes"] if n["id"] == "g")
+    check("D19b plain gate options committed byte-verbatim",
+          n19p.get("options") == ["yes {run.NOTHING}", "no"], json.dumps(n19p)[:160])
+    call(action="stop", run_id=r["run_id"])
 
 shutil.rmtree(HOME, ignore_errors=True)
 print(f"{'ALL PASS' if ok else 'FAILURES PRESENT'} ({_nchecks} door contracts)")
