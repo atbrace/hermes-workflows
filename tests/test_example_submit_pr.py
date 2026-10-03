@@ -57,6 +57,20 @@ check("verify-pr is independent and opts into partial harvest",
       and "gh pr view" in nodes["verify-pr"]["goal"])
 check("verify-pr hangs on submit AND both halt arms (all arms converge)",
       set(nodes["verify-pr"]["after"]) >= {"submit", "preflight-halt", "validate-halt"})
+
+# B3 (review round, #169): the draft must travel as PINNED BYTES through an edge the
+# engine can see, not as status-prose memory. submit takes inputs:["draft"] (draft is
+# submit's grandparent - no auto-injection) and commits the exact title/body it sent;
+# verify-pr anchors its API compare on that committed record (its direct parent).
+check("submit pulls the draft record through an explicit input edge",
+      nodes["submit"].get("inputs") == ["draft"])
+check("submit commits the exact bytes it sent (verifier's anchor)",
+      {"title_sent", "body_sent"} <= set(nodes["submit"]["schema"]["properties"])
+      and "title_sent" in nodes["submit"]["goal"] and "verbatim" in nodes["submit"]["goal"])
+check("verify-pr anchors on the submit record, not remembered prose",
+      "submit record" in nodes["verify-pr"]["goal"]
+      and "title_sent" in nodes["verify-pr"]["goal"]
+      and "draft" not in (nodes["verify-pr"].get("inputs") or []))
 check("closeout reports every arm",
       set((nodes["closeout"]["schema"]["properties"]["arm"].get("description") or "").replace("one of: ", "").split("|"))
       == {"submitted", "preflight-halt", "validate-halt", "held"})

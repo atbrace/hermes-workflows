@@ -6,10 +6,12 @@ library (`workflow save graph_path=... name=...`). Each file's top-level
 `description` is the full contract — seeds it expects, arms it can take, and
 what each node owns; this page is just the map.
 
-Every example here has been **run for real** against a live target; the
-`receipts/<name>/author-run.json` beside it pins the graph digest and the run
+Every example with a `receipts/<name>/author-run.json` beside it has been **run
+for real** against a live target: the receipt pins the graph digest and the run
 ids of the laps that proved each arm (including the halt arms — a template
-whose failure path has never fired is a decoration).
+whose failure path has never fired is a decoration). The rows without a receipts
+dir are validated cold (structural tests + `validate`), not smoke-run — treat
+them as blueprints, not proofs.
 
 ## basics/ — one idea each, read these first
 
@@ -57,11 +59,13 @@ whose failure path has never fired is a decoration).
 
 ```jsonc
 workflow { "action": "run",
-           "graph_path": "<repo>/examples/release/issue-to-pr.workflow.json",
+           "graph_path": "/abs/path/to/clone/examples/release/issue-to-pr.workflow.json",
            "run_context": { "repo_dir": "/abs/path/to/clone", "issue_file": "/abs/ISSUE.md", ... } }
 ```
 
-Seeds for each graph are listed in its `description`. Author settings (model,
+`graph_path` is resolved by the door on the machine running it — pass the
+absolute path, not a repo-relative one. Seeds for each graph are listed in its
+`description`. Author settings (model,
 provider, effort) come from your plugin settings block — the templates
 deliberately don't pin them. Then `wait` on the returned `run_id` until the
 terminal status; held gates surface in the same call.
