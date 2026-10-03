@@ -43,6 +43,10 @@ os.environ["HERMES_WF_HERMES_BIN"] = str(BUILD / "tests" / "fake")
 spec = importlib.util.spec_from_file_location("hw_door_include", BUILD / "__init__.py")
 hw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hw)
+# #71: WF_RUNS_ROOT alone is not a sandbox — pin the settings door too (S3 audit).
+sys.path.insert(0, str(HERE))
+import wf_test_isolation as _iso71
+_iso71.install(hw)
 
 ok = True
 _nchecks = 0
