@@ -1,0 +1,39 @@
+{
+  "graph": "examples/release/submit-pr.workflow.json",
+  "graph_sha256": "aa20aab2597c1d4da4d407c160f89d0183b1ff90cbfbe34adb419e7862ad88f0",
+  "source_digest": "e285ce5f155407d633e370dd360b5b827ef293bd646956413b0ed3be7f6a60b7",
+  "library_name": "submit-pr",
+  "library_source_digest": "e285ce5f155407d633e370dd360b5b827ef293bd646956413b0ed3be7f6a60b7",
+  "fixture": "scratch repo atbrace/wf-submit-pr-sink (real GitHub, private) + local clone /tmp/wf-test/submit-pr/fixclone carrying a one-line add() bugfix on branch fix/add-op; validation_cmds = ./check.sh (python -m unittest)",
+  "door": "worktree 1.2.0 (__init__.py at feat/distilled-examples); library replay via run from=submit-pr, seeds through run_context",
+  "laps": [
+    {
+      "run_id": "20261003-123201-submit-pr",
+      "arm": "submitted",
+      "gate_answer": "submit",
+      "result": "done, 13 nodes terminal (8 done, 5 skipped on the halt arms). preflight ok (head c5c6934, 1 commit ahead, diff clean); validate green (both commands exit 0, run by the workflow itself in the exact bytes); honest draft from git log; push origin fix/add-op; gh pr create -> PR #1; verify-pr independently re-read gh pr view: state OPEN, headRefOid == preflight.head_sha, base/title/body match -> verdict verified. Closeout: arm=submitted, verify=verified.",
+      "out_of_band": "PR https://github.com/atbrace/wf-submit-pr-sink/pull/1 exists with the drafted title/body (author atbrace)."
+    },
+    {
+      "run_id": "20261003-123508-submit-pr",
+      "arm": "preflight-halt",
+      "result": "done with an un-ignored .env.staging carrying a SECRET_TOKEN= line in the working tree: preflight refused (dirty tree + secret-shaped content), route-preflight-halt fired, the ENTIRE work arm (validate/draft/approve/submit) skipped - zero drafts spent, nothing pushed. verify-pr ran the halt arm without touching gh (verdict none, arm=preflight-halt); closeout headline names the file and the fix. Proves halt-before-investment: the gate cannot be reached on a refused branch.",
+      "cleanup": "planted file removed after the lap."
+    },
+    {
+      "run_id": "20261003-123624-submit-pr",
+      "arm": "held",
+      "gate_answer": "hold",
+      "result": "clean preflight + green validate + full draft, then the human gate answered hold: submit executed nothing (arm=held), verify-pr reported arm=held without gh writes, closeout tallied the hold. Proves the gate is the only door to the external effect - everything before it is local, everything past it needs a human yes."
+    },
+    {
+      "run_id": "20261003-124119-submit-pr",
+      "arm": "validate-halt",
+      "result": "branch tip carried a committed sabotage (test_flaky_suite -> assertTrue(False)): preflight passed (tree clean, diff clean), the workflow RAN ./check.sh itself, took the exit-1, and pruned draft/approve/submit entirely - zero draft tokens, nothing pushed. verify-pr read the halt arm without touching gh; closeout named the failing command, the offending commit, and the repair ('drop that commit and re-run'). Proves the red arm AND the law that a green claim from upstream work is never believed - validation belongs to this workflow."
+    }
+  ],
+  "unexercised_by_laps": [
+    "submit's existing-PR dedup clause (push-only, updated=true) - leg 3 held at the gate so submit never ran against an open PR; law is stated in the goal and pinned by the structural test."
+  ],
+  "notes": "The stub is forge-shaped on gh by design (preflight/verify read the API) but carries no opinion about who built the branch - it is the back half that issue-to-pr, hand sessions, or any future builder plugs into. It never merges, never force-pushes, and treats the submitter's own prose as an untrusted input to re-read from the API. One lap found a real fixture gap (fork remote absent on disk) and preflight reported it honestly as a note rather than improvising a remote - the no-improvise law holding under load. No forbidden-land vocabulary: scrub sweep clean; the graph was authored blind from the abstract validate-then-gate-then-publish-then-read-back shape."
+}
