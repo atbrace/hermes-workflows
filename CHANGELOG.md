@@ -210,7 +210,15 @@ Detailed entries (Unreleased work folded in):
   expanded form — save the author graph inline); and the merged node/byte caps
   re-check the FINAL fused graph after the parent-ref rewrite, not just the
   pre-rewrite candidate.
-  Tests: `tests/test_include_door.py` (57 door contracts — expand-before-validate,
+  Round-2 P1 follow-up: gate `options[]` and `wait.until_argv[]` joined the
+  shared `_include_text_fields` traversal — an included gate's option labels
+  (verbatim on the human release card) and fixed argv (exec'd by the wait pass)
+  are now seed-rendered AND survivor-swept like every other text surface; the
+  nested write-back was generalized to a copy-on-write path setter (the old one
+  assumed every nested field was `fanout`, so a seeded value could not land in
+  options/argv at all). Unseeded placeholders refuse through the errors
+  envelope; include-free gate bytes keep their verbatim leniency.
+  Tests: `tests/test_include_door.py` (100 door contracts — expand-before-validate,
   refusal envelopes with zero run dirs, dry_run side-effect-free lint,
   amend identity-stability, save author-form, from= replay, provenance + notes
   round-trip) and `tests/test_include_expansion_core.py` (core-resolver contracts).

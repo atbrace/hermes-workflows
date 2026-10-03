@@ -1361,19 +1361,34 @@ def _include_error(alias, msg):
 def _include_text_fields(node):
     """The string fields the {run.KEY} seed-render surface touches: the exact set
     _bind_run_context (map mode) renders — goal/context/question/profile plus the
-    fan-out goal template and item goals — PLUS an echo node's string `output`.
+    fan-out goal template and item goals — PLUS an echo node's string `output`
+    PLUS a gate's `options[]` and `wait.until_argv[]`.
     The echo addition closes PR#84 review F-3: echo output is a text surface the
     runner commits VERBATIM (wf.py echo pass), so a seed placeholder surviving it
-    became a literal `{run.MISSING}` verdict in a done run. Only PRESENT string
-    fields are yielded (a dict/other output is data, not text). One definition
-    feeds seed-render, scratch-path detection, and the door's survivor check —
-    run/amend/binding/notes cannot drift apart again. Duplicated here (not
-    imported from the door) so the resolver stays hermes-free."""
+    became a literal `{run.MISSING}` verdict in a done run. The options/argv
+    addition closes the F-3 carry-over (PR#84 round-2 P1): `options` surface
+    VERBATIM on the human release card and `until_argv` is exec'd as fixed argv
+    (wf.py wait pass) — a surviving `{run.OPTION}` was a literal button label /
+    a literal unbound argv element. Only PRESENT string fields are yielded (a
+    dict/other output is data, not text). One definition feeds seed-render,
+    scratch-path detection, and the door's survivor check — run/amend/binding/
+    notes cannot drift apart again. Duplicated here (not imported from the door)
+    so the resolver stays hermes-free."""
     for f in ("goal", "context", "question", "profile"):
         if isinstance(node.get(f), str):
             yield f, (f,)
     if node.get("type") == "echo" and isinstance(node.get("output"), str):
         yield "output", ("output",)
+    opts = node.get("options")
+    if isinstance(opts, list):
+        for i, o in enumerate(opts):
+            if isinstance(o, str):
+                yield f"options[{i}]", ("options", i)
+    wait = node.get("wait")
+    if isinstance(wait, dict) and isinstance(wait.get("until_argv"), list):
+        for i, a in enumerate(wait["until_argv"]):
+            if isinstance(a, str):
+                yield f"wait.until_argv[{i}]", ("wait", "until_argv", i)
     fo = node.get("fanout")
     if isinstance(fo, dict):
         if isinstance(fo.get("goal"), str):
@@ -1383,13 +1398,42 @@ def _include_text_fields(node):
                 yield f"fanout.items[{i}].goal", ("fanout", "items", i, "goal")
 
 
+def _include_get(node, path):
+    """Read one authored string by path segments (str = dict key, int = list
+    index). Companion of _include_set; both walk the same grammar
+    _include_text_fields yields."""
+    cur = node
+    for p in path:
+        cur = cur[p]
+    return cur
+
+
+def _include_set(node, path, val):
+    """Write one rendered string back by path segments, COPY-ON-WRITE at every
+    level: each dict/list on the path is shallow-copied before the child write,
+    so the shelf's own node objects are never mutated (shelf immutability) and
+    NO nested shape needs to be special-cased. This replaces the old hand-rolled
+    setter that assumed every nested field was `fanout` — with options[] and
+    wait.until_argv[] in the traversal it would have rebuilt the wrong chain
+    (PR#84 round-2 fix caution)."""
+    head, rest = path[0], path[1:]
+    if not isinstance(node, dict):
+        # node is a LIST: head is an integer index
+        items = list(node)
+        items[head] = val if not rest else _include_set(items[head], rest, val)
+        return items
+    if not rest:
+        return {**node, head: val}
+    child = node[head]
+    if isinstance(child, dict) or isinstance(child, list):
+        return {**node, head: _include_set(child, rest, val)}
+    return {**node, head: val}
+
+
 def _include_texts(node):
     out = []
     for _, path in _include_text_fields(node):
-        cur = node
-        for p in path:
-            cur = cur[p]
-        out.append(cur)
+        out.append(_include_get(node, path))
     return out
 
 
@@ -1692,25 +1736,16 @@ def _expand_include_pass(graph, library_reader, notes, chain, depth):
             for n in child_nodes:
                 n = dict(n)
                 for label, path in _include_text_fields(n):
-                    text = n
-                    for p in path:
-                        text = text[p]
+                    text = _include_get(n, path)
                     is_fo = label.startswith("fanout") or (label == "goal"
                                                            and isinstance(n.get("fanout"), dict))
                     val = _include_render(text, seeds, fanout=is_fo, alias=alias,
                                           where=f"node {n['id']} {label}")
-                    # write back
-                    if len(path) == 1:
-                        n[path[0]] = val
-                    else:
-                        # rebuild the fanout chain shallowly
-                        n["fanout"] = dict(n["fanout"])
-                        if len(path) == 2:
-                            n["fanout"][path[1]] = val
-                        else:
-                            items = list(n["fanout"].get("items") or [])
-                            items[path[2]] = dict(items[path[2]], **{path[3]: val})
-                            n["fanout"]["items"] = items
+                    # write back through the generic copy-on-write setter: the
+                    # old hand-rolled fanout-chain rebuild ASSUMED every nested
+                    # path was fanout, so options[i] and wait.until_argv[i]
+                    # could never land (PR#84 round-2 fix caution).
+                    n = _include_set(n, path, val)
                 rendered.append(n)
             child_nodes = rendered
 
