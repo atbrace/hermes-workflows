@@ -397,6 +397,39 @@ def _respawn_runner(r):
     _spawn_runner(r)
 
 
+def _resume_after_action(r, grace_s=0.75, consumed=None):
+    """Close the live-runner terminal handoff window after a durable action.
+
+    A release/amend/stop can run inside the runner's synchronous owner-wake POST.
+    In that shape the runner cannot exit until this call returns, so the runner's
+    post-notify boundary consumes the durable answer/marker. For an independent
+    actor landing after that boundary but just before process exit, briefly watch
+    verified liveness and respawn once the old runner is truly gone. Flock
+    admission makes concurrent winners harmless; only one runner can enter.
+
+    `consumed` distinguishes a runner that completed the requested boundary from
+    one that died before consuming it; a completed stop/amend/release must never
+    be respawned merely because the old process exited quickly.
+    """
+    def _after_death():
+        if consumed is not None and consumed():
+            return "consumed"
+        st = run_state(r) or {}
+        if st.get("status") in ("done", "stopped"):
+            return "consumed"
+        _respawn_runner(r)
+        return "respawned"
+
+    if not runner_alive(r):
+        return _after_death()
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        if not runner_alive(r):
+            return _after_death()
+    return "live"
+
+
 # #8 (P0): the transient daemonize hop. The door Popen's THIS, it forks the real
 # runner (own session, ready-pipe write end inherited non-cloexec) and exits at
 # once so the runner leaves the caller's process tree BEFORE handle() returns —
@@ -2383,14 +2416,19 @@ def act_release(args):
         # serialize stop→release: an answer must not land on a run that is being
         # (or already was) stopped — amend or re-run instead.
         return {"error": "run is stopped/stop pending — answer refused; amend or re-run to continue"}
-    res = _release_core(r, args.get("gate_id"), args.get("answer", ""))
+    gate_id = args.get("gate_id")
+    res = _release_core(r, gate_id, args.get("answer", ""))
     if not res.get("ok"):
         return res
-    if not runner_alive(r):
-        _respawn_runner(r)
+    mode = _resume_after_action(
+        r, consumed=lambda: (((run_state(r) or {}).get("nodes", {}).get(gate_id) or {})
+                              .get("status") in ("done", "skipped")))
+    if mode == "respawned":
         res["auto_resumed"] = True
-    res["hint"] = "workflow wait to follow the next boundary"
-    return res
+        hint = "runner respawned; the next transition wakes the owner automatically"
+    else:
+        hint = "answer recorded; the live runner commits it at its boundary and the next transition wakes the owner automatically"
+    return {**res, "hint": hint}
 
 def act_steer(args):
     r = run_dir(args.get("run_id"))
@@ -2565,14 +2603,14 @@ def act_amend(args):
     with open(r / "events.jsonl", "a") as f:
         f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             "event": "graph.amended"}) + "\n")
-    if runner_alive(r):
-        (r / "restart.request").write_text("1")
-        applies = "live runner hot-reloads at its next wave boundary; call wait (it will resume as needed)"
-    else:
-        _respawn_runner(r)
+    (r / "restart.request").write_text("1")
+    mode = _resume_after_action(r, consumed=lambda: not (r / "restart.request").exists())
+    if mode == "respawned":
         applies = "runner respawned; efp replay-skip re-runs changed nodes and everything downstream"
+    else:
+        applies = "live runner hot-reloads at its next wave boundary; the next transition wakes the owner automatically"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
-            "hint": "workflow wait to follow" + _liveness_hint_suffix(_liveness_notes), **preview}
+            "hint": "continuation is automatic; do not wait or poll" + _liveness_hint_suffix(_liveness_notes), **preview}
 
 def act_stop(args):
     r = run_dir(args.get("run_id"))
@@ -2582,10 +2620,10 @@ def act_stop(args):
     if st and st["status"] in ("done", "failed", "stopped"):
         return {"ok": True, "already": st["status"]}
     (r / "stop.request").write_text(datetime.now(timezone.utc).isoformat(timespec="seconds"))
-    if not runner_alive(r):
-        _respawn_runner(r)  # consume the marker even from an idle/held run
-        return {"ok": True, "note": "was idle — runner spawned just to honour the stop"}
-    return {"ok": True, "note": "stop lands at the next boundary; in-flight children are killed"}
+    mode = _resume_after_action(r, consumed=lambda: not (r / "stop.request").exists())
+    if mode == "respawned":
+        return {"ok": True, "note": "runner spawned to consume the stop marker"}
+    return {"ok": True, "note": "stop recorded; the live runner consumes it at its next boundary"}
 
 def act_list(_args):
     roots = [runs_root()]

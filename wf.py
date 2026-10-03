@@ -562,7 +562,46 @@ def notify(run, event, key=None, graph=None):
             pass
         return
 
-_LOCK_FD = None  # kept open for process lifetime — closing it would release the flock
+_LOCK_FD = None  # kept open for process lifetime except a terminal handoff fence
+
+
+def _release_terminal_lock(run):
+    """Make terminal liveness false before the final durable-action recheck.
+
+    The admitted runner is the sole wf.pid writer. Releasing the flock and removing
+    its own pid stamp as one operation lets a racing door action either respawn a
+    successor or leave a marker/answer for this process to re-admit and consume.
+    """
+    global _LOCK_FD
+    try:
+        p = run / "wf.pid"
+        if p.exists() and p.read_text().strip() == str(os.getpid()):
+            p.unlink()
+    except OSError:
+        pass
+    if _LOCK_FD is not None:
+        try: fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
+        except OSError: pass
+        try: os.close(_LOCK_FD)
+        except OSError: pass
+        _LOCK_FD = None
+
+
+def _reacquire_terminal_lock(run):
+    """Re-admit this process after a terminal action, or yield to a door winner."""
+    global _LOCK_FD
+    fd = os.open(run / "runner.lock", os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    getattr(os, "ftruncate")(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    _LOCK_FD = fd
+    (run / "wf.pid").write_text(str(os.getpid()))
+    return True
+
 
 def acquire_lock(run):
     """Single-runner admission. An advisory flock held for the process lifetime IS
@@ -4054,6 +4093,15 @@ def main(run_id):
                 hf.write_text(json.dumps(hm))
             notify(run, "gate.held", key=f"{gate['id']}:{hdef}")
             if ht is None:
+                # PR#97 lost-handoff fix: the owner turn runs synchronously inside
+                # notify(). A release/stop/amend can therefore land while this runner
+                # still owns runner.lock. Consume that durable action before parking;
+                # the door also covers the tiny post-check/process-exit window.
+                m = consume_markers()
+                if m == "stopped": return "stopped"
+                if m == "reloaded": continue
+                if gate_answer_valid(run, gate, rs.byid) is not None:
+                    continue
                 return f"held at {gate['id']}"
             # sprint101 #14: a human gate with hold_timeout PARKS in-process (zero
             # tokens, like a wait-gate) instead of exiting: the hold start survives
@@ -4092,19 +4140,72 @@ def main(run_id):
                 unconverged=unconverged, blocked_by=blockers)
             emit(f"WORKFLOW_FAILED {run_id} ({','.join(n['id'] for n in failed)})")
             notify(run, "run.failed", graph=rs.graph)
+            # The corrective owner turn is synchronous with notify(). Consume a
+            # restart/stop written by amend/stop before taking the parked verdict.
+            m = consume_markers()
+            if m == "stopped": return "stopped"
+            if m == "reloaded": continue
             return "blocked by failed " + ",".join(n["id"] for n in failed)
         if all(states[n["id"]] in ("done", "partial", "skipped") for n in rs.nodes):   # #4: a harvested partial closes the run
             finalize(run, rs.graph, "done")
             return "done"
         emit(f"WORKFLOW_FAILED {run_id} (graph stuck — check after/refs)")
         notify(run, "run.failed", key="graph stuck", graph=rs.graph)
+        m = consume_markers()
+        if m == "stopped": return "stopped"
+        if m == "reloaded": continue
         return "graph stuck"
+
+    def terminal_action_pending():
+        if (run / "restart.request").exists() or (run / "stop.request").exists():
+            return True
+        g = jload(run / "graph.json", {}) or {}
+        nodes = g.get("nodes") or []
+        byid = {n["id"]: n for n in nodes if isinstance(n, dict) and n.get("id")}
+        for n in nodes:
+            if n.get("type") != "gate":
+                continue
+            st, _rec = node_rec(run, n, byid)
+            if st == "pending" and gate_answer_valid(run, n, byid) is not None:
+                return True
+        return False
 
     # Q1 runner_exit: EVERY exit path records {reason, at} — the loop's verdict
     # or the exception one-liner on a crash. excepthook covers death paths the
     # try/except cannot (interpreter-level); the finally is the last-resort net.
     try:
-        reason = loop()
+        while True:
+            reason = loop()
+            if not (isinstance(reason, str) and
+                    (reason.startswith("held at ") or
+                     reason.startswith("blocked by failed ") or
+                     reason == "graph stuck")):
+                break
+            # Terminal handoff fence: make liveness false BEFORE the final action
+            # recheck. A racing door either spawns a successor or leaves durable
+            # state for this process to re-admit and consume. Exactly one wins the
+            # flock; the loser yields without stamping a stale terminal verdict.
+            _release_terminal_lock(run)
+            resume_self = False
+            yield_to_successor = False
+            deadline = time.monotonic() + 0.25
+            while time.monotonic() < deadline:
+                if terminal_action_pending():
+                    if _reacquire_terminal_lock(run):
+                        log(run, "run.resumed", reason="terminal_handoff")
+                        resume_self = True
+                    else:
+                        yield_to_successor = True
+                    break
+                if wfcommon.runner_lock_held(run):
+                    yield_to_successor = True
+                    break
+                time.sleep(0.02)
+            if resume_self:
+                continue
+            if yield_to_successor:
+                reason = None
+            break
     except SystemExit:
         # Defensive: a self-reported exit is a verdict, not a crash. loop() does
         # not raise SystemExit today (every self-reported exit happens before this
