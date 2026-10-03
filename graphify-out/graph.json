@@ -2425,7 +2425,7 @@
       "file_type": "code",
       "norm_label": "_bind_run_context()",
       "source_file": "__init__.py",
-      "source_location": "L1620"
+      "source_location": "L1644"
     },
     {
       "id": "init_bind_run_context_agent_ancestor",
@@ -2437,7 +2437,7 @@
       "file_type": "code",
       "norm_label": "agent_ancestor()",
       "source_file": "__init__.py",
-      "source_location": "L1658"
+      "source_location": "L1682"
     },
     {
       "id": "init_bind_run_context_dangling",
@@ -2449,7 +2449,7 @@
       "file_type": "code",
       "norm_label": "_dangling()",
       "source_file": "__init__.py",
-      "source_location": "L1640"
+      "source_location": "L1664"
     },
     {
       "id": "init_bind_run_context_render",
@@ -2461,7 +2461,7 @@
       "file_type": "code",
       "norm_label": "render()",
       "source_file": "__init__.py",
-      "source_location": "L1684"
+      "source_location": "L1708"
     },
     {
       "id": "init_bind_run_context_render_replace",
@@ -2473,7 +2473,7 @@
       "file_type": "code",
       "norm_label": "replace()",
       "source_file": "__init__.py",
-      "source_location": "L1686"
+      "source_location": "L1710"
     },
     {
       "id": "tests_test_11_door_lane_doorlane_setup",
@@ -5629,7 +5629,7 @@
       "file_type": "code",
       "norm_label": "act_list()",
       "source_file": "__init__.py",
-      "source_location": "L2628"
+      "source_location": "L2652"
     },
     {
       "id": "init_act_run",
@@ -5641,7 +5641,7 @@
       "file_type": "code",
       "norm_label": "act_run()",
       "source_file": "__init__.py",
-      "source_location": "L2001"
+      "source_location": "L2025"
     },
     {
       "id": "init_act_status",
@@ -5653,7 +5653,7 @@
       "file_type": "code",
       "norm_label": "act_status()",
       "source_file": "__init__.py",
-      "source_location": "L2190"
+      "source_location": "L2214"
     },
     {
       "id": "init_act_status_trim",
@@ -5665,7 +5665,7 @@
       "file_type": "code",
       "norm_label": "_trim()",
       "source_file": "__init__.py",
-      "source_location": "L2231"
+      "source_location": "L2255"
     },
     {
       "id": "init_card",
@@ -5677,7 +5677,7 @@
       "file_type": "code",
       "norm_label": "_card()",
       "source_file": "__init__.py",
-      "source_location": "L1613"
+      "source_location": "L1637"
     },
     {
       "id": "init_concurrency_bake",
@@ -5701,7 +5701,7 @@
       "file_type": "code",
       "norm_label": "_create_run()",
       "source_file": "__init__.py",
-      "source_location": "L2105"
+      "source_location": "L2129"
     },
     {
       "id": "init_identity_stamps",
@@ -5713,7 +5713,7 @@
       "file_type": "code",
       "norm_label": "_identity_stamps()",
       "source_file": "__init__.py",
-      "source_location": "L1758"
+      "source_location": "L1782"
     },
     {
       "id": "init_lane_entry",
@@ -5725,7 +5725,7 @@
       "file_type": "code",
       "norm_label": "_lane_entry()",
       "source_file": "__init__.py",
-      "source_location": "L1796"
+      "source_location": "L1820"
     },
     {
       "id": "init_lane_key_error",
@@ -5737,7 +5737,7 @@
       "file_type": "code",
       "norm_label": "_lane_key_error()",
       "source_file": "__init__.py",
-      "source_location": "L1841"
+      "source_location": "L1865"
     },
     {
       "id": "init_lane_paths",
@@ -5749,7 +5749,7 @@
       "file_type": "code",
       "norm_label": "_lane_paths()",
       "source_file": "__init__.py",
-      "source_location": "L1790"
+      "source_location": "L1814"
     },
     {
       "id": "init_lane_state",
@@ -5761,7 +5761,7 @@
       "file_type": "code",
       "norm_label": "_lane_state()",
       "source_file": "__init__.py",
-      "source_location": "L1824"
+      "source_location": "L1848"
     },
     {
       "id": "init_last_event_ts",
@@ -5773,7 +5773,7 @@
       "file_type": "code",
       "norm_label": "_last_event_ts()",
       "source_file": "__init__.py",
-      "source_location": "L1811"
+      "source_location": "L1835"
     },
     {
       "id": "init_liveness_hint_suffix",
@@ -5797,7 +5797,7 @@
       "file_type": "code",
       "norm_label": "_output_pointer()",
       "source_file": "__init__.py",
-      "source_location": "L2178"
+      "source_location": "L2202"
     },
     {
       "id": "init_profile_error",
@@ -5809,7 +5809,7 @@
       "file_type": "code",
       "norm_label": "_profile_error()",
       "source_file": "__init__.py",
-      "source_location": "L1735"
+      "source_location": "L1759"
     },
     {
       "id": "init_runs_root",
@@ -5833,7 +5833,7 @@
       "file_type": "code",
       "norm_label": "_session_env()",
       "source_file": "__init__.py",
-      "source_location": "L1605"
+      "source_location": "L1629"
     },
     {
       "id": "init_team_args_error",
@@ -5845,7 +5845,7 @@
       "file_type": "code",
       "norm_label": "_team_args_error()",
       "source_file": "__init__.py",
-      "source_location": "L1749"
+      "source_location": "L1773"
     },
     {
       "id": "tests_test_door_lib_50_doorlib50_assertcaperror",
@@ -9325,7 +9325,7 @@
       "file_type": "code",
       "norm_label": "act_library()",
       "source_file": "__init__.py",
-      "source_location": "L1560"
+      "source_location": "L1584"
     },
     {
       "id": "init_act_save",
@@ -9349,7 +9349,7 @@
       "file_type": "code",
       "norm_label": "_from_unknown_error()",
       "source_file": "__init__.py",
-      "source_location": "L1981"
+      "source_location": "L2005"
     },
     {
       "id": "init_lib_path",
@@ -9421,7 +9421,7 @@
       "file_type": "code",
       "norm_label": "_library_rows()",
       "source_file": "__init__.py",
-      "source_location": "L1507"
+      "source_location": "L1531"
     },
     {
       "id": "init_norm_tags",
@@ -9457,7 +9457,7 @@
       "file_type": "code",
       "norm_label": "_wf_command()",
       "source_file": "__init__.py",
-      "source_location": "L2683"
+      "source_location": "L2707"
     },
     {
       "id": "tests_test_live_truth_ui_box",
@@ -10849,7 +10849,7 @@
       "file_type": "code",
       "norm_label": "act_inbox()",
       "source_file": "__init__.py",
-      "source_location": "L1920"
+      "source_location": "L1944"
     },
     {
       "id": "init_act_steer",
@@ -10861,7 +10861,7 @@
       "file_type": "code",
       "norm_label": "act_steer()",
       "source_file": "__init__.py",
-      "source_location": "L2433"
+      "source_location": "L2457"
     },
     {
       "id": "init_act_submit",
@@ -10873,7 +10873,7 @@
       "file_type": "code",
       "norm_label": "act_submit()",
       "source_file": "__init__.py",
-      "source_location": "L1854"
+      "source_location": "L1878"
     },
     {
       "id": "init_model_names_valid",
@@ -10897,7 +10897,7 @@
       "file_type": "code",
       "norm_label": "_slug()",
       "source_file": "__init__.py",
-      "source_location": "L1851"
+      "source_location": "L1875"
     },
     {
       "id": "init_steer_event",
@@ -10909,7 +10909,7 @@
       "file_type": "code",
       "norm_label": "_steer_event()",
       "source_file": "__init__.py",
-      "source_location": "L2169"
+      "source_location": "L2193"
     },
     {
       "id": "init_steer_lines",
@@ -10921,7 +10921,7 @@
       "file_type": "code",
       "norm_label": "_steer_lines()",
       "source_file": "__init__.py",
-      "source_location": "L2483"
+      "source_location": "L2507"
     },
     {
       "id": "init_submit_dir",
@@ -10933,7 +10933,7 @@
       "file_type": "code",
       "norm_label": "_submit_dir()",
       "source_file": "__init__.py",
-      "source_location": "L1848"
+      "source_location": "L1872"
     },
     {
       "id": "init_validation_error",
@@ -11209,7 +11209,7 @@
       "file_type": "code",
       "norm_label": "register()",
       "source_file": "__init__.py",
-      "source_location": "L2727"
+      "source_location": "L2751"
     },
     {
       "id": "init_resolve_models",
@@ -12241,7 +12241,7 @@
       "file_type": "code",
       "norm_label": "handle()",
       "source_file": "__init__.py",
-      "source_location": "L2668"
+      "source_location": "L2692"
     },
     {
       "id": "init_owner_settings_error",
@@ -12301,7 +12301,7 @@
       "file_type": "code",
       "norm_label": "act_amend()",
       "source_file": "__init__.py",
-      "source_location": "L2542"
+      "source_location": "L2566"
     },
     {
       "id": "init_act_release",
@@ -12313,7 +12313,7 @@
       "file_type": "code",
       "norm_label": "act_release()",
       "source_file": "__init__.py",
-      "source_location": "L2411"
+      "source_location": "L2435"
     },
     {
       "id": "init_act_stop",
@@ -12325,7 +12325,7 @@
       "file_type": "code",
       "norm_label": "act_stop()",
       "source_file": "__init__.py",
-      "source_location": "L2615"
+      "source_location": "L2639"
     },
     {
       "id": "init_frozen_committed",
@@ -12337,7 +12337,7 @@
       "file_type": "code",
       "norm_label": "_frozen_committed()",
       "source_file": "__init__.py",
-      "source_location": "L2513"
+      "source_location": "L2537"
     },
     {
       "id": "init_release_core",
@@ -12349,7 +12349,7 @@
       "file_type": "code",
       "norm_label": "_release_core()",
       "source_file": "__init__.py",
-      "source_location": "L2384"
+      "source_location": "L2408"
     },
     {
       "id": "init_require_route_effective",
@@ -14989,7 +14989,7 @@
       "file_type": "code",
       "norm_label": "act_wait()",
       "source_file": "__init__.py",
-      "source_location": "L2318"
+      "source_location": "L2342"
     },
     {
       "id": "init_act_wait_echo",
@@ -15001,7 +15001,7 @@
       "file_type": "code",
       "norm_label": "_echo()",
       "source_file": "__init__.py",
-      "source_location": "L2336"
+      "source_location": "L2360"
     },
     {
       "id": "init_act_wait_respawn_throttled",
@@ -15013,7 +15013,7 @@
       "file_type": "code",
       "norm_label": "_respawn_throttled()",
       "source_file": "__init__.py",
-      "source_location": "L2346"
+      "source_location": "L2370"
     },
     {
       "id": "init_reap_silent_death",
@@ -16534,7 +16534,7 @@
       "source_location": "L1"
     },
     {
-      "id": "init_rationale_1621",
+      "id": "init_rationale_1645",
       "label": "Resolve a launch binding on a post-defaults copy, before persistence. Map\u2026",
       "_origin": "ast",
       "community": 105,
@@ -16542,7 +16542,7 @@
       "file_type": "rationale",
       "norm_label": "resolve a launch binding on a post-defaults copy, before persistence. map...",
       "source_file": "__init__.py",
-      "source_location": "L1621"
+      "source_location": "L1645"
     },
     {
       "id": "install_backend_host",
@@ -19988,7 +19988,7 @@
       "source_location": "L1313"
     },
     {
-      "id": "init_rationale_1606",
+      "id": "init_rationale_1630",
       "label": "Use the tool worker's task-local session, not another turn's process env.",
       "_origin": "ast",
       "community": 25,
@@ -19996,10 +19996,10 @@
       "file_type": "rationale",
       "norm_label": "use the tool worker's task-local session, not another turn's process env.",
       "source_file": "__init__.py",
-      "source_location": "L1606"
+      "source_location": "L1630"
     },
     {
-      "id": "init_rationale_1736",
+      "id": "init_rationale_1760",
       "label": "1.1 (RATIFY F2): node `profile:` validation \u2014 AFTER `{run.KEY}` rendering,\u2026",
       "_origin": "ast",
       "community": 25,
@@ -20007,10 +20007,10 @@
       "file_type": "rationale",
       "norm_label": "1.1 (ratify f2): node `profile:` validation \u2014 after `{run.key}` rendering,...",
       "source_file": "__init__.py",
-      "source_location": "L1736"
+      "source_location": "L1760"
     },
     {
-      "id": "init_rationale_1750",
+      "id": "init_rationale_1774",
       "label": "1.1 (RATIFY F1/F3): `team` (<=64) and `lane_key` (<=128) are optional non-empty\u2026",
       "_origin": "ast",
       "community": 25,
@@ -20018,10 +20018,10 @@
       "file_type": "rationale",
       "norm_label": "1.1 (ratify f1/f3): `team` (<=64) and `lane_key` (<=128) are optional non-empty...",
       "source_file": "__init__.py",
-      "source_location": "L1750"
+      "source_location": "L1774"
     },
     {
-      "id": "init_rationale_1759",
+      "id": "init_rationale_1783",
       "label": "1.1 (RATIFY F1): run.json identity keys, emitted ONLY when derivable \u2014 a no-\u2026",
       "_origin": "ast",
       "community": 25,
@@ -20029,10 +20029,10 @@
       "file_type": "rationale",
       "norm_label": "1.1 (ratify f1): run.json identity keys, emitted only when derivable \u2014 a no-...",
       "source_file": "__init__.py",
-      "source_location": "L1759"
+      "source_location": "L1783"
     },
     {
-      "id": "init_rationale_1791",
+      "id": "init_rationale_1815",
       "label": "WRITE side: the resolved root (new entries land with their runs).",
       "_origin": "ast",
       "community": 25,
@@ -20040,10 +20040,10 @@
       "file_type": "rationale",
       "norm_label": "write side: the resolved root (new entries land with their runs).",
       "source_file": "__init__.py",
-      "source_location": "L1791"
+      "source_location": "L1815"
     },
     {
-      "id": "init_rationale_2107",
+      "id": "init_rationale_2131",
       "label": "Under the lane flock: complete run dir, atomic registry entry, then spawn.",
       "_origin": "ast",
       "community": 25,
@@ -20051,10 +20051,10 @@
       "file_type": "rationale",
       "norm_label": "under the lane flock: complete run dir, atomic registry entry, then spawn.",
       "source_file": "__init__.py",
-      "source_location": "L2107"
+      "source_location": "L2131"
     },
     {
-      "id": "init_rationale_2179",
+      "id": "init_rationale_2203",
       "label": "Compact stand-in for a committed node output: enough to DECIDE to pay for\u2026",
       "_origin": "ast",
       "community": 25,
@@ -20062,7 +20062,7 @@
       "file_type": "rationale",
       "norm_label": "compact stand-in for a committed node output: enough to decide to pay for...",
       "source_file": "__init__.py",
-      "source_location": "L2179"
+      "source_location": "L2203"
     },
     {
       "id": "tests_test_door_lib_50_rationale_317",
@@ -21893,7 +21893,7 @@
       "source_location": "L1420"
     },
     {
-      "id": "init_rationale_1508",
+      "id": "init_rationale_1532",
       "label": "#50: THE discovery read for the library \u2014 rich rows + honest skips. One walk\u2026",
       "_origin": "ast",
       "community": 41,
@@ -21901,10 +21901,10 @@
       "file_type": "rationale",
       "norm_label": "#50: the discovery read for the library \u2014 rich rows + honest skips. one walk...",
       "source_file": "__init__.py",
-      "source_location": "L1508"
+      "source_location": "L1532"
     },
     {
-      "id": "init_rationale_1982",
+      "id": "init_rationale_2006",
       "label": "#50: the nudge IS the error text. `run from=<unknown>` names up to 3 closest\u2026",
       "_origin": "ast",
       "community": 41,
@@ -21912,10 +21912,10 @@
       "file_type": "rationale",
       "norm_label": "#50: the nudge is the error text. `run from=<unknown>` names up to 3 closest...",
       "source_file": "__init__.py",
-      "source_location": "L1982"
+      "source_location": "L2006"
     },
     {
-      "id": "init_rationale_2684",
+      "id": "init_rationale_2708",
       "label": "`/wf` \u2014 the library front door. `/wf <name> [note]` supplies the note\u2026",
       "_origin": "ast",
       "community": 41,
@@ -21923,7 +21923,7 @@
       "file_type": "rationale",
       "norm_label": "`/wf` \u2014 the library front door. `/wf <name> [note]` supplies the note...",
       "source_file": "__init__.py",
-      "source_location": "L2684"
+      "source_location": "L2708"
     },
     {
       "id": "tests_test_live_truth_ui",
@@ -23221,7 +23221,7 @@
       "source_location": "L132"
     },
     {
-      "id": "init_rationale_1855",
+      "id": "init_rationale_1879",
       "label": "#50 (epic #49): submit a hand-rolled graph for STUDY \u2014 the quarantine inbox\u2026",
       "_origin": "ast",
       "community": 52,
@@ -23229,10 +23229,10 @@
       "file_type": "rationale",
       "norm_label": "#50 (epic #49): submit a hand-rolled graph for study \u2014 the quarantine inbox...",
       "source_file": "__init__.py",
-      "source_location": "L1855"
+      "source_location": "L1879"
     },
     {
-      "id": "init_rationale_1921",
+      "id": "init_rationale_1945",
       "label": "Two inbox halves, one action name, never in conflict (a child's steer env and a\u2026",
       "_origin": "ast",
       "community": 52,
@@ -23240,10 +23240,10 @@
       "file_type": "rationale",
       "norm_label": "two inbox halves, one action name, never in conflict (a child's steer env and a...",
       "source_file": "__init__.py",
-      "source_location": "L1921"
+      "source_location": "L1945"
     },
     {
-      "id": "init_rationale_2170",
+      "id": "init_rationale_2194",
       "label": "#17: steer is only real if it lands in events.jsonl \u2014 the 45 real steers across\u2026",
       "_origin": "ast",
       "community": 52,
@@ -23251,10 +23251,10 @@
       "file_type": "rationale",
       "norm_label": "#17: steer is only real if it lands in events.jsonl \u2014 the 45 real steers across...",
       "source_file": "__init__.py",
-      "source_location": "L2170"
+      "source_location": "L2194"
     },
     {
-      "id": "init_rationale_2484",
+      "id": "init_rationale_2508",
       "label": "Return (texts, n_pulled) for baked steering lines beyond this spawn's cursor,\u2026",
       "_origin": "ast",
       "community": 52,
@@ -23262,7 +23262,7 @@
       "file_type": "rationale",
       "norm_label": "return (texts, n_pulled) for baked steering lines beyond this spawn's cursor,...",
       "source_file": "__init__.py",
-      "source_location": "L2484"
+      "source_location": "L2508"
     },
     {
       "id": "tests_test_register_surface",
@@ -24781,7 +24781,7 @@
       "source_location": "L1318"
     },
     {
-      "id": "init_rationale_2385",
+      "id": "init_rationale_2409",
       "label": "ONE gate-answer path for tool and UI. Stale answers never block: the answer\u2026",
       "_origin": "ast",
       "community": 66,
@@ -24789,10 +24789,10 @@
       "file_type": "rationale",
       "norm_label": "one gate-answer path for tool and ui. stale answers never block: the answer...",
       "source_file": "__init__.py",
-      "source_location": "L2385"
+      "source_location": "L2409"
     },
     {
-      "id": "init_rationale_2514",
+      "id": "init_rationale_2538",
       "label": "fb 034849a23af94418: ids whose committed bake an amend keeps verbatim \u2014 ONLY\u2026",
       "_origin": "ast",
       "community": 66,
@@ -24800,7 +24800,7 @@
       "file_type": "rationale",
       "norm_label": "fb 034849a23af94418: ids whose committed bake an amend keeps verbatim \u2014 only...",
       "source_file": "__init__.py",
-      "source_location": "L2514"
+      "source_location": "L2538"
     },
     {
       "id": "init_rationale_401",
@@ -26606,7 +26606,7 @@
       "source_location": "L2"
     },
     {
-      "id": "init_rationale_2319",
+      "id": "init_rationale_2343",
       "label": "Explicit resume/watch verb. Read-only status/list never spawn; wait may resume\u2026",
       "_origin": "ast",
       "community": 91,
@@ -26614,7 +26614,7 @@
       "file_type": "rationale",
       "norm_label": "explicit resume/watch verb. read-only status/list never spawn; wait may resume...",
       "source_file": "__init__.py",
-      "source_location": "L2319"
+      "source_location": "L2343"
     },
     {
       "id": "init_rationale_288",
@@ -29155,7 +29155,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2543",
+      "source_location": "L2567",
       "weight": 1.0
     },
     {
@@ -29167,7 +29167,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2546",
+      "source_location": "L2570",
       "weight": 1.0
     },
     {
@@ -29179,7 +29179,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2551",
+      "source_location": "L2575",
       "weight": 1.0
     },
     {
@@ -29191,7 +29191,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2551",
+      "source_location": "L2575",
       "weight": 1.0
     },
     {
@@ -29203,7 +29203,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2564",
+      "source_location": "L2588",
       "weight": 1.0
     },
     {
@@ -29215,7 +29215,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2565",
+      "source_location": "L2589",
       "weight": 1.0
     },
     {
@@ -29227,7 +29227,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2569",
+      "source_location": "L2593",
       "weight": 1.0
     },
     {
@@ -29239,7 +29239,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2574",
+      "source_location": "L2598",
       "weight": 1.0
     },
     {
@@ -29251,7 +29251,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2577",
+      "source_location": "L2601",
       "weight": 1.0
     },
     {
@@ -29263,7 +29263,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2580",
+      "source_location": "L2604",
       "weight": 1.0
     },
     {
@@ -29275,7 +29275,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2590",
+      "source_location": "L2614",
       "weight": 1.0
     },
     {
@@ -29287,7 +29287,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2607",
+      "source_location": "L2631",
       "weight": 1.0
     },
     {
@@ -29299,7 +29299,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1941",
+      "source_location": "L1965",
       "weight": 1.0
     },
     {
@@ -29311,7 +29311,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1947",
+      "source_location": "L1971",
       "weight": 1.0
     },
     {
@@ -29323,7 +29323,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1957",
+      "source_location": "L1981",
       "weight": 1.0
     },
     {
@@ -29335,7 +29335,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1561",
+      "source_location": "L1585",
       "weight": 1.0
     },
     {
@@ -29347,7 +29347,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1582",
+      "source_location": "L1606",
       "weight": 1.0
     },
     {
@@ -29359,7 +29359,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2629",
+      "source_location": "L2653",
       "weight": 1.0
     },
     {
@@ -29371,7 +29371,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2412",
+      "source_location": "L2436",
       "weight": 1.0
     },
     {
@@ -29383,7 +29383,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2420",
+      "source_location": "L2444",
       "weight": 1.0
     },
     {
@@ -29395,7 +29395,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2423",
+      "source_location": "L2447",
       "weight": 1.0
     },
     {
@@ -29407,7 +29407,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2002",
+      "source_location": "L2026",
       "weight": 1.0
     },
     {
@@ -29419,7 +29419,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2008",
+      "source_location": "L2032",
       "weight": 1.0
     },
     {
@@ -29431,7 +29431,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2021",
+      "source_location": "L2045",
       "weight": 1.0
     },
     {
@@ -29443,7 +29443,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2022",
+      "source_location": "L2046",
       "weight": 1.0
     },
     {
@@ -29455,7 +29455,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2022",
+      "source_location": "L2046",
       "weight": 1.0
     },
     {
@@ -29467,7 +29467,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2025",
+      "source_location": "L2049",
       "weight": 1.0
     },
     {
@@ -29479,7 +29479,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2025",
+      "source_location": "L2049",
       "weight": 1.0
     },
     {
@@ -29491,7 +29491,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2028",
+      "source_location": "L2052",
       "weight": 1.0
     },
     {
@@ -29503,7 +29503,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2043",
+      "source_location": "L2067",
       "weight": 1.0
     },
     {
@@ -29515,7 +29515,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2047",
+      "source_location": "L2071",
       "weight": 1.0
     },
     {
@@ -29527,7 +29527,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2053",
+      "source_location": "L2077",
       "weight": 1.0
     },
     {
@@ -29539,7 +29539,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2056",
+      "source_location": "L2080",
       "weight": 1.0
     },
     {
@@ -29551,7 +29551,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2062",
+      "source_location": "L2086",
       "weight": 1.0
     },
     {
@@ -29563,7 +29563,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2065",
+      "source_location": "L2089",
       "weight": 1.0
     },
     {
@@ -29575,7 +29575,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2072",
+      "source_location": "L2096",
       "weight": 1.0
     },
     {
@@ -29587,7 +29587,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2082",
+      "source_location": "L2106",
       "weight": 1.0
     },
     {
@@ -29599,7 +29599,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2085",
+      "source_location": "L2109",
       "weight": 1.0
     },
     {
@@ -29611,7 +29611,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2089",
+      "source_location": "L2113",
       "weight": 1.0
     },
     {
@@ -29623,7 +29623,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2093",
+      "source_location": "L2117",
       "weight": 1.0
     },
     {
@@ -29635,7 +29635,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2100",
+      "source_location": "L2124",
       "weight": 1.0
     },
     {
@@ -29731,7 +29731,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1503",
+      "source_location": "L1527",
       "weight": 1.0
     },
     {
@@ -29743,7 +29743,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2193",
+      "source_location": "L2217",
       "weight": 1.0
     },
     {
@@ -29755,7 +29755,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2198",
+      "source_location": "L2222",
       "weight": 1.0
     },
     {
@@ -29767,7 +29767,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2203",
+      "source_location": "L2227",
       "weight": 1.0
     },
     {
@@ -29779,7 +29779,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2204",
+      "source_location": "L2228",
       "weight": 1.0
     },
     {
@@ -29791,7 +29791,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2218",
+      "source_location": "L2242",
       "weight": 1.0
     },
     {
@@ -29803,7 +29803,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2248",
+      "source_location": "L2272",
       "weight": 1.0
     },
     {
@@ -29815,7 +29815,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2434",
+      "source_location": "L2458",
       "weight": 1.0
     },
     {
@@ -29827,7 +29827,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2465",
+      "source_location": "L2489",
       "weight": 1.0
     },
     {
@@ -29839,7 +29839,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2616",
+      "source_location": "L2640",
       "weight": 1.0
     },
     {
@@ -29851,7 +29851,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2623",
+      "source_location": "L2647",
       "weight": 1.0
     },
     {
@@ -29863,7 +29863,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1865",
+      "source_location": "L1889",
       "weight": 1.0
     },
     {
@@ -29875,7 +29875,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1881",
+      "source_location": "L1905",
       "weight": 1.0
     },
     {
@@ -29887,7 +29887,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1886",
+      "source_location": "L1910",
       "weight": 1.0
     },
     {
@@ -29899,7 +29899,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1899",
+      "source_location": "L1923",
       "weight": 1.0
     },
     {
@@ -29911,7 +29911,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2321",
+      "source_location": "L2345",
       "weight": 1.0
     },
     {
@@ -29923,7 +29923,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2329",
+      "source_location": "L2353",
       "weight": 1.0
     },
     {
@@ -29935,7 +29935,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2371",
+      "source_location": "L2395",
       "weight": 1.0
     },
     {
@@ -29947,7 +29947,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2360",
+      "source_location": "L2384",
       "weight": 1.0
     },
     {
@@ -29959,7 +29959,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1663",
+      "source_location": "L1687",
       "weight": 1.0
     },
     {
@@ -29971,7 +29971,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2112",
+      "source_location": "L2136",
       "weight": 1.0
     },
     {
@@ -29983,7 +29983,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2124",
+      "source_location": "L2148",
       "weight": 1.0
     },
     {
@@ -29995,7 +29995,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2130",
+      "source_location": "L2154",
       "weight": 1.0
     },
     {
@@ -30007,7 +30007,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2135",
+      "source_location": "L2159",
       "weight": 1.0
     },
     {
@@ -30019,7 +30019,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2155",
+      "source_location": "L2179",
       "weight": 1.0
     },
     {
@@ -30031,7 +30031,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2163",
+      "source_location": "L2187",
       "weight": 1.0
     },
     {
@@ -30043,7 +30043,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2166",
+      "source_location": "L2190",
       "weight": 1.0
     },
     {
@@ -30055,7 +30055,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1988",
+      "source_location": "L2012",
       "weight": 1.0
     },
     {
@@ -30067,7 +30067,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2675",
+      "source_location": "L2699",
       "weight": 1.0
     },
     {
@@ -30091,7 +30091,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1776",
+      "source_location": "L1800",
       "weight": 1.0
     },
     {
@@ -30127,7 +30127,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1802",
+      "source_location": "L1826",
       "weight": 1.0
     },
     {
@@ -30139,7 +30139,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1793",
+      "source_location": "L1817",
       "weight": 1.0
     },
     {
@@ -30151,7 +30151,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1829",
+      "source_location": "L1853",
       "weight": 1.0
     },
     {
@@ -30163,7 +30163,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1833",
+      "source_location": "L1857",
       "weight": 1.0
     },
     {
@@ -30175,7 +30175,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1839",
+      "source_location": "L1863",
       "weight": 1.0
     },
     {
@@ -30247,7 +30247,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1519",
+      "source_location": "L1543",
       "weight": 1.0
     },
     {
@@ -30451,7 +30451,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2731",
+      "source_location": "L2755",
       "weight": 1.0
     },
     {
@@ -30691,7 +30691,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1849",
+      "source_location": "L1873",
       "weight": 1.0
     },
     {
@@ -30727,7 +30727,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2687",
+      "source_location": "L2711",
       "weight": 1.0
     },
     {
@@ -30739,7 +30739,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2704",
+      "source_location": "L2728",
       "weight": 1.0
     },
     {
@@ -30751,7 +30751,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2719",
+      "source_location": "L2743",
       "weight": 1.0
     },
     {
@@ -30763,7 +30763,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2719",
+      "source_location": "L2743",
       "weight": 1.0
     },
     {
@@ -42259,7 +42259,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2231",
+      "source_location": "L2255",
       "weight": 1.0
     },
     {
@@ -42271,7 +42271,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2336",
+      "source_location": "L2360",
       "weight": 1.0
     },
     {
@@ -42283,7 +42283,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2346",
+      "source_location": "L2370",
       "weight": 1.0
     },
     {
@@ -42295,7 +42295,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1640",
+      "source_location": "L1664",
       "weight": 1.0
     },
     {
@@ -42307,7 +42307,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1658",
+      "source_location": "L1682",
       "weight": 1.0
     },
     {
@@ -42319,7 +42319,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1684",
+      "source_location": "L1708",
       "weight": 1.0
     },
     {
@@ -59777,7 +59777,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1507",
+      "source_location": "L1531",
       "weight": 1.0
     },
     {
@@ -59788,7 +59788,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1605",
+      "source_location": "L1629",
       "weight": 1.0
     },
     {
@@ -59799,7 +59799,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1613",
+      "source_location": "L1637",
       "weight": 1.0
     },
     {
@@ -59810,7 +59810,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1620",
+      "source_location": "L1644",
       "weight": 1.0
     },
     {
@@ -59821,7 +59821,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1735",
+      "source_location": "L1759",
       "weight": 1.0
     },
     {
@@ -59832,7 +59832,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1749",
+      "source_location": "L1773",
       "weight": 1.0
     },
     {
@@ -59843,7 +59843,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1758",
+      "source_location": "L1782",
       "weight": 1.0
     },
     {
@@ -59854,7 +59854,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1790",
+      "source_location": "L1814",
       "weight": 1.0
     },
     {
@@ -59865,7 +59865,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1796",
+      "source_location": "L1820",
       "weight": 1.0
     },
     {
@@ -59876,7 +59876,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1811",
+      "source_location": "L1835",
       "weight": 1.0
     },
     {
@@ -59887,7 +59887,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1824",
+      "source_location": "L1848",
       "weight": 1.0
     },
     {
@@ -59898,7 +59898,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1841",
+      "source_location": "L1865",
       "weight": 1.0
     },
     {
@@ -59909,7 +59909,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1848",
+      "source_location": "L1872",
       "weight": 1.0
     },
     {
@@ -59920,7 +59920,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1851",
+      "source_location": "L1875",
       "weight": 1.0
     },
     {
@@ -59931,7 +59931,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1981",
+      "source_location": "L2005",
       "weight": 1.0
     },
     {
@@ -59942,7 +59942,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2105",
+      "source_location": "L2129",
       "weight": 1.0
     },
     {
@@ -59964,7 +59964,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2169",
+      "source_location": "L2193",
       "weight": 1.0
     },
     {
@@ -59975,7 +59975,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2178",
+      "source_location": "L2202",
       "weight": 1.0
     },
     {
@@ -59997,18 +59997,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2384",
-      "weight": 1.0
-    },
-    {
-      "source": "init",
-      "target": "init_steer_lines",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "__init__.py",
-      "source_location": "L2483",
+      "source_location": "L2408",
       "weight": 1.0
     },
     {
@@ -60024,13 +60013,24 @@
     },
     {
       "source": "init",
+      "target": "init_steer_lines",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "__init__.py",
+      "source_location": "L2507",
+      "weight": 1.0
+    },
+    {
+      "source": "init",
       "target": "init_frozen_committed",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2513",
+      "source_location": "L2537",
       "weight": 1.0
     },
     {
@@ -60063,7 +60063,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2668",
+      "source_location": "L2692",
       "weight": 1.0
     },
     {
@@ -60074,7 +60074,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2683",
+      "source_location": "L2707",
       "weight": 1.0
     },
     {
@@ -60085,7 +60085,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2727",
+      "source_location": "L2751",
       "weight": 1.0
     },
     {
@@ -74972,124 +74972,124 @@
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1508",
+      "source": "init_rationale_1532",
       "target": "init_library_rows",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1508",
+      "source_location": "L1532",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1606",
+      "source": "init_rationale_1630",
       "target": "init_session_env",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1606",
+      "source_location": "L1630",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1621",
+      "source": "init_rationale_1645",
       "target": "init_bind_run_context",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1621",
+      "source_location": "L1645",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1736",
+      "source": "init_rationale_1760",
       "target": "init_profile_error",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1736",
+      "source_location": "L1760",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1750",
+      "source": "init_rationale_1774",
       "target": "init_team_args_error",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1750",
+      "source_location": "L1774",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1759",
+      "source": "init_rationale_1783",
       "target": "init_identity_stamps",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1759",
+      "source_location": "L1783",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1791",
+      "source": "init_rationale_1815",
       "target": "init_lane_paths",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1791",
+      "source_location": "L1815",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1855",
+      "source": "init_rationale_1879",
       "target": "init_act_submit",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1855",
+      "source_location": "L1879",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1921",
+      "source": "init_rationale_1945",
       "target": "init_act_inbox",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1921",
+      "source_location": "L1945",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_1982",
+      "source": "init_rationale_2006",
       "target": "init_from_unknown_error",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L1982",
+      "source_location": "L2006",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2107",
+      "source": "init_rationale_2131",
       "target": "init_create_run",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2107",
+      "source_location": "L2131",
       "weight": 1.0
     },
     {
@@ -75104,58 +75104,58 @@
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2170",
+      "source": "init_rationale_2194",
       "target": "init_steer_event",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2170",
+      "source_location": "L2194",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2179",
+      "source": "init_rationale_2203",
       "target": "init_output_pointer",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2179",
+      "source_location": "L2203",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2319",
+      "source": "init_rationale_2343",
       "target": "init_act_wait",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2319",
+      "source_location": "L2343",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2385",
+      "source": "init_rationale_2409",
       "target": "init_release_core",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2385",
+      "source_location": "L2409",
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2484",
+      "source": "init_rationale_2508",
       "target": "init_steer_lines",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2484",
+      "source_location": "L2508",
       "weight": 1.0
     },
     {
@@ -75170,14 +75170,14 @@
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2514",
+      "source": "init_rationale_2538",
       "target": "init_frozen_committed",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "__init__.py",
-      "source_location": "L2514",
+      "source_location": "L2538",
       "weight": 1.0
     },
     {
@@ -75192,17 +75192,6 @@
       "weight": 1.0
     },
     {
-      "source": "init_rationale_2684",
-      "target": "init_wf_command",
-      "relation": "rationale_for",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "__init__.py",
-      "source_location": "L2684",
-      "weight": 1.0
-    },
-    {
       "source": "init_rationale_27",
       "target": "init_coerce_graph",
       "relation": "rationale_for",
@@ -75211,6 +75200,17 @@
       "confidence_score": 1.0,
       "source_file": "__init__.py",
       "source_location": "L27",
+      "weight": 1.0
+    },
+    {
+      "source": "init_rationale_2708",
+      "target": "init_wf_command",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "__init__.py",
+      "source_location": "L2708",
       "weight": 1.0
     },
     {
@@ -80469,7 +80469,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "__init__.py",
-      "source_location": "L2088",
+      "source_location": "L2112",
       "weight": 1.0
     },
     {
@@ -80481,7 +80481,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "__init__.py",
-      "source_location": "L1694",
+      "source_location": "L1718",
       "weight": 1.0
     },
     {
@@ -80493,7 +80493,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "__init__.py",
-      "source_location": "L2737",
+      "source_location": "L2761",
       "weight": 1.0
     },
     {
@@ -80505,7 +80505,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "__init__.py",
-      "source_location": "L2738",
+      "source_location": "L2762",
       "weight": 1.0
     },
     {
@@ -81345,7 +81345,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2554",
+      "source_location": "L2578",
       "weight": 1.0
     },
     {
@@ -81357,7 +81357,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2586",
+      "source_location": "L2610",
       "weight": 1.0
     },
     {
@@ -81369,7 +81369,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1961",
+      "source_location": "L1985",
       "weight": 1.0
     },
     {
@@ -81381,7 +81381,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2639",
+      "source_location": "L2663",
       "weight": 1.0
     },
     {
@@ -81393,7 +81393,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2646",
+      "source_location": "L2670",
       "weight": 1.0
     },
     {
@@ -81405,7 +81405,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2415",
+      "source_location": "L2439",
       "weight": 1.0
     },
     {
@@ -81417,7 +81417,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2008",
+      "source_location": "L2032",
       "weight": 1.0
     },
     {
@@ -81441,7 +81441,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2205",
+      "source_location": "L2229",
       "weight": 1.0
     },
     {
@@ -81453,7 +81453,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2221",
+      "source_location": "L2245",
       "weight": 1.0
     },
     {
@@ -81465,7 +81465,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2240",
+      "source_location": "L2264",
       "weight": 1.0
     },
     {
@@ -81477,7 +81477,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2435",
+      "source_location": "L2459",
       "weight": 1.0
     },
     {
@@ -81489,7 +81489,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2442",
+      "source_location": "L2466",
       "weight": 1.0
     },
     {
@@ -81501,7 +81501,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2475",
+      "source_location": "L2499",
       "weight": 1.0
     },
     {
@@ -81513,7 +81513,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2619",
+      "source_location": "L2643",
       "weight": 1.0
     },
     {
@@ -81525,7 +81525,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1891",
+      "source_location": "L1915",
       "weight": 1.0
     },
     {
@@ -81537,7 +81537,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2322",
+      "source_location": "L2346",
       "weight": 1.0
     },
     {
@@ -81561,7 +81561,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1802",
+      "source_location": "L1826",
       "weight": 1.0
     },
     {
@@ -81573,7 +81573,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L1830",
+      "source_location": "L1854",
       "weight": 1.0
     },
     {
@@ -81585,7 +81585,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2389",
+      "source_location": "L2413",
       "weight": 1.0
     },
     {
@@ -81597,7 +81597,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2392",
+      "source_location": "L2416",
       "weight": 1.0
     },
     {
@@ -81609,7 +81609,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2401",
+      "source_location": "L2425",
       "weight": 1.0
     },
     {
@@ -81657,7 +81657,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "__init__.py",
-      "source_location": "L2714",
+      "source_location": "L2738",
       "weight": 1.0
     },
     {
@@ -81681,7 +81681,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2664",
+      "source_location": "L2688",
       "weight": 1.0
     },
     {
@@ -81693,7 +81693,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2664",
+      "source_location": "L2688",
       "weight": 1.0
     },
     {
@@ -81705,7 +81705,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2664",
+      "source_location": "L2688",
       "weight": 1.0
     },
     {
@@ -81717,7 +81717,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2664",
+      "source_location": "L2688",
       "weight": 1.0
     },
     {
@@ -81729,7 +81729,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2665",
+      "source_location": "L2689",
       "weight": 1.0
     },
     {
@@ -81741,7 +81741,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2665",
+      "source_location": "L2689",
       "weight": 1.0
     },
     {
@@ -81753,7 +81753,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2665",
+      "source_location": "L2689",
       "weight": 1.0
     },
     {
@@ -81765,7 +81765,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2665",
+      "source_location": "L2689",
       "weight": 1.0
     },
     {
@@ -81777,7 +81777,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2665",
+      "source_location": "L2689",
       "weight": 1.0
     },
     {
@@ -81789,7 +81789,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2666",
+      "source_location": "L2690",
       "weight": 1.0
     },
     {
@@ -81801,7 +81801,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2666",
+      "source_location": "L2690",
       "weight": 1.0
     },
     {
@@ -81813,7 +81813,7 @@
       "confidence_score": 0.85,
       "context": "collection",
       "source_file": "__init__.py",
-      "source_location": "L2666",
+      "source_location": "L2690",
       "weight": 1.0
     },
     {
