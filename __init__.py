@@ -1486,6 +1486,93 @@ def _lib_path(name):
         raise ValueError(f"invalid library name {name!r} (lowercase alnum, [-_.], <=64)")
     return library_root() / f"{n}.json"
 
+# est-2ek.1.599 (waves 26-31): ra-pr-deep committee LANES re-materialized their run
+# graphs onto the SHARED shelf — the runner bakes HERMES_WF_RUN_DIR into every agent
+# spawn (wf.py), so a process carrying it is a spawned child: it may only publish
+# RUN-LOCAL copies (under its own run dir), never onto the shared library.
+def _lane_shelf_guard(p):
+    """Refuse a shared-shelf save from a spawned lane child (typed error_class
+    lane_shelf_write); run-local saves and parent/owner saves pass untouched.
+
+    r4 (recon #179 marker 5980069065): containment is judged on tgt_r — the
+    realpath-resolved target — ONLY. The r3 raw-string branch let a run-dir-SHAPED
+    path whose realpath escapes (pre-swapped <run>/library symlink) pass and land
+    the graph on the SHARED shelf (saved=atk-sym-escape). Every path is compared
+    under realpath (raw tgt kept for display only), plus tgt_r is compared against
+    library_root(): any resolve into the shared shelf from a lane child refuses."""
+    rd = str(os.environ.get("HERMES_WF_RUN_DIR") or "").strip()
+    if not rd:
+        return None
+    tgt = os.path.abspath(str(p))          # raw — kept for display only
+    tgt_r = tgt
+    try:
+        tgt_r = str(Path(tgt).resolve())
+    except OSError:
+        pass
+    base_r = os.path.abspath(rd)
+    try:
+        base_r = str(Path(rd).resolve())
+    except OSError:
+        pass
+    sep = os.sep
+    def _inside(t, b):
+        return t == b or os.path.dirname(t) == b or t.startswith(b + sep)
+    # CLAUSE A (r5, recon #179 marker 5980900759): the runner bakes
+    # HERMES_WF_RUN_DIR as an absolute dir UNDER the runs root it stamps (wf.py
+    # spawn env; WF_RUNS_ROOT is in its keep-set forward and wins in both
+    # resolvers, else the launch root — wfcommon.launch_runs_root), and wf.py
+    # mkdir's the run dir for real. S3 swapped <run> for a symlink to an ANCESTOR
+    # (the runs root itself) with the stamped env UNTOUCHED: base_r then swallowed
+    # the shared shelf, the r4 conditional veto (cand_lib inside base_r)
+    # self-skipped, and <runs>/library/atk-s3.json LANDED (saved=atk-s3). An
+    # honest stamp is: a REAL dir (no symlink), realpath inside the stamped root,
+    # and — when it collapses onto the root itself — raw-identical to it (the
+    # legal T2 pin stamps WF_RUNS_ROOT AT the run dir). Anything else is an
+    # upward escape: the lane's own-shelf exemption dies and CLAUSE B judges
+    # tgt_r against realpath(library_root()) unconditionally. Deleting CLAUSE A
+    # turns tests/test_lane_shelf_guard_1599.py T5 RED (the escape re-claims its
+    # own-shelf exemption and the S3 save lands); deleting CLAUSE B turns T5 RED
+    # too (nothing vetoes the shared-shelf landing).
+    def _stamped_runs_root():
+        override = os.environ.get("WF_RUNS_ROOT", "")
+        return Path(override) if override else _common.launch_runs_root()
+    raw_root = _stamped_runs_root()
+    try:
+        root_r = str(Path(str(raw_root)).resolve())
+    except OSError:
+        root_r = None           # fail closed: an unjudgeable root is an escape
+    escape = (root_r is None or not _inside(base_r, root_r)
+              or os.path.islink(rd)
+              or (base_r == root_r
+                  and os.path.abspath(rd) != os.path.abspath(str(raw_root))))
+    # r3 raw-string refusals stay (fail-closed): a raw shape that does not even
+    # claim the run dir is refused outright, before realpath can rescue it.
+    raw_claims_run = tgt == base_r or tgt_r == base_r or os.path.dirname(tgt) == base_r \
+            or tgt.startswith(base_r + sep) or tgt_r.startswith(base_r + sep)
+    # containment is judged on tgt_r ONLY; the run dir itself under realpath.
+    inside_run = _inside(tgt_r, base_r)
+    # CLAUSE B (r5, unconditional): tgt_r is judged against realpath(library_root())
+    # REGARDLESS of where base_r sits. The only lane-legal shelf is the lane's OWN
+    # lexical <run>/library (base_r + '/library') under an HONEST run dir: no
+    # upward escape (clause A) and lib_r equal to it, so neither a swapped
+    # <run>/library symlink nor an ancestor-swapped <run> (which makes the shared
+    # shelf trivially equal the lexical own shelf) can pass. The r4 conditional
+    # (`if not _inside(cand_lib, base_r)`) self-skipped for S3-shaped base_r — that
+    # is the veto that must judge tgt_r unconditionally.
+    try:
+        lib_r = str(Path(str(library_root())).resolve())
+    except OSError:
+        lib_r = None          # fail closed: an unjudgeable shelf is a shared shelf
+    onto_shared = lib_r is None or escape or lib_r != base_r + sep + "library"
+    if raw_claims_run and inside_run \
+            and not (onto_shared and _inside(tgt_r, lib_r if lib_r is not None else "")):
+        return None
+    rid = str(os.environ.get("HERMES_WF_RUN_ID") or rd).strip()
+    return {"error": f"lane child of run '{rid}' may not save '{p.name}' onto the shared "
+                     "shelf — lanes write run-local graph copies only "
+                     "(est-2ek.1.599; shelf waves 26-31; r4 realpath-only containment)",
+            "error_class": "lane_shelf_write"}
+
 def _lib_read(name):
     """READ resolver mirroring find_run: resolved first, legacy only for an EXISTING
     graph absent from the resolved root. Returns the path whether or not it exists
@@ -1526,6 +1613,9 @@ def act_save(args):
         p = _lib_path(args.get("name") or graph.get("name"))
     except ValueError as e:
         return {"error": str(e)}
+    blocked = _lane_shelf_guard(p)   # est-2ek.1.599: lanes write run-local only
+    if blocked:
+        return blocked
     source = args.get("source")
     if source is not None and (not isinstance(source, str) or not source.strip() or len(source) > 200):
         return {"error": "source must be a non-empty string of at most 200 characters"}
