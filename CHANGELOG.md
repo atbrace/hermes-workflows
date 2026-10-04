@@ -44,6 +44,11 @@
   Pin: `tests/test_ratelimit_park_walls_159c.py` (mutation-proved on all three
   defects; test_ratelimit_54 pins undrifted).
 
+- #163c — gate-400 quarantine FAIL path commits its typed record. The fail-closed
+  branch of the gate-400 re-drive read a local the transient ladder owns
+  (UnboundLocalError: no record, no stamp); the dead attempt's evidence now rides
+  in via the dict handed to _isolate_prior, and both quarantine record builders
+  carry attempts_log forward like the log paths.
 - #116 — confidence_substrate: engine-stamped fallback when a pinned confidence
   route is quota-dead. The owner declares a sanctioned fallback substrate once
   (`plugins.entries.hermes-workflows.settings.confidence_substrate`, top-level
