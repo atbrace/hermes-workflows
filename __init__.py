@@ -2087,7 +2087,11 @@ def act_submit(args):
     it?' part of the cost of hand-rolling. The graph is validated by the SAME
     `_validation_error` act_run uses — no second validator. A second submit with
     the identical graph digest from the same submitted_by is a DEDUPE HINT, not a
-    bounce: the existing id is reported. Nothing here auto-joins the library —
+    bounce: the existing id is reported. Submit validates the PLAIN form: it does
+    not run the include expansion choke point, so a composite whose parent wires
+    `alias__id` refs is refused as an unknown id, while a ref-free composite is
+    stored in author form as-is (the study inbox stays a plain-graph lane; the
+    quartermaster reads it against the shelf). Nothing here auto-joins the library —
     promotion/decision is the quartermaster's human-gated loop; door stores only.
     Consent shape mirrors save: this is a model-reachable write to runs_root; the
     launcher-consent bounce belongs to run, where profile gates are enforced."""
