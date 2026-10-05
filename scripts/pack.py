@@ -112,6 +112,7 @@ INCLUDE_FILES = (
     "tests/fake",
     "tests/fake_hermes.py",
     "tests/wf_test_isolation.py",
+    "tests/graph_gate_dep.py",  # shared fail-closed dep guard for the graph-gate tests (sys-hvd5gl)
     "tests/fixtures/mac-source.txt",
     "tests/test_fanout_ui.mjs",
     "wf.py",
