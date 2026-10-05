@@ -604,6 +604,7 @@ WORKFLOW_PARAMS = {
             "include (null, object, empty list) is refused; an included graph's model_policy.forbidden_models unions into the parent (noted in include_notes); the committed graph.json is "
             "the EXPANDED, include-STRIPPED truth (amend edits the expanded form; save shelves the author form with the include key — save(run_id) of a composite run refuses, save the author graph inline). Every guard refusal — unknown library entry, include cycle, alias/id collision, unbound seed, oversized merge — returns the same "
             "errors:[{node:'include:<alias>', field, msg}] envelope before any write or spawn; non-fatal resolver warnings (e.g. a shared fixed scratch path) echo as include_notes on run/status and run.json records provenance `includes:[{alias, name, source_digest}]`. "
+            "Full grammar and worked examples: references/grammar.md in the `workflow` skill — read it before authoring your first graph. "
             "Any key outside these closed sets is rejected at run/amend with errors:[{node, field, msg}] for EVERY defect."
             ),
         },
