@@ -36,7 +36,7 @@ not re-paid.
 | **Wedged-lock recovery** | A dead runner's lock is cleared by an audited escape hatch that proves the holder dead first and never deletes a live lock (open PR #47) |
 | **Desktop DAG view** | Live graph, fan-out stacks, timeline, and a `::workflow{id="…"}` inline card in any reply; RUNNING / THE REST agent-first panes (every row carries its originating agent), and a session strip under the composer showing this chat's runs (core ≥ v2026.7.30; older shells get the fallback slot) |
 | **Library** | `save` a proven graph (description + tags — flat or `facet:value`, e.g. `use_case:code-review`), `library` lists it richly and filters by tags (with a `tag_vocab` echo so agents reuse the live taxonomy), `run from:"<name>"` replays it; a hand-rolled graph the library missed goes to `submit` with a `why_not_library` receipt — quarantined for study, never auto-saved; `inbox kind:"submissions"` lists them |
-| **Composite graphs** | A graph-level `include` expands shelved library graphs into a run at launch — namespace-isolated ids, cycle/depth/size guards, model policy unions in and never relaxes (open PR #84) |
+| **Composite graphs** | A graph-level `include` expands shelved library graphs into a run at launch — namespace-isolated ids, cycle/depth/size guards, model policy unions in and never relaxes (shipped in v1.3.0) |
 | **Authoring skill** | Bundled `workflow` skill: grammar, operations, and **measured** per-shape budget presets (`recon`/`build`/`review`/`publish`) |
 
 <table><tr>
