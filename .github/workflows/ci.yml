@@ -1,9 +1,14 @@
-# CI for hermes-workflows: the same five gates the release integrator runs by hand.
+# CI for hermes-workflows: the same five gates the release integrator runs by hand,
+# plus the CONTRIBUTING-documented gates that the upstream workflow never wired up
+# (pr_tag_audit + the tests/11-* lane trio) — those now actually run on every push/PR.
 #   1. desktop half parses as ESM
 #   2. serial test suite (stdlib Python + Node .mjs) → ci-out/exits.json + per-test logs
 #   3. private-string scrub audit
 #   4. knowledge-graph single-writer (PR branches must not touch graphify-out/; main owns regen)
 #   5. `hermes plugins validate .` against a PINNED upstream commit
+#   6. pr_tag_audit — every `(open PR #NN)` doc tag still points at an OPEN PR
+#   7. tests/11-canary / 11-lane-supervisor / 11-golden-solo — the lane kill/resume
+#      trio + golden-solo byte compare (documented gates; green locally pre-landing)
 #
 # HERMES_PIN = the measured requires_hermes floor, tag v2026.9.21 (first release
 # whose quiet turn report carries HERMES_QUIET_TURN_REPORT_FILE; evidence in
@@ -12,6 +17,10 @@
 # Order matters: the pinned core is installed BEFORE the suite because the suite
 # asserts vocabulary parity against it (tests/test_validate_0923.py imports
 # hermes_constants — the same import path the plugin uses at runtime).
+#
+# Fork note: this file is the atbrace fork bootstrap (owner-approved first CI).
+# The 'gates' job is the required check promote.sh consumes; the graph-AST job is
+# named 'graph' (never 'gates') so it can never masquerade as the promote gate.
 
 name: ci
 
@@ -86,10 +95,29 @@ jobs:
       - name: Validate plugin against pinned hermes
         run: hermes plugins validate .
 
-  graph-main:
+      - name: "PR-tag doc audit (CONTRIBUTING: stale open-PR tags block)"
+        # The `(open PR #NN)` tags in README/CONTRIBUTING/CHANGELOG/references
+        # name PRs in the PARENT repo (upstream numbering); resolving them
+        # against the fork would fail closed on wrong numbers, so pin the repo.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pr_tag_audit.py --repo jacobhausler/hermes-workflows
+
+      - name: Lane trio (canary + supervisor kill/resume, golden-solo compare)
+        # CONTRIBUTING-documented gates that never ran in CI before this fork
+        # bootstrap. Pre-landing local proof (python 3.12, pinned core):
+        # canary 20/20, lane-supervisor 20/20, golden-solo EMPTY diff.
+        run: |
+          python3 tests/11-canary.py
+          python3 tests/11-lane-supervisor.py
+          python3 tests/11-golden-solo.py compare . tests/golden_solo/v1.0.15.json
+
+  graph:
     # Single-writer honesty guarantee (#153): the committed graph on MAIN must
     # equal the AST of the main tree. The regen lane (ra-graph-regen) is the
     # only writer; this job is the proof it cannot lie. AST-only, no LLM.
+    # Named 'graph' — the promote.sh required context is 'gates' and a graph
+    # job must never be able to satisfy it.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
