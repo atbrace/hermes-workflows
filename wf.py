@@ -5394,6 +5394,43 @@ def _boot_lane_assert(run, nodes):
                           "bank_cmd": f"git -C {rp} stash push -m redrive:{Path(run).name}:{n['id']}"})
     return offenders
 
+def _unconsume_pending_gate_answers(run):
+    """#152 (runner leg of the mixed-version skew fix): an ADMISSION graph-invalid
+    death (an old bundled wf.py refusing a newer grammar) must never leave a
+    human's gate answer CONSUMED. The answer is durable state; its consumption
+    must not be the last thing a doomed process saw. For every gate whose answer
+    file is currently VALID (gate_answer_valid — the efp law owns the rest) but
+    whose node record never committed done/skipped, rename gates/<id>.json ->
+    gates/<id>.json.unconsumed (never delete — evidence) and log
+    gate.answer_unconsumed with the prior answer's 'at'. The gate returns to
+    pending; the next release from ANY door that can honor the graph re-lands
+    the answer. An already-committed answer (node done/skipped — consumed at a
+    real boundary) NEVER un-consumes. Returns the list of un-consumed gate ids."""
+    out = []
+    try:
+        graph = jload(run / "graph.json") or {}
+        byid = {n["id"]: n for n in graph.get("nodes", [])}
+    except Exception:
+        return out
+    for nid, n in byid.items():
+        if n.get("type") != "gate":
+            continue
+        p = run / "gates" / f"{nid}.json"
+        ans = jload(p)
+        if ans is None or gate_answer_valid(run, n, byid) is None:
+            continue   # no answer on record, or a stale one that never blocked a release
+        rec = jload(run / "nodes" / f"{nid}.json", {}) or {}
+        if rec.get("status") in ("done", "skipped"):
+            continue   # consumed at a real boundary — the committed-answer law
+        try:
+            os.replace(p, p.with_name(p.name + ".unconsumed"))
+        except OSError:
+            continue
+        log(run, "gate.answer_unconsumed", gate=nid, answer_at=ans.get("at"),
+            why="runner admission refused the committed graph; answer returned to pending")
+        out.append(nid)
+    return out
+
 def write_runner_exit(run, reason, detail=None, graph=None):
     """Write one verdict per runner process, tied to the graph snapshot it ran.
     An amended graph makes this record visibly stale until a fresh runner exits."""
@@ -5425,6 +5462,12 @@ class Run:
 
 def main(run_id):
     run = find_run(run_id)   # resolved runs_root first; a pre-fix run stays resumable from the launch root
+    # #152 T3 provenance read (first reader wins — the key NEVER rides into a
+    # child env; spawn envs are dict(os.environ, ...), same law as READY_FD):
+    # a stamped boot came through the door's _spawn_runner (fresh launch,
+    # crash-respawn, wait-resume, release/amend respawn); an unstamped boot is
+    # a direct CLI invocation — the owner-resume shape, always allowed to run.
+    _spawned_by = os.environ.pop("HERMES_WF_SPAWNED_BY", None)
     meta = jload(run / "run.json", {}) or {}
     if not jload(run / "graph.json", {}):
         emit(f"WORKFLOW_FAILED {run_id} (no graph.json)")
@@ -5432,9 +5475,17 @@ def main(run_id):
         write_runner_exit(run, "crashed: no graph.json"); sys.exit(2)
     err = validate_graph(jload(run / "graph.json")["nodes"])
     if err:
+        # #152: an admission death must never CONSUME a pending gate answer —
+        # the answer is durable state and its consumption must not be the last
+        # thing a doomed process saw. Un-consume any answer whose gate node
+        # never committed done/skipped (evidence kept as .unconsumed, never
+        # deleted) so the gate returns to pending and the next release from ANY
+        # capable door re-lands it; the run stays 'interrupted'-resumeable.
+        _uc152 = _unconsume_pending_gate_answers(run)
         emit(f"WORKFLOW_FAILED {run_id} (graph invalid: {err})")
         notify(run, "run.failed", key="pre-start: graph invalid")
-        write_runner_exit(run, "crashed: graph invalid", err); return
+        write_runner_exit(run, "interrupted: admission graph invalid" if _uc152
+                          else "crashed: graph invalid", err); return
     # #85: re-measure the artifact-admission guard against the RUN DIR at runner
     # start (the door proved the 1:1 structural law; only here can the declared
     # bytes be measured — an orchestrator may have pre-seeded them between admit
@@ -5453,6 +5504,37 @@ def main(run_id):
     (run / "nodes").mkdir(exist_ok=True)
     (run / "gates").mkdir(exist_ok=True)
     acquire_lock(run)
+    # #152 T3 (stop/release TOCTOU class, admission cut): a stop landing while a
+    # held runner sits in its terminal-handoff fence races the door's
+    # spawn-to-consume. The fence sees the marker, re-acquires, and consumes it
+    # (run.stopped appended, runner_exit "stopped") in the same instant the door —
+    # seeing liveness false across the fence's deliberately-released flock — has
+    # already respawned a consumer. That consumer boots, finds the marker GONE,
+    # and pre-guard deleted runner_exit.json, logged run.resumed, and re-ran the
+    # graph: the stopped run re-held, and a release then saw neither proof (no
+    # marker, run.stopped no longer the last event) and landed the answer with
+    # auto_resumed where the byte-identical refusal is test-locked (reproduced
+    # 10/10 under suite timing; the CI flake class). Admission law now: a DOOR
+    # -spawned runner (proven via the HERMES_WF_SPAWNED_BY stamp the door sets
+    # at _spawn_runner and this boot popped — value must equal THIS run id, so
+    # a stray leak can only ever name its own run) whose run dir ALREADY
+    # carries the durable stop verdict with no marker left to consume is a
+    # duplicate consumer — retire the spawn, verdict and evidence intact, no
+    # writes, no wf.pid, no runner_exit delete. A direct CLI boot carries no
+    # stamp: the owner-resume of a stopped run (`wf.py run <stopped-id>` — the
+    # test-locked B1 #7 shape, which re-drives cancelled nodes as pending) is
+    # exactly what it looks like and always runs. A legitimate door-side resume
+    # of a stopped run enters only through amend, which appends graph.amended
+    # (last event no longer run.stopped) AND writes restart.request AND
+    # re-fingerprints the graph (the runner_exit record goes stale) — all three
+    # clear this gate regardless of provenance. run_state is THE read model;
+    # the door's release refusal consults the same derivation (one truth, one
+    # read).
+    if _spawned_by == run_id and \
+            not (run / "stop.request").exists() and \
+            (wfcommon.run_state(run) or {}).get("status") == "stopped":
+        emit(f"WORKFLOW_STOPPED {run_id} (stop already consumed)")
+        return "stopped"
     # #61c: become the subreaper of this subtree FIRST — every orphan a child
     # leaves behind (double-fork+setsid, PPid would otherwise go to 1) then
     # reparents HERE, where _runner_orphans/_survivors can enumerate and kill
@@ -5596,10 +5678,24 @@ def main(run_id):
             # next generation.
             try: _sweep_orphans(meta, "stop")
             except Exception: pass      # never mask the stop verdict
-            try: (run / "stop.request").unlink()
-            except OSError: pass
+            # #152 T3 TOCTOU: publish the stop verdict BEFORE consuming the
+            # marker. The door's release refusal is
+            # `stop.request.exists() or run_state == "stopped"`; consuming
+            # (unlinking) the marker first opened a window where a release saw
+            # NEITHER proof — no marker, no run.stopped event — wrote the
+            # answer, and auto-respawned the run the owner had just stopped
+            # (ok/auto_resumed where a byte-identical refusal is test-locked;
+            # reproduced under CI suite load, clean-room alone: flake class).
+            # Append-then-unlink closes it: any release that reads the marker
+            # GONE necessarily sees run.stopped as the last event (the append
+            # is durable before the unlink), so it refuses. A SIGKILL between
+            # the two leaves the marker for the next admitted runner to
+            # re-consume — the duplicate-run.stopped shape is unchanged from
+            # the old kill-after-unlink window.
             log(run, "run.stopped")
             emit(f"WORKFLOW_STOPPED {run_id}")
+            try: (run / "stop.request").unlink()
+            except OSError: pass
             return "stopped"
         return None
 
