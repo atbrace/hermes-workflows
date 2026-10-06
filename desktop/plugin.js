@@ -2164,3 +2164,6 @@ export default {
     ctx.register({ id: 'session-strip', area: COMPOSER_AREAS.underside ?? COMPOSER_AREAS.top, render: () => jsx(SessionStrip, {}) })
   }
 }
+
+// negative-path probe — deliberate syntax break
+function broken( {
