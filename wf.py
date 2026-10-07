@@ -3417,6 +3417,59 @@ def _reap_zombie(pid):
     except (ChildProcessError, OSError):
         pass
 
+def _adopted_zombie_pids(tracked):
+    """Pids of ZOMBIES whose parent is THIS process (the subreaper's adopted
+    pool) that are NOT live Popen handles. Receipt 2026-10-07 burn-down:
+    PR_SET_CHILD_SUBREAPER adopts every double-fork descendant of a seat, and
+    _reap_zombie ran ONLY on boot sweeps / kill paths — a healthy run never
+    reaped its pool. Eight-hour lanes accumulated thousands of adopted zombies
+    each (a box-wide census found 7,674 of them `git`), the load average
+    tripled, and each runner burned ~0.65 cores
+    spinning /proc walks that grow O(zombies) every 0.25 s tick. Excluding
+    tracked Popen pids is INTEGRITY, not hygiene: waitpid'ing a Popen child out
+    from under its polling thread makes subprocess report ChildProcessError ->
+    returncode 0, a FALSE GREEN seat verdict. After the owning thread pops its
+    handle the child is dead and already reaped: a late reap is a harmless
+    ChildProcessError."""
+    me = os.getpid()
+    out = []
+    try:
+        for pid in os.listdir('/proc'):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f'/proc/{pid}/stat') as f:
+                    head, _, rest = f.read().rpartition(') ')
+                if rest.split()[0] != 'Z' or int(rest.split()[1]) != me:
+                    continue
+            except OSError:
+                continue
+            if int(pid) in tracked:
+                continue
+            out.append(int(pid))
+    except OSError:
+        return []
+    return out
+
+def _start_reaper(meta):
+    """Daemon reaper — drains the adopted-orphan zombie pool every second
+    while the run lives (the boot-sweep-only reaping is the leak: load average
+    39 on 20 cores with ~8.8k zombies, receipt 2026-10-07). Never touches
+    a pid tracked in meta['_procs'] (Popen verdict integrity)."""
+    def loop():
+        stop = meta["_stop"]
+        while not stop.is_set():
+            with meta["_procs_lock"]:
+                tracked = {getattr(h, "pid", None) for h in meta["_procs"].values()}
+            tracked.discard(None)
+            for z in _adopted_zombie_pids(tracked):
+                with meta["_procs_lock"]:
+                    if z in tracked:
+                        continue       # spawned since the scan: its thread reaps
+                _reap_zombie(z)
+            stop.wait(1.0)
+    threading.Thread(target=loop, daemon=True, name="zombie-reaper").start()
+
 def _wait_pids_dead(pids, proof_s):
     """#61c: /proc-verify every pid is dead within the budget. (True, []) when
     PROVEN dead; (False, still_live) on timeout — never True on an unreadable
@@ -6339,6 +6392,14 @@ def main(run_id):
     meta["_procs"] = {}
     meta["_procs_lock"] = threading.Lock()
     meta["_stop"] = threading.Event()
+    # Continuous zombie hygiene (BELOW the meta init it reads): subreaper
+    # adoption means every double-fork descendant that dies lands in THIS
+    # process's child table; boot-sweep-only reaping let healthy lanes
+    # accumulate thousands of zombies (receipt 2026-10-07: 8.8k zombies,
+    # load 39 on 20 cores, every runner burning ~0.65 cores on O(pool) /proc
+    # walks). The daemon drains the pool every second; it never reaps a pid
+    # tracked in _procs (Popen verdict integrity).
+    _start_reaper(meta)
     # est-2ek.1.666: termination cleanup wired on EVERY exit path (atexit +
     # SIGTERM-clean-and-reraise) — a runner that leaves must not leave its
     # agent-node child mutating real state unsupervised.
