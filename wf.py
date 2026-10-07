@@ -1977,10 +1977,18 @@ def _filter_child_toolsets(run, meta, node):
     the child would keep, drop only the unknown residue; when NOTHING is
     known, pass the flag through VERBATIM (the child's warn-and-continue is
     its documented semantics; its honest typed death beats our silent
-    broadening). Core not importable => pass through, never hard-fail here."""
+    broadening). Core not importable => pass through, never hard-fail here.
+    est-2ek.1.166 toolsets slice (spool c258f0730346b426): a hostile shape
+    (dict/int/nested element) is refused at the DOOR and at graph load, but
+    this seam still fails CLOSED to None on any non-List[str]/comma-string —
+    a spawn-time AttributeError/TypeError is never the author's experience."""
     ts = node.get("toolsets")
     if ts is None:
         return None
+    if not (isinstance(ts, str)
+            or (isinstance(ts, list)
+                and all(isinstance(x, str) for x in ts))):
+        return None                                  # hostile shape: fail closed
     names = [s.strip() for s in (ts if isinstance(ts, list) else str(ts).split(",")) if str(s).strip()]
     if not names:
         return None
@@ -2116,6 +2124,35 @@ def _classify_config_input(out, ms):
 
 # ---------- #4 harvest-on-death / #5 bounded auto-retry (sprint101w2) ----------
 
+def _remaining_steps(out):
+    """est-2ek.1.165: parse a child's declared `## Remaining` block into a
+    structured step list — the unfinished tail must never be prose the
+    scheduler re-parses. Contract: markdown heading line `## Remaining`
+    (any `#` depth, case-kept), one step per `-`/`*` bullet, the block runs
+    until the next heading or a fenced block; a bold-only `**Remaining**`
+    marker is NOT the declared form (honest []). Steps are stripped bullet
+    texts; empty bullets are dropped. Honest absence: no block -> [] (the
+    empty list is the fact, never a fabricated tail)."""
+    lines = (out or "").splitlines()
+    start = None
+    for i, raw in enumerate(lines):
+        if re.match(r"^\s*#{1,6}\s*Remaining\s*:?\s*$", raw, re.IGNORECASE):
+            start = i + 1
+            break
+    if start is None:
+        return []
+    steps = []
+    for raw in lines[start:]:
+        s = raw.strip()
+        if not s:
+            continue
+        if s.startswith("#") or s.startswith("```"):
+            break                                    # next heading/fence ends the block
+        m = re.match(r"^[-*]\s+(.*)$", s)
+        if m and m.group(1).strip():
+            steps.append(m.group(1).strip())
+    return steps
+
 def _harvest_death(out, schema):
     """#4 harvest-on-death: a child that died (rc!=0 / timeout / cap — the
     CALLER gates the death mode; never `cancelled`) whose stdout still carries
@@ -2125,7 +2162,11 @@ def _harvest_death(out, schema):
     block (bare-prose coercion is NOT harvest) that parses to a dict and
     validates; else None (the death is classified exactly as before). A
     child-declared terminal `status` field (e.g. 'BLOCKED') is honored
-    verbatim in the record."""
+    verbatim in the record.
+    est-2ek.1.165: every harvest also carries `remaining` — the child's
+    DECLARED `## Remaining` steps parsed to a list (honest [] when nothing
+    was declared), so a harvested partial's unfinished tail is structured
+    data the scheduler/read model ride, never prose."""
     fences = JSON_FENCE.findall(out or "")
     if not fences:
         return None
@@ -2137,6 +2178,7 @@ def _harvest_death(out, schema):
         return None
     declared = parsed.get("status")
     return {"output": parsed,
+            "remaining": _remaining_steps(out),
             "harvest": {"declared_status": declared if isinstance(declared, str) and declared else None}}
 
 def _cancel_evidence(run, nid, index, lp):
@@ -4106,7 +4148,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
 
 def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering=None, attempt=0, skey=None,
               inputs="", index=None, resume_preamble="", reasoning_override=None,
-              seat_cancel=None, seat_hold=None, seat_admit_lock=None):
+              seat_cancel=None, seat_hold=None, seat_admit_lock=None, model_override=None):
     # est-g255 P255-1: seat_cancel is the fan-out's quorum cancel Event — it
     # aborts a seat wait and blocks the atomic spawn exactly like meta['_stop'].
     # seat_hold (fan-out items only) is a list the caller owns: a cleanly ended
@@ -4180,7 +4222,13 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # last_activity_at) per node+item+attempt. Proven: extract_json still parses the fence.
     if skey:
         cmd += ["--continue", f"{skey}#a{attempt}", "--create-if-missing"]
-    if node.get("model"): cmd += ["-m", node["model"]]
+    # est-2ek.1.164: the fallback ladder re-spawns THIS node on a declared
+    # alternate model — the ask reaches the CLI as -m, the node DEF is never
+    # mutated (author-form provenance law: a ladder rung is a spawn choice,
+    # not an amend).
+    if model_override:
+        cmd += ["-m", str(model_override)]
+    elif node.get("model"): cmd += ["-m", node["model"]]
     if node.get("provider"): cmd += ["--provider", node["provider"]]
     # est-flah + deep review #163 B2: nothing reaches the CLI verbatim that the
     # runner can already see will die — unknown effort clamps to
@@ -4764,7 +4812,8 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                                    skey=skey, inputs=inputs, index=index,
                                    resume_preamble=resume_preamble,
                                    reasoning_override=target,
-                                   seat_cancel=seat_cancel, seat_hold=seat_hold)
+                                   seat_cancel=seat_cancel, seat_hold=seat_hold,
+                                   model_override=model_override)
                     r2["ms"] = r2.get("ms", 0) + ms
                     r2["reasoning_gate400"] = {"requested": req_g, "clamped": target,
                                                "supported": sup_g}
@@ -5074,6 +5123,61 @@ def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
         r["attempts"] = last_spawn + 1 if isinstance(last_spawn, int) else len(attempts_log) + r.get("attempts", 0)
         if r.get("error_class") in _RETRYABLE_CLASSES:
             r["error_class"] = "transport_exhausted"
+    return r
+
+def _fallback_ladder(meta, r, respawn_fallback, ev, ev_kw, node=None, cancel=None):
+    """est-2ek.1.164 (spool key 217839b445203623): a transport_exhausted death —
+    the Q4 ladder spent its respawns on the SAME dead model — re-spawns the node
+    ONCE per declared `fallback_models` entry, IN ORDER, before the run blocks.
+    Gates, all tested in tests/test_plugin_asks_164_fallback.py:
+      * ONLY the transport_exhausted verdict enters (the caller invokes this
+        right after _transient_retry; every other class never reaches a rung —
+        the quota-class 429 dies at ONE attempt, #24 law intact);
+      * no key / empty key => byte-identical old behavior (zero extra spawns);
+      * every rung is ONE spawn, never ladder recursion: a dead rung does NOT
+        re-run Q4 on the new model;
+      * each rung consumes the run's shared retry budget (the same
+        meta['_retries_left'] Q4 draws from) — an exhausted budget stops the
+        walk with the transport_exhausted record intact, so billing is bounded;
+      * #61 quarantine law holds here too: _isolate_prior must PROVE the prior
+        tree dead before a rung spawns, else fail closed typed;
+      * stop / cancel kills the walk instantly (a stopped run keeps its
+        cancelled-demoted record, not a half-walked ladder);
+      * the first answering rung commits, stamped `fallback_model_used`, one
+        node.fallback event per rung tried (named), attempts_log extended.
+    Absent key stays UNTOUCHED — the golden-solo byte-identity gate is the
+    referee. respawn_fallback(model) is the caller-owned one-spawn closure on
+    that model (fresh skey, fresh session, like every retry respawn)."""
+    fb = (node or {}).get("fallback_models")
+    if not (isinstance(fb, list) and fb) or r.get("status") != "failed" \
+            or r.get("error_class") != "transport_exhausted":
+        return r
+    run = meta["_run"]
+    attempts_log = list(r.get("attempts_log") or [])
+    for rung_model in fb:
+        if meta["_stop"].is_set() or (cancel is not None and cancel.is_set()):
+            break
+        with meta["_procs_lock"]:
+            if meta["_retries_left"] <= 0:
+                break                       # shared budget spent: bounded, keep the death
+            meta["_retries_left"] -= 1
+        log(run, ev + ".fallback", to_model=rung_model, **ev_kw)
+        iso = _isolate_prior(meta, r, ev, ev_kw)   # #61: never spawn over a live prior tree
+        if iso is not None:
+            iso["attempts_log"] = attempts_log
+            return iso
+        entry = {"attempt": len(attempts_log), "error_class": "transport_exhausted",
+                 "at": now(), "fallback_model": str(rung_model), **_attempt_counts(run, r)}
+        attempts_log.append(entry)
+        r = respawn_fallback(rung_model)
+        if r.get("status") == "done":
+            r["fallback_model_used"] = str(rung_model)
+            break
+    if attempts_log:
+        r["attempts_log"] = attempts_log
+        last_spawn = r.get("spawn")
+        r["attempts"] = last_spawn + 1 if isinstance(last_spawn, int) \
+            else len(attempts_log) + r.get("attempts", 0)
     return r
 
 # ---------- #25: pinned-route hold at commit (field-report fallback-billing ask) ----------
@@ -5445,7 +5549,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         ms=0, attempts=0, attempts_log=[])
                     return
                 held = []   # est-g255 P255-1: this item's deferred seat (run_child seat_hold)
-                def _spawn(resume_preamble=""):
+                def _spawn(resume_preamble="", model_override=None):
                     if meta["_stop"].is_set() or fo_cancel.is_set():
                         return {"status": "failed", "error": "cancelled at quorum",
                                 "error_class": "cancelled", "ms": 0}
@@ -5471,13 +5575,13 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                      fo.get("schema") or node.get("schema"), steering=steering,
                                      skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
                                      seat_cancel=fo_cancel, seat_hold=held,
-                                     seat_admit_lock=lock)
-                def spawn(resume_preamble=""):
+                                     seat_admit_lock=lock, model_override=model_override)
+                def spawn(resume_preamble="", model_override=None):
                     # est-g255 P255-1: only a DONE answer can trip quorum, so only
                     # its seat stays deferred until one()'s quorum block below; any
                     # other verdict frees the seat now (a retry backoff or a
                     # rate-limit park never sits on a global seat).
-                    r = _spawn(resume_preamble)
+                    r = _spawn(resume_preamble, model_override=model_override)
                     if r.get("status") != "done":
                         while held:
                             _seat_release(held.pop())
@@ -5488,6 +5592,10 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                         cancel=fo_cancel)                  # wf159c finding 3
                     r = _transient_retry(meta, r, spawn, "item", {"node": nid, "index": i},
                                          node=node, cancel=fo_cancel)
+                    r = _fallback_ladder(meta, r,
+                                         lambda m, rp="": spawn(rp, model_override=m),
+                                         "item", {"node": nid, "index": i},
+                                         node=node, cancel=fo_cancel)      # est-2ek.1.164
                     r = _bounded_retry(meta, r, spawn, "item", {"node": nid, "index": i},
                                        node=node, index=i)
                     r = _final_quiesce(meta, r, "item", {"node": nid, "index": i})   # #61
@@ -5623,14 +5731,16 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         error_class=merged_rec.get("error_class", "incomplete_work"), attempts=1)
         else:
             first = {"done": False}
-            def spawn(resume_preamble=""):
+            def spawn(resume_preamble="", model_override=None):
                 sk = solo_key if not first["done"] else skey_for(run, byid, node)
                 first["done"] = True
                 return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
                                  node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
-                                 resume_preamble=resume_preamble)
+                                 resume_preamble=resume_preamble, model_override=model_override)
             r = _ratelimit_park(meta, spawn(), spawn, "node", {"node": nid}, node=node)  # est-t0vz
             r = _transient_retry(meta, r, spawn, "node", {"node": nid}, node=node)
+            r = _fallback_ladder(meta, r, lambda m, rp="": spawn(rp, model_override=m),
+                                 "node", {"node": nid}, node=node)   # est-2ek.1.164
             r = _bounded_retry(meta, r, spawn, "node", {"node": nid}, node=node)
             r = _final_quiesce(meta, r, "node", {"node": nid})   # #61: never commit over a live tree
             r = _stamp_served(meta, r, node)   # dad50be0: seat truth at the commit, never the alias
@@ -6110,6 +6220,19 @@ def main(run_id):
              f"{'node ' + str(_e0['node']) + ': ' if _e0.get('node') else ''}{_e0['msg']})")
         notify(run, "run.failed", key="pre-start: ledger admission")
         write_runner_exit(run, "crashed: ledger admission", _e0["msg"]); return
+    # est-2ek.1.166: version handshake at RUNNER BOOT (the door refuses at arm
+    # time; the boot re-check catches the old-door + new-runner skew). Typed,
+    # loud, BOTH versions named, ZERO children — a stale seat reads exactly
+    # what to upgrade (spool e6e55416cd78c9bd). Absent key = no check: a plain
+    # run boots byte-identically (solo golden law).
+    _req = (jload(run / "graph.json", {}) or {}).get("requires_plugin")
+    if _req is not None:
+        _vh = wfcommon.version_handshake_error(_req, wfcommon.plugin_version())
+        if _vh:
+            emit(f"WORKFLOW_FAILED {run_id} (version handshake: {_vh})")
+            notify(run, "run.failed", key="pre-start: version handshake")
+            write_runner_exit(run, "blocked: plugin version handshake", _vh)
+            return
     if not meta.get("hermes_bin"):
         import shutil as _sh
         meta["hermes_bin"] = _sh.which("hermes") or "hermes"
@@ -6673,6 +6796,16 @@ def main(run_id):
         except Exception: pass
     if reason is not None:
         write_runner_exit(run, reason, graph=exit_graph[0])
+        # A registered roll-last install is deliberately NOT a spawned agent
+        # child: those are killed with the runner. Sweep before handing off to
+        # launchd (or its detached fallback), then author a durable receipt in
+        # the run dir. A failed handoff stays RED for the nightly readback gate.
+        _runner_term_cleanup(meta, "post_exit_handoff")
+        try:
+            from post_exit_hook import dispatch as dispatch_post_exit_hook
+            dispatch_post_exit_hook(run, reason)
+        except Exception as e:
+            log(run, "runner.post_exit_hook_error", error=repr(e))
     return reason
 
 def finalize(run, graph, status):

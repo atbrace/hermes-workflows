@@ -63,6 +63,7 @@ GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
               "provenance",   # 1.1 (RATIFY F5): opt-in library provenance block, door-written
               "grammar",      # #32: dialect tag of a shared file ("wf/1"; absent = wf/1)
               "concurrency", "item_concurrency",  # #100: optional run-level limits
+              "requires_plugin",  # est-2ek.1.166: version handshake (coarse >=; stale => arm-time refusal)
               "include"}      # composite graphs: shelved-DAG expansion annotation; STRIPPED on
                               # expand, so a committed graph.json never carries it (only the
                               # library author form does)
@@ -2651,6 +2652,17 @@ def act_run(args):
     bad = _validation_error(graph) or _team_args_error(args)
     if bad:
         return bad
+    # est-2ek.1.166: the version handshake AT ARM TIME — a graph that declares
+    # requires_plugin above this plugin's own version (plugin.yaml, the single
+    # source) is REFUSED here, naming both versions, before any write or spawn
+    # (spool e6e55416cd78c9bd: a stale seat must read exactly what to upgrade,
+    # never a 03:00 mystery death on a grammar the door never had). Absent key
+    # = no check: a plain run stays byte-identical (solo golden law).
+    if graph.get("requires_plugin") is not None:
+        _vh = _common.version_handshake_error(graph.get("requires_plugin"),
+                                              _common.plugin_version())
+        if _vh:
+            return {"error": _vh}
     concurrency_meta, bad = _concurrency_bake(graph)
     if bad:
         return bad
@@ -2788,6 +2800,12 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
     if concurrency_meta:
         meta.update(concurrency_meta)
     meta.update(_identity_stamps(args, graph, lib_name))   # 1.1: only derivable keys land
+    # est-2ek.1.166: a run that DECLARED a version requirement also reports the
+    # arming door's own truth (plugin.yaml via wfcommon.plugin_version), so a
+    # stale seat is visible from status without opening a run dir. Plain runs
+    # never gain the key (solo byte-identity law — the golden key set holds).
+    if graph.get("requires_plugin") is not None:
+        meta["plugin_version"] = _common.plugin_version()
     # Composite runs record which shelf bytes they expanded from (author-form
     # provenance) and any non-fatal resolver notes (scratch collisions). Empty =
     # key omitted: a plain run keeps the exact pre-include run.json key set.
@@ -2904,6 +2922,12 @@ def act_status(args):
     _inotes = jload(r / "run.json", {}) or {}
     if _inotes.get("include_notes"):
         out["include_notes"] = _inotes["include_notes"]
+    # est-2ek.1.166: a run armed with requires_plugin reports the arming door's
+    # plugin_version back on every status read — a stale seat is visible WITHOUT
+    # opening a run dir (derive-only: the bytes are the stamp this run.json
+    # already carries; an armed-less run never gains the key).
+    if _inotes.get("plugin_version"):
+        out["plugin_version"] = _inotes["plugin_version"]
     # Tier self-report (2026-09-24): a failed child's core -Q turn report carried
     # its typed verdict key ("typed") or not ("untyped"); absent = never noted.
     tier_rec = jload(r / "turn_report.tier")
@@ -2974,6 +2998,12 @@ def act_status(args):
             if v["status"] == "partial":
                 out["nodes"][nid]["error"] = rec.get("error")
                 out["nodes"][nid]["harvest"] = rec.get("harvest")
+                # est-2ek.1.165: the harvest's DECLARED unfinished tail rides
+                # verbatim — structured steps the scheduler/read model ride,
+                # never prose (passthrough through the ONE node-truth read;
+                # honest absence: a record without the key gains no key here).
+                if "remaining" in rec:
+                    out["nodes"][nid]["remaining"] = rec.get("remaining")
         elif rec and v["status"] == "failed":
             out["nodes"][nid]["error"] = rec.get("error")
             out["nodes"][nid]["output"] = rec.get("output") if show_out else _output_pointer(rec)
