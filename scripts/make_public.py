@@ -9,6 +9,12 @@ same audit in the public repo and needs the allow-list.)
 Then audits the staged copy with the scrub pattern; any hit not allow-listed
 in scripts/.scrub-guards (file / file:LINE / regex:PATTERN) exits 1 printing
 file:line of every offender. Stdlib only.
+
+Audit surface (sys-1w0hoy ask 3): EVERY text file that ships, not a suffix
+whitelist — estate tokens hide in seat/label wording inside .yml graphs, .txt
+lists, and extensionless fixtures exactly as well as in .py. A file is text
+when its first 8 KiB carry no NUL byte (binary blobs are copied, never
+grepped; a NUL is also how an adversarial file would hide a grep miss).
 """
 from __future__ import annotations
 
@@ -55,7 +61,16 @@ def load_scrub_list(repo: Path) -> re.Pattern:
 EXCLUDE_DIRS = {".git", "__pycache__"}
 EXCLUDE_PATTERNS = ["docs/PUBLISH-SCRUB.md",
                     "*/__pycache__/*", "__pycache__/*",
-                    "tests/home*", "*.log", "*/.git", "*/.git/*"]
+                    "tests/home*", "*.log", "*/.git", "*/.git/*",
+                    # sys-1w0hoy: the regen lane's machine-local root pointer
+                    # (an absolute path on the regen runner) is stale estate
+                    # data by construction — graphify rewrites it locally on
+                    # every update; it ships to no one and is audited away here
+                    # (the single-writer law forbids touching graphify-out/ in
+                    # a PR, so exclusion is the disposition, not a rewrite).
+                    "graphify-out/.graphify_root"]
+# (sys-1w0hoy ask 3: the audit is content-decided for extensionless files;
+# a KNOWN text suffix is always audited regardless — see wf166 A1 below.)
 # Committee wf166 + wf166c A1 (P1, twice reopened): the known-text suffix set
 # must cover every text shape the repo actually ships. A NUL-prepend must not
 # buy immunity for a known suffix, and a shipped text extension missing from
@@ -70,6 +85,18 @@ def excluded(rel: str) -> bool:
     if any(p in EXCLUDE_DIRS for p in parts):
         return True
     return any(fnmatch.fnmatch(rel, pat) for pat in EXCLUDE_PATTERNS)
+
+
+def is_text_file(path: Path) -> bool:
+    """Text = no NUL byte in the first 8 KiB (git's own binary sniff). Replaces
+    the old AUDIT_SUFFIXES whitelist, which let estate tokens ride along in
+    .yml/.txt/extensionless files — seat/label wording inside shipped graphs
+    was exactly the blind spot (sys-1w0hoy ask 3)."""
+    try:
+        with path.open("rb") as fh:
+            return b"\0" not in fh.read(8192)
+    except OSError:
+        return False
 
 
 def load_guards(repo: Path) -> tuple[set[str], set[str], list[re.Pattern]]:
