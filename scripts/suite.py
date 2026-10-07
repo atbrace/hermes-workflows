@@ -18,6 +18,16 @@ admission.json green:false + zero_discovery:true and exits nonzero, so a
 suite that ran nothing can never report green. An invalid root (missing
 root or missing tests directory) fails closed as exit 2 BEFORE any out-dir
 side effects, leaving no ledger or admission behind.
+
+Agent-terminal hermeticity (sys-1w0hoy ask 1): the suite OWNS its child
+environment. An ambient PYTHONPATH (agent terminals, cron, hooks — anything
+but a clean shell) leaks into every case and has repeatedly red-shifted the
+suite with ModuleNotFoundError/ImportError noise that gets re-diagnosed every
+session. suite.py strips PYTHONPATH unconditionally: tests that need the
+hermes checkout on the path pin it themselves (repo convention: the pinned
+core rides sys.path via site-packages, and tests import hermes_constants
+directly or fall back per their own contract), exactly as the suite already
+pins HERMES_HOME/WF_RUNS_ROOT rather than trusting the caller.
 """
 import json
 import os
@@ -131,12 +141,18 @@ os.replace(tmp, ledger)
 py = sorted((root / 'tests').glob('test_*.py'))
 js = sorted((root / 'tests').glob('test_*.mjs'))
 cases = [[sys.executable, str(p)] for p in py] + [['node', '--experimental-strip-types', str(p)] for p in js]
+# Hermetic child env (sys-1w0hoy ask 1): strip the ambient PYTHONPATH so an
+# agent-terminal/cron leak can never decide suite outcomes. Dict comp (not
+# pop-after-merge) so a caller-provided PYTHONPATH in os.environ is dropped,
+# not re-merged back in.
+child_env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+child_env['HERMES_HOME'] = str(root / 'tests' / '.suite-home')
 for argv in cases:
     name = Path(argv[-1]).name
     log = out / (name + '.log')
     try:
         with log.open('w') as fh:
-            result = subprocess.run(argv, cwd=root, env={**os.environ, 'HERMES_HOME': str(root / 'tests' / '.suite-home')},
+            result = subprocess.run(argv, cwd=root, env=child_env,
                                     stdout=fh, stderr=subprocess.STDOUT, timeout=90)
         rc = result.returncode
     except subprocess.TimeoutExpired:

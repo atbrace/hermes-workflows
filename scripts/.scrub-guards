@@ -81,3 +81,23 @@ tests/test_route_substitution_641.py
 # billed on the evidence runs — kept verbatim, line-anchored by regex (not file) so a
 # future stray model name in wf.py still fires.
 regex:# a proved-alive pinned route whose later spawn billed
+
+# ---- sys-1w0hoy ask 3: audit widened to ALL text files (was a suffix
+# whitelist; estate tokens rode in .yml/.txt/extensionless seat/label wording).
+# First hits the widened audit fires, classified per docs/PUBLISH-SCRUB.md: ----
+# Upstream repo pin: the PR-tag audit resolves `(open PR #NN)` doc tags against
+# the PARENT repo (upstream numbering); the owner handle in the repo slug is
+# load-bearing data — resolving against the fork would fail closed on wrong
+# numbers (ci.yml's own comment says so). GUARD line-anchored to the audit
+# invocation, NOT file-wide, so a future stray token in ci.yml still fires.
+regex:pr_tag_audit\.py --repo jacobhausler/
+# Copyright attribution to the upstream owner is the license; GUARD (load-
+# bearing identity, same class as the PR-author-credit regex guards).
+LICENSE
+# The committed scrub-grep list quotes the banned vocabulary because it IS the
+# ban — self-referential GUARD, exactly scripts/.scrub-guards' own exemption.
+scripts/scrub-list.txt
+# Ratelimit-window fake child: the banner quotes the model alias verbatim
+# because the runner's give-up error must quote it back byte-for-byte — the
+# same GUARD class as tests/fake_hermes.py / tests/test_ratelimit_54.py.
+tests/fake-b1
