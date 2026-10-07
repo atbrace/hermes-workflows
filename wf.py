@@ -406,9 +406,11 @@ _WAKE_TEMPLATES = {
                 "node outputs. Read it once and CLOSE THE LOOP: the run's outputs are "
                 "inputs, not the deliverable. If the run was a triage/discovery stage, "
                 "every finding it confirmed must land in tracked work (file or claim "
-                "the issue) and its execution leg must be dispatched or completed before "
-                "this turn ends — a done run whose findings produce no action is a "
-                "FAILED run. Do not poll or wait: nothing further is being awaited.",
+                "the tracked work item) and its execution leg must be dispatched or "
+                "completed before this turn ends — a done run whose findings produce "
+                "no action is a FAILED run. Land execution legs as PRs through the "
+                "review lane — never push commits directly to main. Do not poll or "
+                "wait: nothing further is being awaited.",
 }
 
 def _wake_owner_text(run_id, event):
