@@ -196,22 +196,32 @@ def _list_runs():
     # F1 #14: merge the legacy launch root the way the door's act_list does — a
     # pre-fix run opens by URL via _safe_run's find_run fallback and must also
     # appear in the list. Resolved root wins on id collision.
+    # est-2ek.1.762 census hygiene: enumerate through wfcommon.iter_run_dirs
+    # (unique by run-dir NAME across every scanned root — symlinked profile
+    # roots multiply hits), and report how many rows EXECUTED (logs present).
+    # executed counts ONLY rows that land in `runs` (a valid, de-duplicated
+    # row) — dirs _view rejects never become rows, so they must not inflate
+    # the counter (zap non-blocking note 2). A zero count is indistinguishable
+    # from an unmeasured listing at the consumer (test_live_truth compares the
+    # dashboard counts to act_list's, whose census never measures executed),
+    # so the key rides only when >0 — honesty over decoration.
     common = _workflow_common()
     roots = [_root()]
     legacy = common.launch_runs_root()
     if legacy != roots[0]:
         roots.append(legacy)
     runs, seen = [], set()
-    for root in roots:
-        if not root.exists():
-            continue
-        for r in common.iter_run_dirs(root, reverse=True):
-            v = _view(r)
-            if v and v["id"] not in seen:
-                seen.add(v["id"])
-                runs.append(v)
+    executed = 0
+    for r in common.iter_run_dirs(roots, reverse=True):
+        v = _view(r)
+        if v and v["id"] not in seen:
+            seen.add(v["id"])
+            if common.run_executed(r):
+                executed += 1
+            runs.append(v)
+    summary = common.run_summary(runs, executed=executed or None)
     return {**({"roots": [str(x) for x in roots]} if not runs else {}),
-            "runs": runs[:100], **_workflow_common().run_summary(runs)}
+            "runs": runs[:100], **summary}
 
 
 if router is not None:
