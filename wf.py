@@ -1318,6 +1318,135 @@ def write_spawn_record(run, node, byid, index, spawn_no, argv, lp, pid, skey, st
     tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
     os.replace(tmp, p)  # atomic: a reader never sees a half-written spawn record
 
+# ---------- est-2ek.1.765: the canonical per-item COMMIT (single writer) ----------
+# Defect (evidence run 20261006-191154-zap-priority-peer-queue): the fan-out
+# aggregate committed done with COMPLETE all_results while every canonical
+# per-item record `nodes/<node>.<i>.json` still carried the SPAWN-TIME record
+# (status=running, no output) — the happy path wrote that file exactly once
+# (write_spawn_record, before Popen) and never finalized it, so a downstream
+# reducer that (correctly) refuses to certify while an individual record says
+# `running` held eligibility unknown despite finished witnesses. Aggregate
+# completion and individual completion were decoupled by construction.
+# The law now: ONE writer per canonical record (the item's own worker thread),
+# the commit lands BEFORE the item.finished event, and the aggregate's done is
+# validated against the committed records re-read from disk at commit time
+# (item_records_certified). Nothing here fabricates an individual completion:
+# the record only ever carries the runner's real harvest result.
+
+_ITEM_COMMITTED_FACTS = ("done", "partial", "failed", "skipped")
+# 790c6ad no-re-adoption window: an ADOPTED item retires its canonical record to
+# status=adopted (matching the item.adopted event path), never to done — the
+# spawn-verification law keys on status=running, and a respawned runner must
+# never find a finished adopted child re-adoptable. `adopted` is not in
+# node_rec's committed vocabulary and not in active_child's `running`, so it
+# reads pending everywhere and fails the adoption verification. The harvested
+# output still travels in the record (result carried it), so the aggregate gate
+# (item_records_certified) still byte-checks the claimed completion.
+_ITEM_ADOPTED_RETIRE = "adopted"
+
+def commit_item_record(run, node, byid, index, result):
+    """Finalize the canonical per-item record with the item's real outcome,
+    MERGED over the spawn-time record (spawn evidence retained: spawn_cmd, pid,
+    log/prompt paths, skey, attempt). Atomic tmp+replace like every other
+    committed fact; efp-stamped like save_node so record_efp_valid certifies it.
+    Status vocabulary is node_rec's committed set; a cancelled straggler stays
+    failed+error_class=cancelled (node_rec reads that as pending — a resume
+    re-drives it, #7 law preserved). An ADOPTED item (result.adopted — the
+    live-orphan path) retires to status=adopted instead, carrying the harvested
+    output: no re-adoption window, and spawn-path items commit done exactly as
+    the 765 law pins."""
+    st = result.get("status")
+    adopted = bool(result.get("adopted"))
+    rec_status = _ITEM_ADOPTED_RETIRE if adopted else (st if st in ("done", "partial") else "failed")
+    np = run / "nodes" / f"{_node_file(node, index)}.json"
+    try:
+        rec = jload(np) or {}
+        if not isinstance(rec, dict):
+            rec = {}
+    except Exception:
+        rec = {}
+    rec = dict(rec)
+    rec["status"] = rec_status
+    rec["committed_at"] = now()
+    for k in ("output", "error", "error_class", "ms", "attempts", "attempts_log",
+              "skey", "log_path", "prompt_path", "pid", "started", "spawn",
+              "served_model", "served_billing_provider", "adopted", "harvested",
+              "tree_descendants", "final"):
+        v = result.get(k)
+        if v is not None:
+            rec[k] = v
+    if rec_status != "failed":
+        rec.pop("error", None)
+        rec.pop("error_class", None)
+    rec["efp"] = efp(byid, node)
+    rec["fp_rule_version"] = FP_RULE_VERSION
+    # Test-only deterministic crash hook (same discipline as WF_HARVEST_SCAN_MAX_BYTES):
+    # SIGKILL the runner at the finalize instant of item <i> — the exact window a
+    # crash-resume must survive (child answer harvested, canonical record NOT yet
+    # swapped in). Never set outside tests.
+    if index is not None and str(os.environ.get("WF_TEST_KILL_ITEM_AT_FINALIZE", "")) == str(index):
+        os.kill(os.getpid(), signal.SIGKILL)
+    np.parent.mkdir(parents=True, exist_ok=True)
+    tmp = np.with_name(f"{np.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
+    os.replace(tmp, np)   # atomic: the committed fact, or the prior record
+    return rec
+
+def item_records_certified(run, node, byid, results):
+    """Validate an aggregate candidate against the CANONICAL per-item records on
+    disk, re-read now (never trusted from memory). Returns (ok, problems): every
+    item must have an efp-valid committed fact, and for every done/partial row
+    the record's committed status must match the claim AND its committed output
+    must equal the aggregate's claimed output — byte-for-byte after stable
+    serialization. A missing/uncommitted/diverging record — including a
+    committed failure (failed+crashed, failed+cancelled) under a done claim —
+    means the aggregate may NOT commit done with claimed-complete results."""
+    problems = []
+    for i, r in enumerate(results):
+        rec = jload(run / "nodes" / f"{_node_file(node, i)}.json")
+        if not isinstance(rec, dict):
+            problems.append({"index": i, "problem": "no per-item record on disk"})
+            continue
+        # 790c6ad: an adopted item's retired record carries status=adopted with
+        # its harvested output — a committed fact ONLY when the aggregate row
+        # itself claims an adopted harvest; an adopted-stamped record backing a
+        # NON-adopted claim is divergence, same as an unfinalized spawn record.
+        _committed = (rec.get("status") in _ITEM_COMMITTED_FACTS
+                      or (rec.get("status") == _ITEM_ADOPTED_RETIRE
+                          and isinstance(r, dict) and r.get("adopted")))
+        if not _committed:
+            problems.append({"index": i,
+                             "problem": f"record status={rec.get('status')!r} is not a committed fact "
+                                        "(spawn-time record never finalized)"})
+            continue
+        if not record_efp_valid(rec, byid, node):
+            problems.append({"index": i, "problem": "committed record is not efp-valid"})
+            continue
+        if r is not None and r.get("status") in ("done", "partial"):
+            # PR #258 zap r4: a committed FAILURE (failed+crashed, failed+
+            # cancelled, skipped) can never back a done/partial claim, even
+            # when its output bytes match the claim — matching outputs under a
+            # failed record ARE the divergence. Status compatibility is
+            # required row by row; the ONLY blessed exception is the
+            # 790c6ad adopted-retirement pairing (record status=adopted + a
+            # row that itself claims an adopted harvest).
+            rec_st = rec.get("status")
+            compatible = (rec_st == r["status"]
+                          or (rec_st == _ITEM_ADOPTED_RETIRE and r.get("adopted")))
+            if not compatible:
+                problems.append({"index": i,
+                                 "problem": f"aggregate claims a {r['status']} item whose committed "
+                                            f"record is status={rec_st!r} (incompatible status)"})
+                continue
+            want, have = r.get("output"), rec.get("output")
+            if want is None or have is None or \
+                    json.dumps(want, sort_keys=True, default=str) != \
+                    json.dumps(have, sort_keys=True, default=str):
+                problems.append({"index": i,
+                                 "problem": "aggregate claims a done item whose committed "
+                                            "output is missing or diverges from the record"})
+    return (not problems), problems
+
 # ---------- typed failure classification (facts the RUNNER knows only) ----------
 
 _RETRYABLE_CLASSES = ("transport", "unknown")
@@ -1485,6 +1614,12 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            # out of it (the B1-class pin only sees OBSERVED
                            # classes, so an unwalked path slipped through).
                            "forbidden_model", "precondition",
+                           # est-2ek.1.765: a fan-out aggregate REFUSED done
+                           # because the canonical per-item records on disk do
+                           # not back its claimed completion (missing, frozen at
+                           # the spawn-time running record, efp-invalid, or the
+                           # committed output diverges from all_results).
+                           "item_record",
                            # est-2ek.1.541: rc!=0 death whose reply IS serialized
                            # tool-call markup rendered as text — typed, not generic unknown.
                            "malformed_turn",
@@ -5297,6 +5432,13 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                          "error_class": "cancelled", "attempts": 0, "attempts_log": [], "ms": 0}
                     with lock:
                         results[i] = r
+                    # est-2ek.1.765 single-writer ordering: the canonical record
+                    # is a committed fact BEFORE the event that declares it.
+                    try:
+                        commit_item_record(run, node, byid, i, r)
+                    except Exception as e:
+                        log(run, "item.commit.error", node=nid, index=i,
+                            error=f"{type(e).__name__}: {e}")
                     log(run, "item.finished", node=nid, index=i, status=r["status"],
                         error=r["error"], error_class=r["error_class"], tail=None,
                         log_path=str(run / "runner.log"), child_log_path=None, skey=None,
@@ -5371,6 +5513,21 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     # _seat_acquire can never take it and spawn past quorum.
                     while held:
                         _seat_release(held.pop())
+                # est-2ek.1.765 single-writer ordering: THIS thread is the one
+                # writer of the canonical record nodes/<node>.<i>.json; the
+                # commit lands BEFORE the item.finished event and before the
+                # aggregate is ever assembled, so an aggregate `done` can never
+                # outrun the individual completion facts it claims. A commit
+                # failure is loud (item.commit.error) and the aggregate gate
+                # (item_records_certified) refuses done over it — never silent.
+                # (No new event type on the happy path: the golden-solo batch
+                # normalizer pins the item.* event vocabulary; the ordering law
+                # is pinned in-process by tests/test_fanout_item_commit_765.py.)
+                try:
+                    commit_item_record(run, node, byid, i, r)
+                except Exception as e:
+                    log(run, "item.commit.error", node=nid, index=i,
+                        error=f"{type(e).__name__}: {e}")
                 # Final item facts carry typed failure + retry evidence so consumers
                 # need not reconstruct attempts from child logs.
                 log(run, "item.finished", node=nid, index=i, status=r["status"],
@@ -5437,13 +5594,33 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                                                "failed_items": len(failed),
                                                                "cancelled_items": len(cancelled) or None,
                                                                "all_results": results}})
+                if merged_rec["status"] == "done":
+                    # est-2ek.1.765: aggregate done is DERIVED from the committed
+                    # per-item records, re-read from disk — never from the
+                    # in-memory results alone. If ANY item's canonical record is
+                    # missing, uncommitted, efp-invalid, status-incompatible, or
+                    # diverges from the claimed output, the aggregate commits
+                    # failed, naming each problem. For aggregates produced by
+                    # THIS gate, a `done` with claimed-complete results over a
+                    # still-running or committed-failed individual record is
+                    # structurally impossible.
+                    ok, problems = item_records_certified(run, node, byid, results)
+                    if not ok:
+                        merged_rec = {"status": "failed",
+                                      "error": "fan-out aggregate refused: per-item records do not "
+                                               "back the claimed completion — "
+                                               + "; ".join(f"[{p['index']}] {p['problem']}"
+                                                           for p in problems)[:900],
+                                      "error_class": "item_record",
+                                      "record_problems": problems,
+                                      "output": {"items": merged, "all_results": results}}
                 save_node(run, node, byid, merged_rec)
                 if merged_rec["status"] == "done":
                     log(run, "node.finished", node=nid, done=len(merged), failed=len(failed),
                         cancelled=len(cancelled))
                 else:
                     log(run, "node.failed", node=nid, error=merged_rec["error"],
-                        error_class="incomplete_work", attempts=1)
+                        error_class=merged_rec.get("error_class", "incomplete_work"), attempts=1)
         else:
             first = {"done": False}
             def spawn(resume_preamble=""):
