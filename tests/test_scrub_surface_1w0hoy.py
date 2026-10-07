@@ -3,7 +3,8 @@
 ships, not a suffix whitelist. Estate tokens in seat/label wording hide in
 exactly the shapes the old AUDIT_SUFFIXES set skipped (.yml workflow labels,
 .txt lists, extensionless fixtures), so the bounced-4-rounds class of leak
-(`haus seat` passing the scrub) must fail the build HERE. Hermetic: throwaway
+(an estate-token seat/label line passing the scrub) must fail the build HERE.
+Hermetic: throwaway
 git repo, make_public.py driven with --repo like CI does.
 """
 import importlib.util
