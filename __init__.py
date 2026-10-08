@@ -3104,6 +3104,7 @@ def act_status(args):
     # that run_state derived from — a fresh probe here can flip across a dying
     # runner's flock and make status vs runner_live disagree.
     out = {"run_id": st["run_id"], "name": st["name"], "status": st["status"],
+           "failed_nodes": st["failed_nodes"],   # sys-5lnm17: which nodes died, on every status/wait
            "runner_live": alive, "nodes": {k: {kk: v[kk] for kk in ("type", "status", "fanout",
                                                                      # #128: the artifact-mtime heartbeat rides
                                                                      # status/wait/list identically; honest
