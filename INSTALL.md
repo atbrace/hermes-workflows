@@ -13,7 +13,7 @@ Place the ZIP and `.zip.sha256` sidecar together. Use `python3` (or an explicit 
     PACKAGE_DIR="$PACKAGE_STAGE/hermes-workflows-1.3.1"
     (cd "$PACKAGE_DIR" && if command -v sha256sum >/dev/null; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi)
 
-Use `unzip` rather than Python `ZipFile.extractall` when running the tests: the archive stores executable modes, but Python extraction may discard them. In particular, `tests/fake` — the fake Hermes launcher the hermetic tests use in place of a real install — must stay executable. Keep the staging tree until verification completes.
+The release ZIP is the RUNTIME artifact: plugin core, dashboard/desktop halves, skill, references, examples. Repository tests, fixtures, and maintenance scripts intentionally do not ship (M03 release boundary) — to run the suite, work in a `git clone`. `unzip` is still the recommended extractor: the archive pins stored modes and checksums byte-for-byte.
 
 Hermes Agent v2026.9.21 or newer (package version >=0.21.4) is required for the measured stock quiet one-shot and turn-report contract. Older core versions may skip plugin admission.
 
@@ -48,18 +48,19 @@ Verify/unpack the same archive locally as above. Use that machine's `HERMES_HOME
 
 The desktop plugin watcher loads the changed file. Enable/check it in Settings → Plugins or Capabilities → Plugins; use Reload desktop plugins if needed. Verify the app file checksum matches the archive and the backend API is mounted.
 
-## Source-tree verification
+## Verifying the runtime package
 
-Use the active host's Python 3 and Node.js, not a hard-coded installation path. Run in a disposable extracted checkout; the suite harness sandboxes `HERMES_HOME` itself, and the hermetic tests drive the bundled fake Hermes launcher (`tests/fake`, executable) instead of a real Hermes install.
-
-The one canonical suite entry is the same command CI runs: it executes every Python and Node test serially, bounds each test with its own timeout, sandboxes `HERMES_HOME`, and writes a pass/fail ledger plus per-test logs into the output directory:
+Use the active host's Python 3 and Node.js, not a hard-coded installation path:
 
     cd "$PACKAGE_DIR"
-    test -x tests/fake
-    node --check desktop/plugin.js
-    python3 scripts/suite.py . ci-out
+    node --check desktop/plugin.js                                  # desktop half parses
+    hermes plugins validate "$PACKAGE_DIR"                          # manifest + SDK surface + security scan
 
-`node --check desktop/plugin.js` is the quick syntax gate for the desktop half; `python3 scripts/suite.py . ci-out` is the full verification. Check `ci-out/exits.json` for the result: any non-zero exit row means a failing test, and its log file sits beside it.
+The door's own grammar check runs against any example with no provider:
+`workflow {"action":"validate","graph_path":"examples/basics/smoke.json"}` must
+return `ok: true`. That is the runtime acceptance — the shipped artifact is
+validated, not unit-tested; the suite lives in the repository and CI runs it
+there.
 
 ## Removal
 

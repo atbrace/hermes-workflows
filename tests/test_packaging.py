@@ -70,88 +70,23 @@ def main() -> None:
         with zipfile.ZipFile(first) as archive:
             members = set(archive.namelist())
             root = f"hermes-workflows-{VERSION}/"
-            check("archive includes runtime, docs, skill, examples, tests, and checksum manifest",
-                  all(root + rel in members for rel in (
-                      "plugin.yaml", "__init__.py", "wf.py", "wfcommon.py",
-                      "dashboard/manifest.json", "dashboard/index.js", "dashboard/plugin_api.py", "desktop/plugin.js",
-                      "README.md", "INSTALL.md", "SKILL.md", "examples/README.md", "examples/basics/smoke.json",
-                      "examples/basics/approve-publish.json", "examples/review/blind-council.workflow.json",
-                      "examples/basics/branch-on-verdict.json",
-                      "examples/build/triage-route.workflow.json",
-                      "examples/review/portable-review.workflow.json",
-                      "examples/ops/incident-response.json",
-                      "examples/release/gated-publish.workflow.json",
-                      "examples/release/machine-watch.workflow.json",
-                      "examples/basics/exchange-run.workflow.json",
-                      "examples/build/quorum-probe.workflow.json",
-                      "examples/build/census-fanout.workflow.json", "examples/review/escalation-ladder.workflow.json", "examples/build/bulk-transform.workflow.json",
-                      "examples/release/release-lifecycle.workflow.json", "examples/release/issue-to-pr.workflow.json", "examples/release/submit-pr.workflow.json", "references/portable.md",
-                      "tests/test_packaging.py", "tests/test_fanout_ui.mjs", "tests/test_card_frontend_contract.mjs",
-                      "tests/test_inline_header.mjs", "tests/fixtures/mac-source.txt",
-                      "references/grammar.md", "references/operations.md", "SHA256SUMS")))
-            check("fake child retains executable mode in ZIP",
-                  (archive.getinfo(root + "tests/fake").external_attr >> 16) & 0o111 == 0o111)
-            # est-4vnq finding 4 (pack-list omission, made explicit — pack_choice=INCLUDED):
-            # scripts/pr_tag_audit.py was outside INCLUDE_FILES/INCLUDE_PATTERNS while
-            # tests/test_pr_tag_audit.py (shipped via the tests/test_*.py glob) executes
-            # it, and test_packaging stayed green (observed red-proof on base f83e5d0:
-            # pack.collect_sources() scripts members == ['scripts/graph_check.py',
-            # 'scripts/pack.py', 'scripts/suite.py'] — helper absent, ALL PASS).
-            # The helper SHIPS because its shipped test subprocess-executes it from the
-            # package root; the four checks below are the mechanical contract.
-            packed_scripts = {m[len(root):] for m in members if m.startswith(root + "scripts/")}
-            check("audit helper ships: scripts/pr_tag_audit.py is in the ZIP (explicit include decision)",
-                  "scripts/pr_tag_audit.py" in packed_scripts)
-            check("pack-list contract: ZIP scripts/ set equals the exact declared packed set",
-                  packed_scripts == {"scripts/graph_check.py", "scripts/pack.py",
-                                      "scripts/pr_tag_audit.py", "scripts/suite.py",
-                                      "scripts/graph_path_ban.py", "scripts/graph_regen.py",
-                                      # est-5p7x: the diagram-law generators — shipped
-                                      # because tests/test_diagram_law.py executes both
-                                      # from the package root (same rationale as the
-                                      # pr_tag_audit include above).
-                                      "scripts/diagram_readme.py",
-                                      "scripts/graph_diagram.py"})
-            # wf165d: the no-silent-middle half only has a premise in a REPO
-            # checkout — the source-only scripts (make_public.py,
-            # lane_recover.py) never travel inside the ZIP, so from the
-            # unpacked root the equality is unsatisfiable by construction
-            # (the committee's repro: exit 1 at the unpacked root while CI
-            # is green). Premise is .git, NOT the source-only files
-            # themselves: an adversary who deletes make_public.py +
-            # lane_recover.py and smuggles a silent-middle script must not
-            # flip the check into a silent skip — inside a git clone it still
-            # runs and REDs. The ZIP-side equality above stays unconditional
-            # and still bites a smuggled extra script INTO the package.
-            if (ROOT / ".git").exists():
-                check("pack-list contract: every repo scripts/*.py is packed or declared source-only (no silent middle)",
-                      {p.name for p in (ROOT / "scripts").glob("*.py")} ==
-                      {Path(s).name for s in packed_scripts}
-                      | {"make_public.py", "lane_recover.py"})
-            else:
-                print("SKIP pack-list repo-side half: no .git — running from an "
-                      "unpacked ZIP/archive, where the premise does not exist")
-            check("the test that executes the audit helper ships beside it",
-                  root + "tests/test_pr_tag_audit.py" in members)
-            unsafe = ("/.git/", "/home", "/workflows/", "/state.db", "/runner.log",
-                      "/pre-lanes", "/home1/", "/.tmp-")
-            check("archive excludes generated homes, owner-local examples, state, backups, logs, and Git metadata",
-                  not any(part.endswith("/.git") or any(token in part for token in unsafe)
-                          for part in members)
-                  and {m[len(root):] for m in members if m.startswith(root + "examples/")}
-                      == {"examples/README.md", "examples/basics/smoke.json", "examples/basics/approve-publish.json",
-                          "examples/review/blind-council.workflow.json",
-                          "examples/basics/branch-on-verdict.json",
-                          "examples/build/triage-route.workflow.json",
-                          "examples/ops/incident-response.json",
-                          "examples/review/portable-review.workflow.json",
-                          "examples/release/gated-publish.workflow.json",
-                          "examples/release/machine-watch.workflow.json",
-                          "examples/build/quorum-probe.workflow.json",
-                          "examples/build/census-fanout.workflow.json", "examples/review/escalation-ladder.workflow.json", "examples/build/bulk-transform.workflow.json",
-                          "examples/release/release-lifecycle.workflow.json", "examples/release/issue-to-pr.workflow.json",
-                          "examples/release/submit-pr.workflow.json",
-                          "examples/basics/exchange-run.workflow.json"})
+            must = ("plugin.yaml", "__init__.py", "wf.py", "wfcommon.py",
+                    "wf_dialect.py", "card_enforcement.py", "post_exit_hook.py",
+                    "dashboard/manifest.json", "dashboard/index.js", "dashboard/plugin_api.py",
+                    "desktop/plugin.js", "README.md", "INSTALL.md", "SKILL.md", "AGENTS.md",
+                    "references/portable.md", "references/grammar.md", "references/operations.md",
+                    "examples/README.md", "examples/basics/smoke.json", "SHA256SUMS", "install.json")
+            check("runtime ZIP ships every runtime module, dashboard/desktop half, docs, skill, examples",
+                  all(root + rel in members for rel in must))
+            # M03 release boundary: the installer artifact carries runtime only.
+            # Tests, fixtures, and repo-maintenance helpers stay repository-side
+            # (git clone is the source archive). These bans are the boundary —
+            # a re-added "ship it because a test needs it" row fails here.
+            shipped = {m[len(root):] for m in members if not m.endswith("/")}
+            banned = {p for p in shipped
+                      if p.startswith(("tests/", "scripts/", "graphify"))}
+            check("runtime ZIP ships no tests/, no scripts/, no generated graph data",
+                  not banned)
             checksum_text = archive.read(root + "SHA256SUMS").decode("utf-8")
             rows = [line.split("  ", 1) for line in checksum_text.splitlines()]
             check("SHA256SUMS verifies every pinned source entry",
@@ -163,60 +98,34 @@ def main() -> None:
                   b"license: mit" in manifest and b"homepage: https://github.com/" in manifest
                   and b"requires_hermes:" in manifest)
 
-        # #105 discharge: membership-by-glob passed while the shipped test_*.py died
-        # ModuleNotFoundError on wf_test_isolation — assert the import CLOSURE from the
-        # unpacked package root instead of just listing names.
+        # #105 discharge, M03 shape: assert the import CLOSURE of the shipped
+        # RUNTIME modules from the unpacked package root (the tests are no
+        # longer shipped — same law, correct subject).
         with tempfile.TemporaryDirectory(prefix=".tmp-unpack-") as unpack_dir:
             unpacked = Path(unpack_dir)
             with zipfile.ZipFile(first) as archive:
                 archive.extractall(unpacked)
             pkg = unpacked / root.rstrip("/")
-            core_allowlist = {"hermes_constants", "fastapi"}  # supplied by the pinned /opt/hermes env
+            runtime_mods = sorted(pkg.glob("*.py")) + [pkg / "dashboard" / "plugin_api.py"]
             missing: dict[str, list[str]] = {}
-            for test_file in sorted(pkg.glob("tests/test_*.py")):
-                tree = ast.parse(test_file.read_text(encoding="utf-8"), filename=str(test_file))
+            for mod in runtime_mods:
+                tree = ast.parse(mod.read_text(encoding="utf-8"), filename=str(mod))
                 names: set[str] = set()
                 for node in tree.body:  # top-level imports only: the shipped-entry contract
                     if isinstance(node, ast.Import):
                         names.update(alias.name.split(".")[0] for alias in node.names)
                     elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                         names.add(node.module.split(".")[0])
-                # Resolution mirrors the shipped-entry reality: running tests/test_X.py puts
-                # tests/ (script dir) on sys.path; root and dashboard/ ride along as the
-                # tests themselves insert them. A top-level import that resolves in NONE of
-                # these is the #105 dead-package shape.
-                probe = (
-                    "import importlib.util, json, sys\n"
-                    "root = sys.argv[1]\n"
-                    "for p in (root, root + '/tests', root + '/dashboard'):\n"
-                    "    sys.path.insert(0, p)\n"
-                    "mods = json.loads(sys.argv[2])\n"
-                    "bad = []\n"
-                    "for m in mods:\n"
-                    "    try:\n"
-                    "        importlib.import_module(m)\n"
-                    "    except Exception as exc:\n"
-                    "        bad.append(f'{m}: {type(exc).__name__}: {exc}')\n"
-                    "print('MISSING:' + json.dumps(bad))\n"
-                )
                 candidates = sorted(
                     n for n in names
-                    if n not in sys.stdlib_module_names and n not in core_allowlist
-                    and n != test_file.stem
+                    if n not in sys.stdlib_module_names and n != mod.stem
                 )
-                env = {k: v for k, v in os.environ.items()
-                       if k not in {"WF_RUNS_ROOT", "HERMES_HOME"}}
-                env.setdefault("PYTHONPATH", "/opt/hermes")
-                result = subprocess.run(
-                    [sys.executable, "-c", probe, str(pkg), json.dumps(candidates)],
-                    capture_output=True, text=True, env=env,
-                )
-                line = [l for l in result.stdout.splitlines() if l.startswith("MISSING:")]
-                bad = json.loads(line[-1][len("MISSING:"):]) if line else [result.stderr[-200:]]
-                for failure in bad:
-                    missing.setdefault(test_file.name, []).append(failure)
-            check("every shipped tests/test_*.py import-closure resolves from the unpacked package root",
-                  not missing and repr(missing) == "{}")
+                for m2 in candidates:
+                    if (pkg / (m2 + ".py")).exists():
+                        continue  # sibling runtime module
+                    missing.setdefault(mod.name, []).append(m2)
+            check("runtime modules import only stdlib + packaged siblings (stdlib-only promise)",
+                  not missing)
 
     print("ALL PASS")
 
