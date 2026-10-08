@@ -1000,12 +1000,15 @@ def reasoning_levels():
               "fallback literal (keep it in sync with core).", file=sys.stderr)
     return allowed
 
-def validate_graph_errors(nodes):
+def validate_graph_errors(nodes, *, admission=False):
     """Return a LIST of {node, field, msg} — EVERY defect, not the first. Strict ids:
     node ids double as filenames.
     #32: accepts a whole graph object too — `{grammar?, nodes:[...]}` — in which case
     the top-level `grammar` tag is checked first (absent = wf/1; unknown = refused,
-    listing the supported values) and then its `nodes`. A bare node list is unchanged."""
+    listing the supported values) and then its `nodes`. A bare node list is unchanged.
+    admission=True: NEW-run admission rules (submit door only — _validation_error /
+    validate_graph_full). Persisted graphs re-validated at gate release or runner
+    restart pass the default False and are never stranded by them (PR #280 R10)."""
     errs = []
     if isinstance(nodes, dict):
         errs.extend(grammar_errors(nodes))
@@ -1287,6 +1290,18 @@ def validate_graph_errors(nodes):
                                                     "'<node_id>.<dotted.path>' string")
                     if fo.get("items") is not None and not isinstance(fo["items"], list):
                         E(nid, "fanout.items", "fanout.items must be a list")
+                    # est-wr0p (vacuous-replay class of est-077y): a baked literal
+                    # items:[] passed the door and replayed with ZERO children —
+                    # a vacuous pass, not a fan-out. The runtime fails it typed
+                    # fanout_empty; the door must refuse the shape at submit so
+                    # every consumer is safe, not just the QM admission gate.
+                    # items_from stays the dynamic path — its count is unknown
+                    # at admit and is never tripped here.
+                    # R10: SUBMIT door only — a persisted graph whose empty node was
+                    # pruned/skipped must still release and restart.
+                    if admission and isinstance(fo.get("items"), list) and not fo["items"]:
+                        E(nid, "fanout.items",
+                          "fanout.items must be a non-empty literal or use items_from")
                     items = fo.get("items") if isinstance(fo.get("items"), list) else []
                     for i, it in enumerate(items):
                         if isinstance(it, dict) and "goal" in it and not (isinstance(it["goal"], str) and it["goal"].strip()):
@@ -1864,7 +1879,7 @@ def validate_graph_full(graph):
                              "field": "after", "msg": "after must be a list of node id strings"})
                 item["after"] = []
             safe.append(item)
-    errs.extend(validate_graph_errors(safe))
+    errs.extend(validate_graph_errors(safe, admission=True))
     return errs
 
 # ---------- include-by-expansion (design 2026-09-30) ----------
