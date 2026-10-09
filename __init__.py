@@ -1085,14 +1085,17 @@ def _same_ping_route(ri, provider, model):
     """True when the route core RECORDED for the ping is the pinned route itself.
     call_llm's recovery ladder may answer from another lane (capacity errors bypass the
     explicit-provider gate); a ping whose recorded route is not the pinned one proves
-    nothing about the pinned one — the caller degrades to 'unknown', never 'alive'/'dead'."""
+    nothing about the pinned one — the caller degrades to 'unknown', never 'alive'/'dead'.
+    The MODEL half also admits the ONE route-identity contract (wfcommon.route_ids_equal,
+    est-2ek.1.699); a provider mismatch is never same-route."""
     def _lbl(v):
         v = str(v or "").strip().lower()
         m = re.search(r"\(([^()]+)\)\s*$", v)  # 'main-agent(openai)' / 'fallback_chain[0](x)'
         return m.group(1) if m else v
     rp, rm = _lbl((ri or {}).get("provider")), _lbl((ri or {}).get("model"))
     lp, lm = str(provider).strip().lower(), str(model).strip().lower()
-    return bool(rp) and rp == lp and (rm == lm or rm == lm.rsplit("/", 1)[-1])
+    return bool(rp) and rp == lp and (rm == lm or rm == lm.rsplit("/", 1)[-1]
+                                      or _common.route_ids_equal((ri or {}).get("model"), lm, lp))
 
 _PING_SUBPROCESS = '''import json, sys
 try:
@@ -1230,7 +1233,8 @@ def _ping_reachable(model):
     if m:
         rm = m.group(1)
     lm = str(model).strip().lower()
-    return bool(rm) and (rm == lm or rm == lm.rsplit("/", 1)[-1])
+    return bool(rm) and (rm == lm or rm == lm.rsplit("/", 1)[-1]
+                         or _common.route_ids_equal(ri.get("model"), lm, lm.partition("/")[0] if "/" in lm else None))
 
 def _safe_ping_note(exc, status):
     try:

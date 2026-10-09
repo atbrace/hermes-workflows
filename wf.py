@@ -168,7 +168,8 @@ def _route_substitution_refusal(meta, node, spawn_no):
         if alias.lower() in (v, v_model):
             candidates |= {alias.lower(), str(target).lower(),
                            str(target).rsplit("/", 1)[-1].lower()}
-    if a in candidates or a.rsplit("/", 1)[-1] in candidates:
+    if a in candidates or a.rsplit("/", 1)[-1] in candidates or any(
+            wfcommon.route_ids_equal(a, c, wfcommon.route_provider(node, verified)) for c in candidates):
         return None                            # same route: the receipt is not a spawn lock
     return {"status": "failed",
             "error": f"route_substitution_denied: node {node['id']!r} has a proved-alive "
@@ -5360,8 +5361,9 @@ def _route_hold(meta, result, node=None, final_served=None):
             candidates |= {alias.lower(), str(target).lower(),
                            str(target).rsplit("/", 1)[-1].lower()}
     s = str(served).strip().lower()
-    if s in candidates or s.rsplit("/", 1)[-1] in candidates:
-        return result
+    if s in candidates or s.rsplit("/", 1)[-1] in candidates or any(
+            wfcommon.route_ids_equal(s, c, wfcommon.route_provider(node, verified)) for c in candidates):
+        return result                          # est-2ek.1.699: route-identity contract (wfcommon)
     lead = (f"final served_model {final_served!r}; a mid-session call billed {served!r}"
             if final_served and final_served != served else f"node billed {served!r}")
     result.update(status="failed", error_class="route_unavailable",

@@ -96,6 +96,54 @@ def source_digest(graph):
 # overrides so a team can share one root that survives any profile's deletion; unset or
 # empty = the 1.0.15 default, byte-identical.
 
+# ---------- est-2ek.1.699: the ONE route-identity contract ----------
+# The door proves a route at submit under the author's spelling; core bills under its
+# own normalized one. Every identity comparison between those worlds (the door's
+# same-route ping law, the runner's #25 commit hold, the #641 receipt hold) goes
+# through route_ids_equal, so a proven-and-run item cannot die route_unavailable over
+# punctuation. Provider-aware and a mirror of stock core's normalize_model_name
+# (agent/anthropic_message_convert.py): only claude prefixed Anthropic ids fold, each
+# '.' to '-'; '_' is kept, Bedrock ids keep their namespace dots; every other
+# provider compares as spelled, and an aggregator's vendor namespace is part of the id.
+_BEDROCK_PREFIXES = ("global.", "us.", "eu.", "apac.", "ap.", "au.", "jp.", "ca.",
+                     "sa.", "me.", "af.", "anthropic.")
+
+def canonical_model_id(model, provider=None):
+    """Identity form of `model` on `provider`'s route; '' for absent input (absence
+    proves nothing). Lowercase, strip, peel a leading '<provider>/' only when it
+    names the route's OWN provider; Anthropic only, claude prefixed, non-Bedrock: each
+    '.' becomes '-' (as stock core bills it). A literal '(suffix)' is part of the id:
+    stock core preserves it and records the concrete model verbatim, so this contract
+    never peels it for any provider. Never rewrites what gets billed or
+    relaxes a gate."""
+    m = str(model or "").strip().lower()
+    if not m:
+        return ""
+    prov = str(provider or "").strip().lower()
+    if prov and m.startswith(prov + "/"):
+        m = m[len(prov) + 1:]
+    if prov == "anthropic" and m.startswith("claude-") and not m.startswith(_BEDROCK_PREFIXES):
+        m = m.replace(".", "-")
+    return m
+
+def route_ids_equal(a, b, provider=None):
+    """True when `a` and `b` name the same model on `provider`'s route under the
+    contract above. Empty on either side is never equal."""
+    ca, cb = canonical_model_id(a, provider), canonical_model_id(b, provider)
+    return bool(ca) and bool(cb) and ca == cb
+
+def route_provider(node, verified=None):
+    """The provider whose spelling rules apply: the RECEIPT's own (leading segment of a
+    provider-qualified `verified`), else the node's `provider`, else ''. When both are
+    present and differ the route is cross-provider: '' (nothing folds, so a
+    substitution is refused before any normalization)."""
+    prov = str((node or {}).get("provider") or "").strip().lower()
+    v = str(verified or "")
+    vp = v.partition("/")[0].strip().lower() if "/" in v else ""
+    if vp and prov and vp != prov:
+        return ""
+    return vp or prov
+
 def hermes_home():
     """Core's resolution when importable, else the raw env (1.0.15 semantics, unchanged).
 
