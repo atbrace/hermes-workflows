@@ -3790,7 +3790,15 @@ def run_state(r):
         status = "failed"
     if status == "interrupted" and verdict.startswith("crashed:"):
         status = "failed"  # a recorded fatal error needs an amend, not a wait/respawn loop
+    # sys-5lnm17 (upstream of sys-ntdq1v): WHICH nodes died, derived here from the
+    # SAME efp-valid states the status verdict used — never stored, never from
+    # prose. A crash verdict with no failed node reads empty (honest absence: the
+    # runner died, not a node).
+    failed_nodes = [{"id": n["id"], "error": (recs[n["id"]] or {}).get("error"),
+                     "error_class": (recs[n["id"]] or {}).get("error_class")}
+                    for n in graph["nodes"] if states[n["id"]] == "failed"]
     return {"run_id": r.name, "name": graph.get("name"), "status": status,
+            "failed_nodes": failed_nodes,
             "held_gate": held, "nodes": nodes, "graph": graph,
             # 91b9a3de companion: publish the ONE liveness read this state was
             # derived from — a second runner_alive() call a few microseconds

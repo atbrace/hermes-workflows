@@ -320,6 +320,10 @@
     "log": "/home/runner/work/hermes-workflows/hermes-workflows/ci-out/test_failed_events_77.py.log"
   },
   {
+    "test": "test_failed_nodes_5lnm.py",
+    "exit": 0
+  },
+  {
     "test": "test_failures_0923.py",
     "exit": 0,
     "log": "/home/runner/work/hermes-workflows/hermes-workflows/ci-out/test_failures_0923.py.log"
