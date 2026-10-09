@@ -90,7 +90,9 @@ with tempfile.TemporaryDirectory(prefix="failednodes5lnm-", dir=HERE,
           json.dumps(st1["failed_nodes"]))
     out1 = door.act_status({"run_id": "fn5-fail"})
     check("S1: status output surfaces failed_nodes",
-          out1.get("failed_nodes") == st1["failed_nodes"], json.dumps(out1.get("failed_nodes")))
+          out1.get("failed_nodes") == [{"id": "b", "error": "child died rc=1",
+                                        "error_class": "child_exit"}],
+          json.dumps(out1.get("failed_nodes")))
 
     # ---- S2: clean done run -> honest-empty list ----
     r2 = scene("fn5-done", NODES,
