@@ -58,14 +58,7 @@ def load_scrub_list(repo: Path) -> re.Pattern:
 EXCLUDE_DIRS = {".git", "__pycache__"}
 EXCLUDE_PATTERNS = ["docs/PUBLISH-SCRUB.md",
                     "*/__pycache__/*", "__pycache__/*",
-                    "tests/home*", "*.log", "*/.git", "*/.git/*",
-                    # sys-1w0hoy: the regen lane's machine-local root pointer
-                    # (an absolute path on the regen runner) is stale estate
-                    # data by construction — graphify rewrites it locally on
-                    # every update; it ships to no one and is audited away here
-                    # (the single-writer law forbids touching graphify-out/ in
-                    # a PR, so exclusion is the disposition, not a rewrite).
-                    "graphify-out/.graphify_root"]
+                    "tests/home*", "*.log", "*/.git", "*/.git/*"]
 # (sys-1w0hoy ask 3: the old AUDIT_SUFFIXES whitelist is gone — the audit now
 # covers every text file; see is_text_file.)
 

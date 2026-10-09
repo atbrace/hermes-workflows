@@ -43,7 +43,6 @@ python3 scripts/suite.py . ci-fix --baseline ci-base/exits.json
                                                   # fully-green SHA is green; base reds block, never waived
 hermes plugins validate .                         # → Validation passed.
 python3 scripts/make_public.py /tmp/public-tree   # → 0 scrub hits
-python3 scripts/graph_path_ban.py                 # PR diff touches no graphify-out/ — single writer (#153); never regen the graph in a PR branch, main refreshes itself after merge
 python3 scripts/pr_tag_audit.py                   # release step: every `(open PR #NN)` doc tag still
                                                   # points at an OPEN PR; a merged PR's tag must be
                                                   # rewritten to (shipped in vX) in that release commit
@@ -73,8 +72,8 @@ R6 **Tests** — every behaviour change ships its check: one test that fails if 
 R7 **Docs drift** — if a user-visible string or flag changed, README/AGENTS.md/
     SKILL.md are grepped for the old form and fixed in the same PR.
 R8 **Sibling completeness** — the fixed pattern is checked across the repo and
-    every sibling instance is fixed too. Proof: after `graphify update .` (~3 s,
-    no API key), `graphify affected "<changed symbol>" --depth 2` lists every
+    every sibling instance is fixed too. Proof: `graphify affected "<changed symbol>"
+    --depth 2` (local `uv tool install graphifyy`; optional) lists every
     caller; each one is updated or shown unaffected in the PR body.
 R9 **Private strings** — `scripts/make_public.py` exits 0: no hostnames, LAN
     addresses, tokens, or personal paths in shipped files.
@@ -112,12 +111,10 @@ You are contributing on behalf of a user. Do this, in order:
 1. **Search first.** `gh pr list --search "<keywords>"` and `gh issue list --search`.
    An open PR on the same issue → stop and tell your user; don't race it.
 2. **Read `AGENTS.md`** in the repo root — the repo map, the build rule, the
-   invariants. Then navigate by the knowledge graph instead of grepping:
-   `uv tool install graphifyy` (once) → `graphify update .` →
-   `graphify query "<your question>"`, `graphify affected "<symbol>"`.
-   `graphify-out/` is a **tracked, CI-gated** directory: when you change code, docs,
-   or tests, run `graphify update .` and commit the `graphify-out/` delta in the same
-   PR — `scripts/graph_check.py` fails CI if the committed graph drifts from the tree.
+   invariants. Navigate by grep + the module map; `graphify`
+   (`uv tool install graphifyy` → `graphify update .` → `graphify query`/`affected`)
+   still works as a LOCAL convenience — the committed knowledge graph was retired
+   (M02, sys-h36sko) so nothing gates or ships it.
 3. **Reproduce before fixing.** Point at the `file:line` where the bug manifests and
    show your fix changes that line's behaviour. A plausible rationale is not a repro.
 4. **Smallest diff that passes R1–R10.** `graphify affected` for siblings (R8). No

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Ops/chore:
+- chore(graphify): M02 (sys-h36sko) — retired the committed knowledge graph and
+  its whole governance stack: `graphify-out/` (5.2 MB generated),
+  `scripts/graph_check.py`/`graph_path_ban.py`/`graph_regen.py`, the graph CI job
+  + graphifyy install, the single-writer path ban, and the tests whose only
+  subject was those artifacts. `graphify` stays a local-only convenience.
+  `scripts/graph_diagram.py` + `examples/diagrams/` untouched (different job).
+
 Read-model / DX:
 - feat(door,dashboard): est-2ek.1.280 — an EMPTY `list`/`_list_runs` scan now
   emits `roots:` the resolved runs_root first, then the legacy launch root when

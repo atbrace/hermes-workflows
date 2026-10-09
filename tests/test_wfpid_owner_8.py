@@ -34,7 +34,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or HERE.parent)
-scratch = HERE / "home-wfpidowner8"   # tests/home-*/ — ignored by .gitignore + .graphifyignore
+scratch = HERE / "home-wfpidowner8"   # tests/home-*/ — ignored by .gitignore
 if scratch.exists():
     shutil.rmtree(scratch)
 home = scratch / "home"; home.mkdir(parents=True)
