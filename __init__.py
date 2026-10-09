@@ -853,7 +853,7 @@ WORKFLOW_PARAMS = {
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
         "retry_backoff": {"type": "array", "items": {"type": "number"}, "description": "run only: two non-negative seconds [first, second] replacing the transient ladder's retry schedule (default: exponential, 2 s base, 30 s ceiling; est-9ceqc persists the backoff deadline + attempt count per node so a restart honors the window). The runner reads them from run.json meta; the node-level `retry` key caps attempts."},
         "retry_budget": {"type": "integer", "description": "run only: non-negative cap on total retry draws across ALL ladders for the run (default 6). A storm beyond the budget fails typed retry_skipped, never silently retries on."},
-        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Library-sourced launches also render profile, echo string output, gate options, wait.until_argv and fan-out precheck_argv; every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
+        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Library-sourced launches also render profile, echo string output, gate options, wait.until_argv and fan-out precheck_argv; every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string, or a graph with {run.KEY} refs launched with NO run_context (the door names the key; literal placeholders never spawn, dry_run included). Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "params": {"type": "object", "additionalProperties": {"type": "object"}, "description": "save: optional meta.params descriptions/default suggestions for run_context keys. Required keys derive from graph refs, never this metadata. Omission retains prior params; {} deliberately clears them. Missing/dead declarations warn, never prevent saving."},
         "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). For explicit curation, library exposes tag_vocab for optional reuse. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
@@ -2005,9 +2005,9 @@ def _unbound_include_refs(graph, provenance):
     """Fail-closed check for composite runs (live composite-run receipt, 2026-09-30): after include
     seeds and run_context binding, NO {run.KEY} may survive inside an included
     subtree. The check is alias-scoped — the subtree's refs come from shelved
-    bytes the parent author never sees — while parent-authored nodes keep the
-    plain-graph behavior (seed-less literal spawns are their documented
-    leniency). Returns an error envelope naming alias, node, and key.
+    bytes the parent author never sees. Parent-authored nodes are covered by
+    the general _unbound_run_refs gate (sys-vrovdu: seed-less literal spawns
+    are retired). Returns an error envelope naming alias, node, and key.
 
     PR#84 review F-3: the text surface is the SHARED _include_text_fields
     traversal (goal/context/question/profile/repo, fan-out goal + item goals, AND an
@@ -2093,6 +2093,28 @@ def _unbound_gate_argv_refs(graph):
                         "contexts, questions and profile only, never command argv; write the "
                         "value into the argv element literally (or hand it to the probe through "
                         "a file); refused before any write or spawn")}
+
+def _unbound_run_refs(graph):
+    """sys-vrovdu: fail-closed launch gate for PLAIN graphs — every {run.KEY}
+    surviving the binding pass refuses the launch before any write or spawn,
+    naming the node and the key. The old seed-less leniency spawned nodes with
+    literal placeholders in their prompts (measured 10-04: run
+    20261004-150243-bindability-probe-real launched a graph whose {run.KEY}
+    refs had nothing to bind against), and dry_run passed the same hole. The
+    map-binding path already names missing keys; this closes the absent-
+    context/seed-binding gap. Text surface is the SHARED _include_text_fields
+    traversal, so goal/context/question/profile, echo output, gate options and
+    fan-out goals cannot drift apart. dry_run shares the gate: it returns AFTER
+    every gate above it, so a preview refuses exactly what the launch refuses."""
+    for node in graph.get("nodes") or []:
+        for text in _common._include_texts(node):
+            m = _RUN_REF.search(text)
+            if m:
+                return {"error": (
+                    f"run placeholder unbound: node {node.get('id', '?')!r} still references "
+                    f"{{run.{m.group(1)}}} and no run_context binding supplied it — pass "
+                    f'run_context {{"{m.group(1)}": "<value>"}} (or an include seeds map) '
+                    "or remove the placeholder; refused before any write or spawn")}
     return None
 
 
@@ -3490,10 +3512,8 @@ def act_run(args):
     if _includes:
         # Composite runs are fail-closed on unbound refs (live composite-run receipt,
         # 2026-09-30): a shelved sub-graph's {run.KEY} contract is invisible to a
-        # parent author, so the plain-graph leniency (literal placeholder spawns)
-        # silently seats a placeholder verdict when run_context is absent or a
-        # seed value missed a key. Every {run.*} surviving include seeds +
-        # run_context binding is a refusal before any write/spawn.
+        # parent author. Alias-scoped first for the better subtree message; the
+        # general gate below then covers parent-authored nodes alike (sys-vrovdu).
         bad = _unbound_include_refs(graph, _includes)
         if bad:
             return bad
@@ -3516,6 +3536,14 @@ def act_run(args):
                         "(WORKFLOW_MAX_SEATS env or config workflows.max_seats; an integer "
                         f"in [{_common.SEAT_CAP_FLOOR}, {_common.SEAT_CAP_CEILING}], or unset "
                         "for the default; the per-run opt-out stays graph max_seats: 0)"}
+
+    # sys-vrovdu: plain graphs are fail-closed too — a {run.KEY} surviving the
+    # binding pass (typically: no run_context at all) refuses the launch naming
+    # the key. Sits AFTER binding and BEFORE the dry_run return, so dry_run
+    # refuses exactly what the launch would.
+    bad = _unbound_run_refs(graph)
+    if bad:
+        return bad
     # 1.1 (RATIFY F2): profile validation runs on the RENDERED graph ({run.KEY} resolved).
     bad = _profile_error(graph)
     if bad:
