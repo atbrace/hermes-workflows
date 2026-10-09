@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+Door:
+- fix(door): sys-vrovdu — an unbound `{run.KEY}` now refuses the LAUNCH, not
+  just a missing key in a supplied map. Before, a graph with `{run.KEY}` refs
+  and NO `run_context` (or a seed instead of a map) spawned nodes with the
+  literal placeholder baked into their prompts, and `dry_run` passed the same
+  hole (measured 10-04, run 20261004-150243-bindability-probe-real).
+  `_unbound_run_refs` sweeps the shared `_include_text_fields` surface after
+  binding and before the dry_run return — the refusal names node + key and
+  writes nothing. The seed-less literal-spawn leniency is retired for plain
+  graphs (composites were already fail-closed since 2026-09-30). Literal-free
+  graphs and fully-bound launches are byte-unchanged. Tests:
+  `tests/test_unbound_run_refs_vrovdu.py` (13 contracts, RED first); D9b/D16b/
+  D19b in `tests/test_include_door.py` flipped from leniency to refusal.
+
 Ops/chore:
 - chore(graphify): M02 (sys-h36sko) — retired the committed knowledge graph and
   its whole governance stack: `graphify-out/` (5.2 MB generated),

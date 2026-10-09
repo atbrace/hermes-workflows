@@ -632,7 +632,7 @@ WORKFLOW_PARAMS = {
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
         "name": {"type": "string", "description": "run: overrides graph.name (default workflow); save: library name overrides graph.name (lowercase, [-_.]). amend: set graph.name in the replacement graph; omitting it retains the run name."},
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
-        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, fan-out goals/item goals and gate questions. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals."}, 
+        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, fan-out goals/item goals and gate questions. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, a JSON-encoded map passed as a string, or a graph with {run.KEY} refs launched with NO run_context (the door names the key; literal placeholders never spawn, dry_run included). Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals."}, 
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). Call `library` first and reuse its tag_vocab values VERBATIM — never coin a tag you have not seen. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
         "why_not_library": {"type": "string", "description": "submit (REQUIRED, >=80 chars): why no library graph covered this task — name the entries you checked and the shape you needed. The receipt is what makes hand-rolling honest."},
@@ -1671,9 +1671,9 @@ def _unbound_include_refs(graph, provenance):
     """Fail-closed check for composite runs (live composite-run receipt, 2026-09-30): after include
     seeds and run_context binding, NO {run.KEY} may survive inside an included
     subtree. The check is alias-scoped — the subtree's refs come from shelved
-    bytes the parent author never sees — while parent-authored nodes keep the
-    plain-graph behavior (seed-less literal spawns are their documented
-    leniency). Returns an error envelope naming alias, node, and key.
+    bytes the parent author never sees. Parent-authored nodes are covered by
+    the general _unbound_run_refs gate (sys-vrovdu: seed-less literal spawns
+    are retired). Returns an error envelope naming alias, node, and key.
 
     PR#84 review F-3: the text surface is the SHARED _include_text_fields
     traversal (goal/context/question/profile, fan-out goal + item goals, AND an
@@ -1696,6 +1696,30 @@ def _unbound_include_refs(graph, provenance):
                     f"{{run.{m.group(1)}}} after include seeds and run_context binding — "
                     "supply it in the include `seeds` map or the run_context; "
                     "refused before any write or spawn")}
+    return None
+
+
+def _unbound_run_refs(graph):
+    """sys-vrovdu: fail-closed launch gate for PLAIN graphs — every {run.KEY}
+    surviving the binding pass refuses the launch before any write or spawn,
+    naming the node and the key. The old seed-less leniency spawned nodes with
+    literal placeholders in their prompts (measured 10-04: run
+    20261004-150243-bindability-probe-real launched a graph whose {run.KEY}
+    refs had nothing to bind against), and dry_run passed the same hole. The
+    map-binding path already names missing keys; this closes the absent-
+    context/seed-binding gap. Text surface is the SHARED _include_text_fields
+    traversal, so goal/context/question/profile, echo output, gate options and
+    fan-out goals cannot drift apart. dry_run shares the gate: it returns AFTER
+    every gate above it, so a preview refuses exactly what the launch refuses."""
+    for node in graph.get("nodes") or []:
+        for text in _common._include_texts(node):
+            m = _RUN_REF.search(text)
+            if m:
+                return {"error": (
+                    f"run placeholder unbound: node {node.get('id', '?')!r} still references "
+                    f"{{run.{m.group(1)}}} and no run_context binding supplied it — pass "
+                    f'run_context {{"{m.group(1)}": "<value>"}} (or an include seeds map) '
+                    "or remove the placeholder; refused before any write or spawn")}
     return None
 
 
@@ -2475,13 +2499,18 @@ def act_run(args):
     if _includes:
         # Composite runs are fail-closed on unbound refs (live composite-run receipt,
         # 2026-09-30): a shelved sub-graph's {run.KEY} contract is invisible to a
-        # parent author, so the plain-graph leniency (literal placeholder spawns)
-        # silently seats a placeholder verdict when run_context is absent or a
-        # seed value missed a key. Every {run.*} surviving include seeds +
-        # run_context binding is a refusal before any write/spawn.
+        # parent author. Alias-scoped first for the better subtree message; the
+        # general gate below then covers parent-authored nodes alike (sys-vrovdu).
         bad = _unbound_include_refs(graph, _includes)
         if bad:
             return bad
+    # sys-vrovdu: plain graphs are fail-closed too — a {run.KEY} surviving the
+    # binding pass (typically: no run_context at all) refuses the launch naming
+    # the key. Sits AFTER binding and BEFORE the dry_run return, so dry_run
+    # refuses exactly what the launch would.
+    bad = _unbound_run_refs(graph)
+    if bad:
+        return bad
     # 1.1 (RATIFY F2): profile validation runs on the RENDERED graph ({run.KEY} resolved).
     bad = _profile_error(graph)
     if bad:
