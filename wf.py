@@ -6014,6 +6014,144 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                             pass
                 except OSError:
                     return
+            # ---------- est-fanout-cell (sys-96dcod): the [fan + consolidate] cell ----------
+            # Wave-consolidation: when this fan has a declared partner, its FINISHED
+            # members flow into batch children AS THEY LAND instead of waiting for
+            # the whole aggregate — the straggler tail stops blocking consolidation.
+            # A batch child is an ordinary agent child (own skey, budget, retry)
+            # templated from the PARTNER node and fed the batch's canonical records;
+            # verdicts append consolidate/<fan>.batches.jsonl. The partner itself
+            # never spawns: it commits wfcommon.consolidate_tally (machine census:
+            # every item answered or NAMED missing) at the wave boundary. batch=1 is
+            # "as they finish"; batch=N batches; the open batch always flushes with
+            # its tail NAMED at wave end / stop / quorum — never silently dropped.
+            cons_partner = next((m for m in byid.values()
+                                 if isinstance(m.get("consolidate"), dict)
+                                 and m["consolidate"].get("from") == nid), None)
+            cell = None
+            def _cell_flush():      # pre-bound no-op; the real one replaces it below
+                return              # only when cell is constructed (same else-branch)
+            if cons_partner is not None:
+                try:
+                    (run / "consolidate").mkdir(exist_ok=True)
+                except OSError:
+                    pass
+                # durable wave facts FIRST (even a disabled cell writes its
+                # ledger: the partner's tally must be able to count dispatched
+                # items and name every one missing — a cell that cannot feed
+                # itself cannot hide it).
+                _led = run / "consolidate" / f"{nid}.json"
+                _fin = run / "consolidate" / f"{nid}.batches.jsonl"
+                _led.write_text(json.dumps({"fan": nid, "partner": cons_partner["id"],
+                                            "dispatched": len(items), "pending": []}))
+                _fin.touch(exist_ok=True)
+                pinputs, perr = build_inputs(run, cons_partner, outputs)
+                if perr:
+                    log(run, "consolidate.disabled", node=nid, partner=cons_partner["id"],
+                        error=perr)
+                else:
+                    cell = {"node": cons_partner, "inputs": pinputs,
+                            "batch": int(cons_partner["consolidate"].get("batch") or 1),
+                            "pending": [], "finals": [], "inflight": 0,
+                            "lock": threading.Lock(),
+                            "pool": ThreadPoolExecutor(max_workers=2,
+                                                       thread_name_prefix=f"cell:{nid}")}
+                    # batch numbers continue across resume: old finals stay covered
+                    _bn = [1 + max((json.loads(l).get("batch", 0)
+                                    for l in _fin.read_text().splitlines() if l.strip()),
+                                   default=0)]
+
+                    def _cell_ledger():
+                        d = {"fan": nid, "partner": cons_partner["id"],
+                             "dispatched": len(items), "pending": list(cell["pending"])}
+                        _led.write_text(json.dumps(d))
+
+                    def _cell_batch(b, its):
+                        # ONE batch child: ordinary spawn, partner's seat, this
+                        # batch's canonical records as its payload. Committed like
+                        # an item (nodes/<partner>.<b>.json) BEFORE its event.
+                        payload = []
+                        for j in its:
+                            rj = results[j] or {}
+                            payload.append({"index": j,
+                                            "item": rj.get("item"),
+                                            "status": rj.get("status"),
+                                            "error_class": rj.get("error_class"),
+                                            "ms": rj.get("ms"),
+                                            "output": rj.get("output")})
+                        body = json.dumps(payload, ensure_ascii=False, indent=1,
+                                          default=str)
+                        if len(body) > AUTO_INPUTS_CAP:
+                            body = body[:AUTO_INPUTS_CAP] + "\n…[truncated; full records at nodes/]"
+                        goal = (cons_partner.get("goal") or "") + \
+                            f"\n\n## Batch {b} — {len(its)} finished fan-out members (indices {its})\n" \
+                            f"```json\n{body}\n```"
+                        sk = skey_for(run, byid, cons_partner, b)
+                        log(run, "consolidate.batch.started", node=nid, partner=cons_partner["id"],
+                            batch=b, items=its, skey=sk)
+
+                        def _bs():
+                            if meta["_stop"].is_set():
+                                return {"status": "failed", "error": "stopped before batch spawn",
+                                        "error_class": "cancelled", "ms": 0, "skey": sk}
+                            return run_child(meta, cons_partner, byid, goal,
+                                             cons_partner.get("context", ""),
+                                             cons_partner.get("schema"), steering=steering,
+                                             skey=sk, inputs=cell["inputs"], index=b)
+                        try:
+                            rb = _transient_retry(meta, _bs(), _bs, "consolidate.batch",
+                                                  {"node": nid, "partner": cons_partner["id"],
+                                                   "batch": b},
+                                                  node=cons_partner, cancel=meta["_stop"])
+                            rb = _bounded_retry(meta, rb, _bs, "consolidate.batch",
+                                                {"node": nid, "partner": cons_partner["id"],
+                                                 "batch": b},
+                                                node=cons_partner, index=b)
+                        except Exception as e:
+                            rb = {"status": "failed", "error": f"batch worker crashed: {e}",
+                                  "error_class": "crashed", "ms": 0, "skey": sk}
+                        with cell["lock"]:
+                            cell["inflight"] -= 1
+                            cell["finals"].append({"batch": b, "items": its,
+                                                   "status": rb["status"],
+                                                   "error_class": rb.get("error_class")})
+                        try:
+                            commit_item_record(run, cons_partner, byid, b, rb)
+                        except Exception as e:
+                            log(run, "item.commit.error", node=cons_partner["id"], index=b,
+                                error=f"batch: {type(e).__name__}: {e}")
+                        with open(_fin, "a") as f:
+                            f.write(json.dumps({"batch": b, "items": its, "status": rb["status"],
+                                                "error_class": rb.get("error_class")}) + "\n")
+                        log(run, "consolidate.batch.finished", node=nid,
+                            partner=cons_partner["id"], batch=b, items=its,
+                            status=rb["status"], error_class=rb.get("error_class"),
+                            ms=rb.get("ms"), skey=sk)
+
+                    def _cell_flush():
+                        # dispatch the currently-held batch (caller holds cell lock)
+                        if not cell["pending"]:
+                            return
+                        its, cell["pending"] = cell["pending"], []
+                        b = _bn[0]; _bn[0] += 1
+                        cell["inflight"] += 1
+                        _cell_ledger()   # names what is mid-flight before dispatch
+                        cell["pool"].submit(_cell_batch, b, its)
+
+            def _cell_on_item(i, r):
+                if cell is None:
+                    return
+                try:
+                    with cell["lock"]:
+                        if r["status"] in ("done", "partial"):
+                            cell["pending"].append(i)
+                            if len(cell["pending"]) >= cell["batch"]:
+                                _cell_flush()
+                        # failed/cancelled members are NOT dispatched: the tally
+                        # names them, the batch seat never gets a hollow record.
+                except Exception as e:
+                    log(run, "consolidate.error", node=nid, index=i,
+                        error=f"{type(e).__name__}: {e}")
             def _cancel_stragglers():
                 # queued items check fo_cancel before launch; in-flight children of
                 # THIS node (registry key "<node_id>:<id(proc)>") get SIGKILLed.
@@ -6239,6 +6377,9 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                 except Exception as e:   # an observation never disturbs the wave
                     log(run, "item.commit.error", node=nid, index=i,
                         error=f"straggler-watch: {type(e).__name__}: {e}")
+                # est-fanout-cell: a celled fan streams this finished member into
+                # its partner's next batch the same instant (no aggregate wait).
+                _cell_on_item(i, r)
             _strag_thread = threading.Thread(target=_straggler_watchdog, daemon=True,
                                              name=f"stragwatch:{nid}")
             _strag_thread.start()   # born with the wave; the finally below buries it
@@ -6247,6 +6388,13 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     list(ex.map(lambda t: one(*t), list(enumerate(items))))
             finally:
                 strag_stop.set()
+            # est-fanout-cell: the wave ends -> the open batch ALWAYS flushes with
+            # its tail NAMED (never silently dropped), then the pool drains so the
+            # finals exist before the partner's boundary tally reads them.
+            if cell is not None:
+                with cell["lock"]:
+                    _cell_flush()
+                cell["pool"].shutdown(wait=True)
             results = [r or {"status": "failed", "item": None, "error_class": "crashed", "ms": 0} for r in results]
             # sprint101 #7: stop-killed items are CANCELLED, not failures — they
             # count toward neither the failure list nor the quorum (hindsight-002946:
@@ -7166,7 +7314,48 @@ def main(run_id):
             log(run, "node.done", node=n["id"], join=True)
             states[n["id"]] = "done"; outputs[n["id"]] = out
 
+        # est-fanout-cell (sys-96dcod): consolidate partners commit at the wave
+        # boundary from the machine record — zero spawn of their own (their batch
+        # children were streamed DURING the fan's wave), zero prose verdict. The
+        # tally is wfcommon.consolidate_tally over consolidate/<fan>.json +
+        # <fan>.batches.jsonl: every dispatched item answered by a done/partial
+        # batch final or NAMED missing (failed members, undelivered tails). The
+        # fan failed => the partner fails typed (join-parent law, never a hang).
+        for n in rs.nodes:
+            con = n.get("consolidate")
+            if not isinstance(con, dict) or states[n["id"]] != "pending":
+                continue
+            src = con.get("from")
+            sst = states.get(src)
+            if sst == "failed":
+                _fail_precondition(run, n, rs.byid, [f"fan-out {src} failed"],
+                                   why="consolidate source failed: ")
+                states[n["id"]] = "failed"; continue
+            if sst not in ("done", "partial"):
+                continue                       # fan still running: next wave
+            _led = jload(run / "consolidate" / f"{src}.json", {}) or {}
+            finals = []
+            try:
+                for line in (run / "consolidate" / f"{src}.batches.jsonl"
+                             ).read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        try:
+                            finals.append(json.loads(line))
+                        except Exception:
+                            pass
+            except OSError:
+                pass
+            tally = wfcommon.consolidate_tally(
+                int(_led.get("dispatched") or 0), finals,
+                inflight=0, pending_batch=_led.get("pending") or [])
+            save_node(run, n, rs.byid, {"status": "done", "output": tally, "ms": 0})
+            log(run, "node.done", node=n["id"], consolidate=True,
+                dispatched=tally["dispatched"], consolidated=tally["consolidated"],
+                missing=tally["missing"], batches=len(tally["batches"]))
+            states[n["id"]] = "done"; outputs[n["id"]] = tally
+
         ready = [n for n in rs.nodes if kind(n).spawns is True and states[n["id"]] == "pending"
+                 and not n.get("consolidate")          # est-fanout-cell: boundary commit above
                  and deps_ok(n) and deps_res(n)]
         if ready:
             spawnable = []

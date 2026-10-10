@@ -11,7 +11,7 @@ is the straggler's second home). The grace constant is an ENGINE value
 36-cohort tail median 153s / p90 5,693s; 34-cohort p90 max/median 4.0).
 `run.json straggler_grace_s`/`straggler_poll_s` are LAUNCHER seams for this
 test only — FANOUT_KEYS deliberately omits them, so a graph that tries to tune
-its own clock fails validation with "unknown key" (haus ruling: a threshold the
+its own clock fails validation with "unknown key" (peer ruling: a threshold the
 timed party can tune is culture, not a sign).
 
 Test geometry (the RED-on-base pair both seats demanded — "didn't look" vs
@@ -87,7 +87,7 @@ check("math late-launched item is young (aged from launch, never from t0)",
       _v(False, T + 50, [T - 100], {1: T + 45, 2: T + 46}, [10.0], [1, 2]))
 check("math boundary is strict (age == grace stays silent)",
       _v(False, T + 180, [T], {1: T, 2: T}, [10.0], [1, 2]))
-# Door law (haus ruling): the author cannot tune the clock they're timed by.
+# Door law (peer ruling): the author cannot tune the clock they're timed by.
 _bad = {"name": "x", "nodes": [{"id": "f", "type": "agent",
         "fanout": {"items": [{"goal": "g"}], "straggler_grace_s": 1}}]}
 _errs = wfcommon.validate_graph_errors(

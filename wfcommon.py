@@ -695,6 +695,11 @@ ID_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # graph it baked itself. `reasoning` is validated per node (Q5).
 AGENT_KEYS = {"id", "type", "after", "goal", "context", "schema", "model", "provider", "toolsets",
               "max_turns", "timeout", "run_budget", "inputs", "fanout", "reasoning",
+              # est-fanout-cell (sys-96dcod): this agent is a fan-out's CONSOLIDATE
+              # partner — the engine streams its batch children as the fan's items
+              # finish (batch:1 = as-they-finish) and it commits a machine tally at
+              # the wave boundary instead of a spawn. See CONSOLIDATE_KEYS.
+              "consolidate",
               "tier", "shape", "repo",
               # #24/#25: fail-closed pinned routes. Default TRUE for nodes
               # that pin an explicit model — a submit ping that AFFIRMATIVELY proves
@@ -918,12 +923,58 @@ def grammar_errors(graph):
                         + f" (absent = {GRAMMAR_DEFAULT!r})"}]
     return []
 FANOUT_KEYS = {"items", "items_from", "goal", "schema", "quorum", "quorum_drain_s", "ledger"}
+# ---------- est-fanout-cell (sys-96dcod): the [fan + consolidate] cell ----------
+# Owner directive (2026-10-10): a standard unit pairing WITH the fan so operators
+# get wave-consolidation — finished members flow into consolidation while the
+# straggler tail is still out, instead of the whole aggregate waiting on it (the
+# straggler wake says "smoke"; the cell is how you stop needing to). A consolidate
+# node declares which fan-out it serves and how big a batch triggers a child:
+CONSOLIDATE_KEYS = {"from", "batch"}
+
+
+def consolidate_tally(n_items, finals, inflight=0, pending_batch=None):
+    """The machine tally an agent-free consolidate node commits at the wave
+    boundary (census law: every dispatched item is ANSWERED or NAMED missing,
+    counted from records — the partner seat never gets to narrate coverage).
+
+      finals      committed batch-final rows [{batch, items:[i...], status,
+                  error_class?}, ...] read from consolidate/<fan>.jsonl
+      inflight    batch children still running when the tally is taken
+      pending_batch  indices collected for a batch that was never dispatched
+                  (flushed at wave end; it rides the tally as named, honest,
+                  never silently dropped)
+
+    An item is consolidated iff a final with status done/partial covers it.
+    Everything else is NAMED (never counted away). verdict:
+      'consolidated'        all items covered, nothing open
+      'consolidated_partial' some item not covered (named in `missing`)
+    """
+    pending_batch = pending_batch or []
+    covered, batch_rows = set(), []
+    for f in sorted(finals, key=lambda r: r.get("batch", 0)):
+        its = [i for i in f.get("items", []) if isinstance(i, int)]
+        ok = f.get("status") in ("done", "partial")
+        batch_rows.append({"batch": f.get("batch"), "items": its,
+                           "status": f.get("status"),
+                           "error_class": f.get("error_class")})
+        if ok:
+            covered.update(its)
+    missing = [i for i in range(n_items) if i not in covered]
+    return {"dispatched": n_items,
+            "consolidated": n_items - len(missing),
+            "missing": missing,
+            "open_inflight": inflight,
+            "pending_batch": list(pending_batch),
+            "batches": batch_rows,
+            "verdict": ("consolidated" if not missing and not inflight
+                        and not pending_batch else "consolidated_partial")}
+
 # ---------- est-fanout-straggler (sys-nxrhxo): the census-earned cohort floor ----------
 # Two independent offices measured their run shelves before picking the constant:
 # 36 cohorts (tail-past-cohort-median: median 153s, p90 5,693s; 16/36 >5min) and
 # 34 cohorts / 808 children at the >=10-item cut (p90 max/median 4.0, worst drag
 # 3,183s). GRACE_S=180 sits above the healthy-median tail of BOTH censuses. It is
-# an ENGINE CONSTANT, not an author knob (haus ruling: a threshold the timed party
+# an ENGINE CONSTANT, not an author knob (peer ruling: a threshold the timed party
 # can tune is culture, not a sign); a `fanout.straggler_grace_s` key is promoted
 # ONLY if a future census shows misfires — added at the census, not pre-hung.
 STRAGGLER_GRACE_S = 180
@@ -1543,11 +1594,42 @@ def validate_graph_errors(nodes, *, admission=False):
                             E(nid, "fanout.schema", "fanout.schema must be an object")
                         else:
                             schema_check(nid, "fanout.schema", fsc)
-            elif "goal" not in n:
-                # #59: present-but-bad goals are reported by the typed check above
-                # (one named error per defect); this legacy branch owns only the
-                # ABSENT goal on a non-fan-out agent, message pinned by
-                # test_validate_0923 / test_string_type_validation_59.
+            # est-fanout-cell (sys-96dcod): the [fan + consolidate] cell's shape.
+            # A consolidate node is an ordinary agent that ALSO declares which
+            # fan-out it consolidates — the pairing is the machine-checked edge,
+            # never prose. Cross-node laws (from names a real fan-out, the edge
+            # exists, exactly one partner per fan) sit after the node loop.
+            con = n.get("consolidate")
+            if con is not None:
+                if not isinstance(con, dict):
+                    E(nid, "consolidate", "consolidate must be an object "
+                                          "(keys: " + json.dumps(sorted(CONSOLIDATE_KEYS)) + ")")
+                else:
+                    for k in sorted(set(con) - CONSOLIDATE_KEYS):
+                        E(nid, f"consolidate.{k}", "unknown key; allowed: "
+                                                  + json.dumps(sorted(CONSOLIDATE_KEYS)))
+                    _f = con.get("from")
+                    if not isinstance(_f, str) or not _f.strip():
+                        E(nid, "consolidate.from", "consolidate.from must name the "
+                                                   "fan-out node this node consolidates")
+                    elif _f == nid:
+                        E(nid, "consolidate.from", "consolidate.from cannot name itself")
+                    _b = con.get("batch")
+                    if _b is not None and (isinstance(_b, bool) or not isinstance(_b, int) or _b < 1):
+                        E(nid, "consolidate.batch", "consolidate.batch must be a positive "
+                                                    "int (1 = consolidate as items finish)")
+                    if fo is not None:
+                        E(nid, "consolidate", "one node is either the fan or its "
+                                              "consolidate partner, never both")
+                    if n.get("fanout") is None and "goal" not in n:
+                        # batch children are spawned with this node's goal as their
+                        # template — the cell's seat still needs a mission.
+                        E(nid, "goal", "consolidate node has no goal (it templates its batch children)")
+            elif fo is None and "goal" not in n:
+                # (the consolidate branch above owns the goal law for partner
+                # nodes; this legacy branch keeps its exact pre-cell semantics:
+                # ABSENT goal on a non-fan-out, non-consolidate agent, message
+                # pinned by test_validate_0923 / test_string_type_validation_59)
                 E(nid, "goal", "agent node has no goal")
             if n.get("require_route") is not None and not isinstance(n.get("require_route"), bool):
                 # #25: boolean only — an unknown truthy value must not silently
@@ -1691,6 +1773,34 @@ def validate_graph_errors(nodes, *, admission=False):
     if seen != len(idset):
         stuck = sorted(i for i in idset if indeg[i] > 0)
         E(None, "after", f"cycle in graph (nodes still waiting on each other: {stuck})")
+    # est-fanout-cell (sys-96dcod): the cell's CROSS-node laws — the pairing is a
+    # machine-checked edge, never prose. `from` must name a real fan-out node that
+    # is a DIRECT `after` parent of the partner (the same data-edge law as
+    # fanout.items_from's head: a consolidate consumes its fan's committed wave);
+    # and exactly ONE partner per fan (two consumers of one wave = two ledgers).
+    _fan_seen = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        con = n.get("consolidate")
+        if not isinstance(con, dict):
+            continue
+        nid = n.get("id")
+        _f = con.get("from")
+        if isinstance(_f, str) and _f and _f != nid:
+            tgt = byid_of.get(_f)
+            if tgt is None:
+                E(nid, "consolidate.from", f"consolidate.from {_f!r} names no node")
+            elif not isinstance(tgt.get("fanout"), dict):
+                E(nid, "consolidate.from", f"consolidate.from {_f!r} is not a fan-out node")
+            elif _f not in (n.get("after") or []):
+                E(nid, "consolidate.from", f"consolidate.from {_f!r} must be in this "
+                                           f"node's `after` list (the cell is an edge)")
+            else:
+                if _f in _fan_seen:
+                    E(nid, "consolidate.from", f"fan-out {_f!r} already has consolidate "
+                                               f"partner {_fan_seen[_f]!r}; one partner per wave")
+                _fan_seen[_f] = nid
     return errs
 
 def validate_graph(nodes):
