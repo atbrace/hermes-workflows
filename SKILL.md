@@ -42,8 +42,13 @@ ending your turn right after `run` is how runs stall.
 - Independent tasks: separate nodes or one `fanout` with `items`. `quorum` races:
   once N succeed, the rest are cancelled — `quorum_drain_s:<s>` (default 0) gives
   running stragglers a drain window to land before that cancel.
-- Shared settings go in a graph-level `defaults` once. Leave node budgets unset and name a `shape`;
-  see [budgets](references/budgets.md). A constant travels as an `echo` node, never an agent spawn.
+- Pair every fan-out: its partner agent declares `consolidate:{"from":"<fan>","batch":1}`
+  and finished members consolidate WHILE stragglers run; the partner commits a machine
+  tally (every item answered or NAMED missing). A left-open item past the cohort's
+  clock fires one `fanout.stragglers` wake — steer, accept partial, or stop. Never poll.
+- Shared settings go in a graph-level `defaults` once. Leave node budgets unset and
+  name a `shape`; see [budgets](references/budgets.md). A constant travels as an
+  `echo` node, never an agent spawn.
 - RunBudget `budget:{tokens:N}` (graph root or node) caps metered tokens only, never `usd`; a capped run closes `partial` and `budget_ledger.json` names the never-launched.
 - Routing: an unset `model` rides the seat default, including fan-outs — name
   `model` (with `provider`) per node only when routing matters; never change
