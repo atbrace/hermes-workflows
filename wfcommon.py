@@ -918,6 +918,54 @@ def grammar_errors(graph):
                         + f" (absent = {GRAMMAR_DEFAULT!r})"}]
     return []
 FANOUT_KEYS = {"items", "items_from", "goal", "schema", "quorum", "quorum_drain_s", "ledger"}
+# ---------- est-fanout-straggler (sys-nxrhxo): the census-earned cohort floor ----------
+# Two independent offices measured their run shelves before picking the constant:
+# 36 cohorts (tail-past-cohort-median: median 153s, p90 5,693s; 16/36 >5min) and
+# 34 cohorts / 808 children at the >=10-item cut (p90 max/median 4.0, worst drag
+# 3,183s). GRACE_S=180 sits above the healthy-median tail of BOTH censuses. It is
+# an ENGINE CONSTANT, not an author knob (haus ruling: a threshold the timed party
+# can tune is culture, not a sign); a `fanout.straggler_grace_s` key is promoted
+# ONLY if a future census shows misfires — added at the census, not pre-hung.
+STRAGGLER_GRACE_S = 180
+
+
+def straggler_verdict(now_ts, finish_ts, launch_ts, durations_s, open_idx, *,
+                      grace_s=STRAGGLER_GRACE_S):
+    """The pure cohort math behind the fanout.stragglers wake — no clock, no
+    filesystem, so the door and tests replay ledgers directly.
+
+      finish_ts   wall-clock finish stamps of COMPLETED items (>=1 or no verdict)
+      launch_ts   {index: spawn wall-clock} for still-open items (unlaunched/queued
+                  items are scheduling, not squirreling — they get no verdict)
+      durations_s completed items' own runtimes (seconds) — a legitimately slow
+                  cohort raises the floor with itself: floor = max(grace, p50)
+      open_idx    indices still open
+
+    t0 is the COHORT MEDIAN finish, never wave start: fast lanes declare sooner and
+    the constant self-calibrates per workflow shape. An item launched after t0 is
+    measured from its launch. Requires >=1 completed and >=2 open — a majority
+    already committed needs no smoke (quorum law); one lone long item is a timer
+    problem, not a cohort-straggler problem. Returns None (silent) or a dict with
+    the named counts the events.jsonl line carries."""
+    import statistics
+    if len(finish_ts) < 1 or len(open_idx) < 2:
+        return None
+    launched = [launch_ts[i] for i in open_idx if launch_ts.get(i) is not None]
+    if not launched:
+        return None                       # every open item is queued behind the cap:
+        #                                    scheduling, not squirreling — no verdict
+    t0 = statistics.median(finish_ts)
+    floor_s = max(grace_s, statistics.median(durations_s) if durations_s else 0)
+    # An item launched AFTER the cohort median is young: age it from its launch,
+    # never from t0 (a late wave-2 item under the cap must not read as a straggler).
+    oldest = max(now_ts - max(t0, lt) for lt in launched)
+    if oldest <= floor_s:
+        return None
+    return {"cohort_median_ts": t0, "floor_s": round(floor_s, 1),
+            "oldest_open_age_s": round(oldest, 1),
+            "open": sorted(open_idx), "done": len(finish_ts),
+            "items": len(finish_ts) + len(open_idx)}
+
 DEFAULTS_KEYS = {"schema", "timeout", "max_turns", "reasoning", "provider", "model", "context",
                  "require_route",   # #25: bool — fail-closed pinned routes (see AGENT_KEYS)
                  # est-2ek.1.164: the transport fallback rungs fill from graph

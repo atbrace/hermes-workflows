@@ -457,6 +457,18 @@ _WAKE_TEMPLATES = {
                   "exit records and error details are there), apply ONE corrective "
                   "amend/repair/resume action, then stop. Do not poll or wait: the "
                   "next transition — including completion — wakes this session.",
+    # est-fanout-straggler (sys-nxrhxo): mid-flight observation, NOT a node state.
+    # The fan-out wave loop's cohort watchdog fires this once per driven wave when
+    # the census floor trips (see STRAGGLER_GRACE_S); the counts/indices ride in the
+    # fanout.stragglers events.jsonl line (authority law: this template stays fixed).
+    "fanout.stragglers": "Your workflow run has FAN-OUT STRAGGLERS: items are still "
+                         "running long after their cohort finished (the fanout.stragglers "
+                         "line in events.jsonl names indices and cohort timing; a celled "
+                         "fan-out has already consolidated the finished members). Take "
+                         "ONE action now: steer the open items, accept the partial (an "
+                         "explicit quorum commits at majority on its own), or stop the "
+                         "run — then stop. Do not poll: completion and failure still "
+                         "wake this session.",
     "run.done": "Your workflow run is DONE. summary.md is written; status shows the "
                 "node outputs. Read it once and CLOSE THE LOOP: the run's outputs are "
                 "inputs, not the deliverable. If the run was a triage/discovery stage, "
@@ -5917,6 +5929,91 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     t.start()
             fo_cancel = threading.Event()
             done_count = [0]
+            # est-fanout-straggler (sys-nxrhxo): the wave-local cohort ledger.
+            # launch_ts books the ACTUAL spawn instant per item (a retry/re-drive
+            # OVERWRITES its stamp — that freshness is precisely the re-arm signal:
+            # a retried straggler mints a new wake identity, "retry is the
+            # straggler's second home"). Wave-local by design: a runner respawn or
+            # amend re-drive builds a fresh wave with a fresh ledger.
+            launch_ts = {}
+            census = {"finish": [], "dur": [], "fired": None}
+            strag_lock = threading.RLock()   # re-entrant: a tick books under it and
+            #                                  re-evaluates through the same frame
+            strag_stop = threading.Event()
+            # The grace floor is an ENGINE constant; the manifest override below is a
+            # TEST/launcher seam on run.json (never a graph key — FANOUT_KEYS omits
+            # it, so a graph that writes `straggler_grace_s` fails validation with
+            # "unknown key": the author cannot tune the clock they're timed by).
+            grace_s = meta.get("straggler_grace_s") or wfcommon.STRAGGLER_GRACE_S
+            poll_s = meta.get("straggler_poll_s") or 30.0   # same launcher seam
+            def _straggler_eval():
+                # Verdict + once-per-driven-wave latch + events.jsonl line + notify,
+                # ALL under strag_lock so the latch's read-check-write is atomic
+                # across watchdog/tick races (notify() dedupes by tid too, but the
+                # ledger check-then-append is not our second net to lean on).
+                # strag_lock is NOT the results lock and never a seat admit — a
+                # slow POST under it blocks only other census ops. Reads the
+                # current open set from `results`; a hair-stale open-count only
+                # ever makes the census stricter (>=2 open), never a missed fire.
+                with strag_lock:
+                    open_idx = [j for j, x in enumerate(results) if x is None]
+                    v = wfcommon.straggler_verdict(time.time(), census["finish"],
+                                                   launch_ts, census["dur"], open_idx,
+                                                   grace_s=grace_s)
+                    if v is None:
+                        return
+                    disc = (f"{nid}:{v['done']}:"
+                            + hashlib.sha256(",".join(
+                                f"{j}:{launch_ts.get(j, 'q'):.3f}" for j in v["open"]
+                            ).encode()).hexdigest()[:8])
+                    if census["fired"] == disc:
+                        return      # same cohort state: one wake per driven wave;
+                        #             a retry overwrites its launch stamp -> fresh
+                        #             disc -> re-armed (retry is the straggler's
+                        #             second home)
+                    census["fired"] = disc
+                    silent = [j for j in v["open"]
+                              if not any(e.get("event") == "budget_cue.injected"
+                                         and e.get("node") == nid and e.get("index") == j
+                                         for e in _events_iter(run))]
+                    log(run, "fanout.stragglers", node=nid, open=v["open"],
+                        silent=silent, done=v["done"], items=v["items"],
+                        oldest_open_age_s=v["oldest_open_age_s"], floor_s=v["floor_s"])
+                    notify(run, "fanout.stragglers", key=disc)
+            def _straggler_tick(r):
+                # A completing item records ITS completion, then re-evaluates the
+                # cohort — the event a wake names already carries this item (this
+                # runs right after its item.finished).
+                with strag_lock:
+                    census["finish"].append(time.time())
+                    if isinstance(r.get("ms"), (int, float)):
+                        census["dur"].append(r["ms"] / 1000.0)
+                _straggler_eval()
+            def _straggler_watchdog():
+                # The fat-tail cohort has NO further completions to ride — after the
+                # last fast item lands, only a clock-edge re-evaluation ages the open
+                # items past the floor. This thread is born with the wave and dies
+                # with it (same lifetime discipline as _cancel_stragglers): it is
+                # NOT a daemon and never outlives `ex.map`. A poll here is the
+                # ENGINE clocking its own cohort; the WAKE still tells the owner to
+                # never poll — the difference is who watches (the harness, once).
+                while not strag_stop.wait(poll_s):
+                    try:
+                        with strag_lock:
+                            pass
+                        _straggler_eval()
+                    except Exception as e:
+                        log(run, "item.commit.error", node=nid,
+                            error=f"straggler-watchdog: {type(e).__name__}: {e}")
+            def _events_iter(run):
+                try:
+                    for line in (run / "events.jsonl").read_text(encoding="utf-8").splitlines():
+                        try:
+                            yield json.loads(line)
+                        except Exception:
+                            pass
+                except OSError:
+                    return
             def _cancel_stragglers():
                 # queued items check fo_cancel before launch; in-flight children of
                 # THIS node (registry key "<node_id>:<id(proc)>") get SIGKILLed.
@@ -6025,6 +6122,12 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         ms=0, attempts=0, attempts_log=[])
                     return
                 held = []   # est-g255 P255-1: this item's deferred seat (run_child seat_hold)
+                # est-fanout-straggler: the census books the ACTUAL spawn instant per
+                # item INSIDE _spawn — a retry/re-drive overwrites the stamp, and
+                # that freshness is exactly the wake re-arm (retry is the straggler's
+                # second home). Wall-clock; the wake identity is revision-keyed.
+                def _book_launch():
+                    launch_ts[i] = time.time()
                 def _spawn(resume_preamble="", model_override=None):
                     if meta["_stop"].is_set() or fo_cancel.is_set():
                         return {"status": "failed", "error": "cancelled at quorum",
@@ -6047,6 +6150,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         return {**adopted, **_profile_evidence(node)}
                     sk = skey_for(run, byid, node, i)   # fresh nonce per spawn (retry respawns
                     log(run, "item.started", node=nid, index=i, skey=sk)   # are fresh sessions)
+                    _book_launch()   # census launch stamp at the ACTUAL spawn instant
                     return run_child(meta, node, byid, goal, node.get("context", ""),
                                      fo.get("schema") or node.get("schema"), steering=steering,
                                      skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
@@ -6128,8 +6232,21 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     tail=(r.get("raw") or "")[-300:] or None,
                     log_path=str(run / "runner.log"), child_log_path=r.get("log_path"),
                     skey=r.get("skey"), ms=r.get("ms"))
-            with ThreadPoolExecutor(max_workers=cap) as ex:
-                list(ex.map(lambda t: one(*t), list(enumerate(items))))
+                # est-fanout-straggler: cohort census tick AFTER the canonical
+                # event — the ledger a wake names already carries this completion.
+                try:
+                    _straggler_tick(r)
+                except Exception as e:   # an observation never disturbs the wave
+                    log(run, "item.commit.error", node=nid, index=i,
+                        error=f"straggler-watch: {type(e).__name__}: {e}")
+            _strag_thread = threading.Thread(target=_straggler_watchdog, daemon=True,
+                                             name=f"stragwatch:{nid}")
+            _strag_thread.start()   # born with the wave; the finally below buries it
+            try:
+                with ThreadPoolExecutor(max_workers=cap) as ex:
+                    list(ex.map(lambda t: one(*t), list(enumerate(items))))
+            finally:
+                strag_stop.set()
             results = [r or {"status": "failed", "item": None, "error_class": "crashed", "ms": 0} for r in results]
             # sprint101 #7: stop-killed items are CANCELLED, not failures — they
             # count toward neither the failure list nor the quorum (hindsight-002946:
