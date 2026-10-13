@@ -285,11 +285,17 @@
    "exit": 0,
    "measured": "2026-10-08 local foreground run (38/38 PASS, rc=0) on feat/resume-hint-130 after review fixes; the row can only ever make CI red, never green",
    "supersede_by": "next green-CI refresh (replace with the CI-captured row)"
+  },
+  {
+   "test": "test_on_exit_129.py",
+   "exit": 0,
+   "measured": "2026-10-11 foreground python3 -m pytest tests/test_on_exit_129.py -q on the implementation over cec8c6d: 8 passed, rc=0; RED test-only commit 717e7cba on cec8c6d failed rc=1.",
+   "supersede_by": "next green-CI refresh (replace with the CI-captured row)"
   }
  ],
  "source_issue": 75,
  "totals": {
-  "cases": 278,
+  "cases": 279,
   "red": 0
  },
  "tracking_item": "est-9yl2"

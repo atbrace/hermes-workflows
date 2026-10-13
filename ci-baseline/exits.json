@@ -1383,5 +1383,10 @@
   "test": "test_resume_hint_130.py",
   "exit": 0,
   "log": "/home/runner/work/hermes-workflows/hermes-workflows/ci-out/test_resume_hint_130.py.log"
+ },
+ {
+  "test": "test_on_exit_129.py",
+  "exit": 0,
+  "log": "local-foreground/test_on_exit_129.py.log"
  }
 ]
