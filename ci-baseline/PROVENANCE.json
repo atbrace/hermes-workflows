@@ -237,8 +237,16 @@
       "test": "test_effects_receipt_pygyy.py"
     },
     {
-      "added_by": "est-h3yi PR lane (author CI-pending; refreshed only from a green Serial suite job)",
-      "test": "test_graph_regen_z_parser_h3yi.py"
+      "test": "(M02 deletion batch)",
+      "removed": [
+        "test_graph_gate.py",
+        "test_graph_single_writer_153.py",
+        "test_graphify_dedupe_27.py",
+        "test_graph_regen_z_parser_h3yi.py",
+        "test_graph_orphan_deletion_231.py"
+      ],
+      "measured": "rows removed with their tests on the M02 branch; test_graph_regen_z_parser_h3yi.py goes too \u2014 its subject scripts/graph_regen.py + graph_path_ban.py are deleted with the regime (the -z parser lives in git history / the #314 branch); test_graph_orphan_deletion_231.py (est-i24i, #378) goes with the regime too \u2014 it exec-modules scripts/graph_path_ban.py which M02 deletes (the deletion-aware orphan check polices a regime that should not exist: #319's own ruling on #245), and test_packaging's unpacked graph-closure check is removed with it",
+      "supersede_by": "next green-CI refresh"
     },
     {
       "exit": 0,
@@ -319,7 +327,7 @@
   ],
   "source_issue": 75,
   "totals": {
-    "cases": 284,
+    "cases": 279,
     "red": 0
   },
   "tracking_item": "est-9yl2"
