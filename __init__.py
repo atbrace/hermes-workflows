@@ -2398,6 +2398,21 @@ def act_validate(args):
                 "errors": [{"node": None, "field": "model", "msg": err}]}
     out = {"ok": True, "errors": [], "resolved_routes": routes,
            "hint": "validated only — nothing pinged or written; run it: workflow run graph=..."}
+    # est-vj8m (#256 ask 2), UNION with s12 (#421): shape-p95 budget advisory
+    # rides the SAME warnings channel, appended AFTER defaults fill so
+    # max_turns is the resolved cap. Dict-typed (node/field/msg) per the pin;
+    # s12 rows stay plain strings in the same list.
+    for node in graph["nodes"]:
+        if _common.kind(node).spawns is not True:
+            continue
+        shape = node.get("shape") or _common.DEFAULT_SHAPE
+        budget = _common.SHAPE_PRESETS[shape]["max_turns"]
+        cap = node["max_turns"]  # already resolved by apply_graph_defaults
+        if cap < budget:
+            warnings.append({"node": node["id"], "field": "max_turns",
+                             "msg": f"max_turns {cap} is below shape {shape!r} p95 "
+                                    f"budget {budget}; leave max_turns unset to use "
+                                    "the preset, or keep a measured explicit cap"})
     if warnings:
         out["warnings"] = warnings
     return out
