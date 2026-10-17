@@ -39,11 +39,10 @@ ending your turn right after `run` is how runs stall.
   spawn.
 - A node `schema` makes the runner write the reply contract into the prompt — keep
   contract prose out of goals.
-- Independent tasks: separate nodes or one `fanout` with `items`. `quorum` races:
-  once N succeed, the rest are cancelled — `quorum_drain_s:<s>` (default 0) gives
-  running stragglers a drain window to land before that cancel.
-- Shared settings go in a graph-level `defaults` once. Leave node budgets unset and name a `shape`;
-  see [budgets](references/budgets.md). A constant travels as an `echo` node, never an agent spawn.
+- Independent tasks: separate nodes or one `fanout` with `items`. `quorum` races: once N succeed, the rest are cancelled — `quorum_drain_s:<s>` (default 0) gives running stragglers a drain window; pair every fan-out with a `consolidate` partner (`{"from":"<fan>","batch":1}`) — left-open items past the cohort clock fire one `fanout.stragglers` wake, never poll.
+- Shared settings go in a graph-level `defaults` once. Leave node budgets unset and
+  name a `shape`; see [budgets](references/budgets.md). A constant travels as an
+  `echo` node, never an agent spawn.
 - RunBudget `budget:{tokens:N}` (graph root or node) caps metered tokens only, never `usd`; a capped run closes `partial` and `budget_ledger.json` names the never-launched.
 - Routing: an unset `model` rides the seat default, including fan-outs — name
   `model` (with `provider`) per node only when routing matters; never change
