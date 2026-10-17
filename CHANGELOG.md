@@ -1,6 +1,59 @@
 # Changelog
 
-## Unreleased
+## 1.3.9 — 2026-10-17
+
+Patch release: 43 merged PRs since v1.3.8 — runner hardening (zombie-reap
+settle, attempt history, launcher pins, workdir grant), seat admission
+(FIFO queue, pool-recorded cap), wake catch-all, node-targeted kill, token
+run-budget cap, the session workflow tray and the public starter library.
+
+### Merged PRs (all via the maintainer account)
+
+- fix(door): no placeholder mints a phantom run_context; s12 warn rows on validate; library show (est-kg3y) (#421)
+- test(ratelimit): spawn-proportional W1 wall bound + per-pid fixture (est-qp8dj) (#420)
+- fix(process-tree): report unreadable quiescence as unknown (est-cbbc) (#384)
+- docs: harden amend, read-model and lane rules from estate operation history (#426)
+- fix(post-exit): write launching receipt before first launch attempt (est-fdulo b) (#434)
+- feat(gates): zero-turn gate answers on the admission lane (+dispatch witness observer) (#429)
+- feat(library): continuous discovery-time structural admission (est-2ek.1.828) (#415)
+- fix(wf): harvested max_turns partial reaches the bounded layer-2 re-drive; per-node harvest_policy clamp (est-ggqs, #256 claim 1) (#422)
+- feat(library): curated public library/general/ starter set + door packaged fallback (#51) (#423)
+- feat(validate): warn on below-shape turn budgets and document lane exits (#256) (#381)
+- feat(door): s12 advisory nudge for single-char/vowel-only node ids (est-6ihr6) (#405)
+- feat(seats): FIFO queue admission + validated operator cap knobs (est-2ek.1.856/857) (#324)
+- fix(#44): child-probe tri-state runner.lock liveness + safe heal of the wedged runner.lock (N30 re-port; supersedes #271) (#439)
+- feat(runner): declared bead_close read-back gate at the commit edge (est-13z1) (#360)
+- feat(cards): hook-led card ledger replaces the per-turn runs-root scan (lane 2, est-w86l0) (#440)
+- fix(scrub): re-anchor stale est-13z1/est-q2nwx guards by feature token (main red at ee5018d) (#442)
+- feat(orphan-held): session-lifecycle observers name runs whose owner died at a gate (lane 4, est-w86l0) (#441)
+- fix: distinguish external signal death from quorum cancellation (#380)
+- feat(hooks): p1 / outbound (config-gated, default-off) (#432)
+- test(833): seat_wait pass-through assertion is wall-clock-tick immune (est-b9dtf) (#444)
+- fix(toolsets): refuse declared-empty selection at graph load; warned fail-closed at the seam (#427) (#446)
+- feat(seats): pool-recorded cap arbitrates admission; two-runner combined cap (est-mg5o2) (#425)
+- feat(desktop): session workflow tray above the composer (#233)
+- fix(door): explicit-provider seat alias pings the alias target id (est-55z04) (#437)
+- fix(read-model): supersede stale fan-out spawn facts after aggregate done (est-zvc7u) (#376)
+- feat(validator): admit agent when/on_skip through the bounded grammar (#132 slice 2) (#383)
+- perf(fingerprint): memoize the efp DAG walk — one def_hash per node, not per path (#433)
+- fix(runner): timed-out attempt's corpus+log survive verbatim into next attempt (est-hls8y) (#436)
+- feat(workflow): node-targeted lane kill — action=kill (est-cl7t) (#438)
+- fix(runner): run_child grants the child workdir on HERMES_WRITE_SAFE_ROOT_EXTRA, a channel core cannot replace (est-2mhl) (#445)
+- feat(wake): class-coverage registry + catch-all waker (est-jbcrw) (#449)
+- fix(seats): seat cap authoritative at spawn — stale inherited WORKFLOW_MAX_SEATS loses to the fresh .env read (est-mg5o2) (#451)
+- fix(read-model): live runner's foreign-pid-namespace child reads running, not pending (est-2ek.1.818) (#297)
+- feat(pin-delta): fail-closed host-effects gate for the vendor/catalog re-pin lane (est-zee7e) (#329)
+- fix(runner): park's attempts history survives the transport ladder (est-ja41) (#353)
+- fix(pack): the release ZIP runs the tests it ships — ship fake-b1, git-free fallback for the 954r pin (est-1nkx) (#358)
+- fix(policy): forbid equivalent Anthropic route spellings (est-e0yqy) (#375)
+- scripts: horde_gen.py — wave-generator successor, W19 defect fixes 2-5 (est-a5obt) (#414)
+- fix(runner): zombie/empty-tree counts as reaped before the #61 fail-close; drained-during-check never dead-letters (#448) (#450)
+- fix(runner): recover missing installation launcher pins (#379)
+- fix(amend): name every RUNNING node an amend resets (#366) (#390)
+- feat(drift): offline checkout probe (#125 item 3, est-b994) (#382)
+- feat(run-budget): tokens-only pre-dispatch cap + graceful budget_exhausted partial (est-3acn) (#435)
+
+### Notes
 
 - **Wake-router class coverage + catch-all (est-jbcrw, dead-landing census
   verdict 4):** `notify()` can no longer return silently for an event outside
