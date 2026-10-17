@@ -83,10 +83,10 @@ ending your turn right after `run` is how runs stall.
   `stop` is terminal. Details: [operations](references/operations.md).
 - Lint before launching with `workflow{action:"validate", graph:…}` — the door's
   whole validation, zero writes, no liveness ping.
-- Optional recipes: `library` lists; `run` with `from:<name>` replays; `save`
-  explicitly shelves reusable graphs. One-off `run` needs no library lookup,
-  tags, save or `why_not_library`. Explicit study-only `submit` retains its
-  receipt requirement. [grammar](references/grammar.md).
+- Optional recipes: `library` lists; `run` with `from:<name>` replays; `save` explicitly shelves
+  reusable graphs and always stamps provenance; a `run_context:{required?,defaults?}` contract
+  refuses a launch missing a key, pre-write. One-off `run` needs no library lookup, tags, save or
+  `why_not_library`. Explicit study-only `submit` retains its receipt requirement. [grammar](references/grammar.md).
 - No double-dispatch for pollers: `run` with `lane_key:<key>` — while an UNFINISHED
   incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume`
   means `wait` it — never replace it; `stop` is the explicit abandonment. Keys are
