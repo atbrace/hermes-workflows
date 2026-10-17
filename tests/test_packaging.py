@@ -177,6 +177,10 @@ def main() -> None:
             # probe below cannot see it — pin the ZIP membership directly.
             check("hooks_outbound.py ships in the ZIP (wf.py spec-loads it; the shipped bridge test needs it)",
                   root + "hooks_outbound.py" in members)
+            # P3 (#430, est-w86l0 lane): __init__.py spec-loads subagent_accounting.py by
+            # FILE PATH when the token is allowed — same est-4vnq finding-4 shape.
+            check("subagent_accounting.py ships in the ZIP (__init__.py spec-loads it)",
+                  root + "subagent_accounting.py" in members)
             checksum_text = archive.read(root + "SHA256SUMS").decode("utf-8")
             rows = [line.split("  ", 1) for line in checksum_text.splitlines()]
             check("SHA256SUMS verifies every pinned source entry",

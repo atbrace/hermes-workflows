@@ -110,15 +110,17 @@ try:
     _reg_src = src[src.index("def register(ctx):"):]
     _sites = _re.findall(r'ctx\.register_hook\(\s*["\']([A-Za-z0-9_]+)["\']', _reg_src)
     _surface = dict(door._hook_surface())
-    check("every ctx.register_hook site lives in register() and names a surface hook",
-          len(_sites) >= 1 and all(n in _surface for n in _sites), str(_sites))
-    check("the literal sites are exactly the card ledger's three hooks",
-          sorted(_sites) == sorted(door._CARD_HOOKS) == sorted(["post_tool_call", "pre_llm_call", "transform_llm_output"]),
+    _GATED_ADDITIONS = {"subagent_stop"}  # P3 config-gated lane: a literal site of its own, gated by its own allow-list, pinned by tests/test_subagent_accounting_p3.py
+    check("every ctx.register_hook site lives in register() and names a surface or gated-addition hook",
+          len(_sites) >= 1 and all(n in _surface or n in _GATED_ADDITIONS for n in _sites), str(_sites))
+    check("the literal sites are the card ledger's three hooks (plus sanctioned config-gated additions)",
+          sorted(n for n in _sites if n not in _GATED_ADDITIONS)
+          == sorted(door._CARD_HOOKS) == sorted(["post_tool_call", "pre_llm_call", "transform_llm_output"]),
           str(_sites))
     check("the gate is one allow-list read and every site is membership-gated",
           "_hooks = _hook_allowlist()" in _reg_src
           and all(_re.search(rf'if "{n}" in _hooks:\s*\n\s*ctx\.register_hook\("{n}"', _reg_src)
-                  for n in _sites))
+                  for n in _sites if n not in _GATED_ADDITIONS))
     _loops = _re.findall(r'if _hook in _hooks:\s*\n\s*try:\s*\n\s*ctx\.register_hook\(_hook, _fn\)', _reg_src)
     check("the PR-3 + PR-4 variable-named loop site is membership-gated too, and no other site exists",
           len(_loops) == 1
