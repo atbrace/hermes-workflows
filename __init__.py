@@ -718,7 +718,7 @@ WORKFLOW_PARAMS = {
     "properties": {
         "action": {
             "type": "string",
-            "enum": ["run", "status", "wait", "release", "release_lock", "steer", "inbox", "amend", "diff", "stop", "list", "save", "submit", "library", "doctor_version", "validate"],
+            "enum": ["run", "status", "wait", "release", "release_lock", "steer", "inbox", "amend", "diff", "stop", "kill", "list", "save", "submit", "library", "doctor_version", "validate"],
             "description": "run=launch a graph; wait=read state, RESPAWNING an idle runner if work is pending (blocks to the next boundary when one is live; when the lock is PROVEN wedged — Errno 11 with the kernel ledger showing zero holders and the admission lease dead — wait heals it first, the #44 escape hatch); status=read-model of a run; release=answer a held human gate; release_lock=operator hatch for a wedged runner.lock (#44): renames the stranded inode aside under the admission heal-barrier and hands the lane a fresh lock path — REFUSES unless zero live holders are proven (never heals on EACCES or a live holder); steer=queue steering text for a node; inbox=(child-side, cooperative) pull late steering lines baked for THIS spawn — call once at a natural seam; amend=replace the graph (invalidates changed nodes + all downstream by fingerprint), or pass patch to edit a few node fields without resubmitting the whole graph; diff=confirm surface: runs the amend door with dry_run FORCED (accepts patch or graph), returns the preview + graph_diff and touches nothing; stop=request stop; list=all runs; save=shelve a graph in the library under a name (from run_id or inline graph); library=list shelved graphs richly (name, description, tags, provenance, path-relative id). validate=dry-run the door's validation pipeline (defaults fill + defect collection + model/route policy) with no ping and no writes; returns {ok, errors:[{node,field,msg}], resolved_routes}. run from=<name> replays a shelved graph. submit=quarantine a hand-rolled graph for study (requires why_not_library >=80 chars; never joins the library — the quartermaster's human-gated loop decides); inbox kind=submissions lists them newest-first. doctor_version=read-only version truth for THIS install: {live_version, newest_packaged, source_commit, drift} comparing plugin.yaml against the install.json provenance that pack.py stamps at build time \u2014 one read, no network.",
         },
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
@@ -781,6 +781,7 @@ WORKFLOW_PARAMS = {
         "gate_id": {"type": "string", "description": "release: gate node id."},
         "node": {"type": "string", "description": "steer: target node id (pending node picks it up at spawn; a LIVE child pulls it at its next seam via its own inbox call — the prompt is never rewritten)."},
         "text": {"type": "string", "description": "steer: the steering message."},
+        "cmd": {"type": "string", "enum": ["kill"], "description": "steer: cmd=kill = node-targeted lane kill (node required): that lane's in-flight children are SIGKILLed and the node finishes failed with error_class=killed; sibling nodes and the run keep going. Never queues steering text."},
         "dry_run": {"type": "boolean", "description": "amend: true = validate + preview {added, removed, changed, will_rerun, unchanged, graph_diff} ONLY — nothing is written, the runner is not touched. Normal amends echo the same lists. run: true = the same pre-launch gates (validate, bind, profile, policy, model resolve, route ping, quota, route enforcement) return {ok, dry_run, models, routes} and NOTHING is written — no run dir, no lane entry, no spawned runner."},
         "patch": {"type": "object", "description": "amend/diff: per-node field patch instead of resubmitting the whole graph: {\"nodes\": {\"<existing id>\": {\"<field>\": value}}, \"name\": str?} — shallow merge per node, null deletes a field; unknown ids, id changes, new nodes, and other top-level keys are refused by name. Exclusive with graph/graph_path. The patched graph goes through the FULL amend door (validation, CAS, frozen replay, preview); amends.jsonl still records the resolved full graph."},
         "timeout": {"type": "number", "description": "wait: max seconds to block while a runner is live (default 600, capped 1800). Self-yields ~330s segments under the harness tool deadline with status+note — call wait again until terminal."},
@@ -3862,6 +3863,13 @@ def act_release_lock(args):
     return out
 
 def act_steer(args):
+    # est-cl7t: steering admission for a lane kill. cmd=kill is NOT steering text —
+    # it is the node-targeted kill (act_kill). Without this door an empty
+    # steering line was queued silently and the lane ran to done.
+    if args.get("cmd") not in (None, "", "kill"):
+        return {"ok": False, "error": f"unknown steer cmd {args.get('cmd')!r}; only cmd=kill (lane kill) is admitted"}
+    if args.get("cmd") == "kill":
+        return act_kill(args)
     r = run_dir(args.get("run_id"))
     graph = jload(r / "graph.json")
     if not graph:
@@ -4195,6 +4203,33 @@ def act_stop(args):
         return {"ok": True, "note": "runner spawned to consume the stop marker"}
     return {"ok": True, "note": "stop recorded; the live runner consumes it at its next boundary"}
 
+def act_kill(args):
+    """est-cl7t: node-targeted lane kill (action=kill). SIGKILLs the
+    in-flight children of ONE node and fails that node with error_class=killed.
+    Sibling nodes and the run keep going: no stop.request, no run-wide stop."""
+    run_id, nid = args.get("run_id"), args.get("node")
+    if not run_id:
+        return {"error": "run_id required"}
+    if not isinstance(nid, str) or not nid:
+        return {"error": "node required (the lane to kill)"}
+    r = run_dir(run_id)
+    if not (r / "graph.json").exists():
+        return {"error": "unknown run_id"}
+    graph = jload(r / "graph.json", {}) or {}
+    if nid not in {n.get("id") for n in graph.get("nodes") or []}:
+        return {"error": f"unknown node {nid!r} in run {run_id}"}
+    st = run_state(r)
+    if st and st["status"] in ("done", "failed", "stopped"):
+        return {"ok": True, "already": st["status"]}
+    kd = r / "kill"
+    kd.mkdir(exist_ok=True)
+    marker = kd / f"{nid}.json"
+    marker.write_text(json.dumps({"node": nid, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
+    return {"ok": True, "node": nid,
+            "note": "lane kill recorded; the live runner SIGKILLs this node's in-flight children "
+                    "within ~2s and the node finishes failed with error_class=killed; sibling nodes "
+                    "and the run continue. The kill marker stays for this run: a killed lane stays killed."}
+
 def act_list(_args):
     roots = [runs_root()]
     legacy = _common.launch_runs_root()
@@ -4273,7 +4308,7 @@ def act_doctor_version(args):
 
 ACTIONS = {"run": act_run, "status": act_status, "wait": act_wait, "release": act_release,
            "release_lock": act_release_lock,
-           "steer": act_steer, "inbox": act_inbox, "amend": act_amend, "diff": act_diff, "stop": act_stop, "list": act_list,
+           "steer": act_steer, "inbox": act_inbox, "amend": act_amend, "diff": act_diff, "stop": act_stop, "kill": act_kill, "list": act_list,
            "save": act_save, "submit": act_submit, "library": act_library,
            "doctor_version": act_doctor_version, "validate": act_validate}
 
