@@ -64,7 +64,8 @@ when_true = wfcommon.when_true
 child_metrics = wfcommon.child_metrics
 budget_tokens = wfcommon.budget_tokens
 prune_states = wfcommon.prune_states
-dep_satisfied = wfcommon.dep_satisfied
+# (est-7m6wv horde) `dep_satisfied` re-bind deleted: the runner enforces the
+# after-edge law through release_law, never this direct handle (zero call sites).
 active_child = wfcommon.active_child
 admission_ledger_errors = wfcommon.admission_ledger_errors   # #85: artifact-admission guard at runner re-validation
 FP_RULE_VERSION = wfcommon.FP_RULE_VERSION
@@ -576,6 +577,10 @@ _WAKE_TEMPLATES = {
                 "contains the run summary. Execution completion is not verification of the "
                 "user's task and does not authorize additional work. Research-only work "
                 "can end with its report; no dispatch, publication or curation is required.",
+    "run.partial": "The workflow execution ended PARTIAL — a graceful RunBudget cap: the "
+                   "ledger names what never launched, banked verdicts are committed. This "
+                   "notification does not authorize additional work; re-launch under a "
+                   "larger budget or amend if the capped work must finish.",
 }
 
 # CLOSED registry of lifecycle events a call site may pass to notify()
@@ -583,7 +588,7 @@ _WAKE_TEMPLATES = {
 # run 20261016-172339-iron-gravity). Drift — a call site waking an event not
 # listed here — is a CLASS GAP: it still wakes on the fixed catch-all body
 # below and prints WORKFLOW_WAKE_UNMAPPED_EVENT; it never goes silent again.
-_WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done",
+_WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done", "run.partial",
                           # runner-emitted mid-flight class (est-fanout-straggler
                           # sys-nxrhxo; registered at rebase onto the est-jbcrw
                           # registry so the mapped template carries no alarm)
@@ -2154,7 +2159,7 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
                            "fatal_quota", "ratelimit", "route_unavailable",
                            "incomplete_work", "early_death", "cancelled",
-                           "schema", "spawn", "inputs",
+                           "schema", "spawn", "inputs", "killed",
                            "quorum", "fanout_empty", "crashed", "unknown",
                            # est-13z1: the node's output claims an estate bead was
                            # closed; the runner read the store itself (`bd show`)
@@ -2357,14 +2362,9 @@ def _budget_cue_inject(run, node, index, skey, home, max_turns, margin, steer_fi
     return True
 
 def _quota_cache_path():
-    """#24 (b): seat-local memory of models known to be subscription-exhausted."""
-    import os
-    from pathlib import Path
-    override = os.environ.get("WF_QUOTA_CACHE")
-    if override:
-        return Path(override)
-    return (Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-            / "cache" / "workflow-quota-cache.json")
+    """#24 (b): seat-local memory of models known to be subscription-exhausted.
+    ONE resolver lives in wfcommon (shared with the door's refusal gate)."""
+    return wfcommon.quota_cache_path()
 
 def _quota_note(model, marker):
     """#24 (b): record model -> reset horizon from a fatal_quota marker.
@@ -5415,7 +5415,6 @@ def _poll_registered_job(meta, node, byid):
 
 
 def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
-    harvest_schema = strip_engine_disclosure(schema, (node or {}).get("substrate_substituted"))  # #116
     """790c6ad: ADOPT a verified live orphan instead of re-spawning it (the
     respawned-runner token-loss bug: waveA3 re-ran 8 live children from zero
     because the fanout branch re-spawned unconditionally). Contract mirrors
@@ -5430,6 +5429,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         (rc is unknowable — the child outlived its spawner — so death classes
         come from the capture and the core -Q turn report, never from a
         fabricated exit code)."""
+    harvest_schema = strip_engine_disclosure(schema, (node or {}).get("substrate_substituted"))  # #116
     run = meta["_run"]
     nid = node["id"]
     pid = child["pid"]
@@ -6583,6 +6583,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                                    resume_preamble=resume_preamble,
                                    reasoning_override=target,
                                    seat_cancel=seat_cancel, seat_hold=seat_hold,
+                                   seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: the admit lock must survive every re-drive
                                    model_override=model_override)
                     r2["ms"] = r2.get("ms", 0) + ms
                     r2["reasoning_gate400"] = {"requested": req_g, "clamped": target,
@@ -6612,7 +6613,8 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # refuses. Dead-or-empty returns None and every verdict below is the
     # pre-#61 path, byte-identical.
     tree_note = _account_tree(meta, node, index, spawn_no, proc.pid,
-                              tree_seen, bool(_harvest_death(out, schema)))
+                              tree_seen, bool(hv := _harvest_death(out, strip_engine_disclosure(
+                                  schema, (node or {}).get("substrate_substituted")))))
     if tree_note is not None:
         kind, extra = tree_note
         if kind == "fail":
@@ -6630,7 +6632,8 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         if kind == "partial":
             # the harvest law: the answer rode stdout while the real work
             # outlived the turn — commit it as partial, never a silent done.
-            hv = _harvest_death(out, schema)
+            # (hv: the stripped-schema harvest computed at the gate above —
+            # same view as every other harvest path, #116 disclosure out.)
             return {"status": "partial",
                     "error": "answer harvested from stdout while the spawn's process tree "
                              "outlived the turn; tree killed and proven dead — never a "
@@ -6660,7 +6663,10 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                       attempt_note=note + correction, steering=steering,
                       attempt=attempt + 1, skey=skey, inputs=inputs, index=index,
                       resume_preamble=resume_preamble,
-                      seat_cancel=seat_cancel, seat_hold=seat_hold)
+                      seat_cancel=seat_cancel, seat_hold=seat_hold,
+                      seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: admit atomicity survives the correction re-drive
+                      model_override=model_override,
+                      reasoning_override=reasoning_override)
         r["ms"] = r.get("ms", 0) + ms   # wall time of BOTH attempts
         return r
     eclass = "schema"   # sprint101 #3: was 'no_json' when unparseable, 'schema' when invalid
@@ -7124,8 +7130,8 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
     if meta["_stop"].is_set() or not (progress or lease):
         return r          # no positive progress evidence: fail closed (lease: the death
                          # fact itself is the evidence — the message was never processed)
-    if meta["_stop"].is_set():
-        return r
+    # (est-7m6wv horde) a second standalone stop-guard here was dead — the
+    # compound above already returns on stop; deleted.
     # jam-h22/h30: a rate-limited death waits a FULL-JITTER draw (cap 5 s) before
     # the one resume re-drive; every other class keeps the fixed 5.0 s wait.
     rl = _is_rate_limited(r.get("raw"))

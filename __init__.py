@@ -17,7 +17,6 @@ _spec = importlib.util.spec_from_file_location("_hermes_workflows_wfcommon", _CO
 _common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_common)
 run_state = _common.run_state
-validate_graph = _common.validate_graph
 validate_graph_errors = _common.validate_graph_errors
 admission_ledger_errors = _common.admission_ledger_errors   # #85: the artifact-admission guard
 efp = _common.efp
@@ -74,30 +73,18 @@ def _inline_graph_size_error(graph):
     if len(payload.encode("utf-8")) > GRAPH_MAX_BYTES:
         return {"error": f"graph exceeds {GRAPH_MAX_BYTES} bytes"}
     return None
-GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
-              "provenance",   # 1.1 (RATIFY F5): opt-in library provenance block, door-written
-              "grammar",      # #32: dialect tag of a shared file ("wf/1"; absent = wf/1)
-              "concurrency", "item_concurrency",  # #100: optional run-level limits
-              "budget",       # est-3acn: RunBudget — run-wide token cap ({"tokens": N});
-                              # tokens-only per the repo cost-trust law (USD excluded,
-                              # issue #124). Baked into run.json meta at submit, enforced
-                              # pre-dispatch by the runner; graceful budget_exhausted partial.
-              "requires_plugin",  # est-2ek.1.166: version handshake (coarse >=; stale => arm-time refusal)
-              "result",           # est-2ek.1.158: node id whose output is the run verdict
-              "run_context",  # #126 (est-syim): binding contract {required?, defaults?}; validated by
-                              # wfcommon.run_context_contract_errors, enforced at run launch
-              "on_exit",          # #129: agent reserved for terminal postmortem
-              "include"}      # composite graphs: shelved-DAG expansion annotation; STRIPPED on
-                              # expand, so a committed graph.json never carries it (only the
-                              # library author form does)
+
+# (est-7m6wv horde) the door's once-duplicate GRAPH_KEYS table is GONE: the live
+# unknown-graph-key law is wfcommon.STRUCTURAL_GRAPH_KEYS, enforced once in
+# validate_structural_graph — one grammar, one table (est-qeul precedent).
 
 
 def _model_policy_error(graph):
     """Validate effective node routes after defaults and resolution, before graph.json."""
     policy = graph.get("model_policy") or {}
-    forbidden = set(policy.get("forbidden_models") or []) | set(_seat_model_cfg().get("workflows_forbidden_models") or [])
-    errs = []
     seat = _seat_model_cfg()
+    forbidden = set(policy.get("forbidden_models") or []) | set(seat.get("workflows_forbidden_models") or [])
+    errs = []
     tiers = model_tiers()
     known = set(seat["aliases"]) | ({seat["default"]} - {None}) | set(tiers.values())
     for node in graph["nodes"]:
@@ -731,7 +718,7 @@ WORKFLOW_PARAMS = {
         "action": {
             "type": "string",
             "enum": ["run", "status", "wait", "release", "release_lock", "steer", "inbox", "amend", "diff", "stop", "kill", "list", "save", "submit", "library", "doctor_version", "validate"],
-            "description": "run=launch a graph; wait=read state, RESPAWNING an idle runner if work is pending (blocks to the next boundary when one is live; when the lock is PROVEN wedged — Errno 11 with the kernel ledger showing zero holders and the admission lease dead — wait heals it first, the #44 escape hatch); status=read-model of a run; release=answer a held human gate; release_lock=operator hatch for a wedged runner.lock (#44): renames the stranded inode aside under the admission heal-barrier and hands the lane a fresh lock path — REFUSES unless zero live holders are proven (never heals on EACCES or a live holder); steer=queue steering text for a node; inbox=(child-side, cooperative) pull late steering lines baked for THIS spawn — call once at a natural seam; amend=replace the graph (invalidates changed nodes + all downstream by fingerprint), or pass patch to edit a few node fields without resubmitting the whole graph; diff=confirm surface: runs the amend door with dry_run FORCED (accepts patch or graph), returns the preview + graph_diff and touches nothing; stop=request stop; list=all runs; save=shelve a graph in the library under a name (from run_id or inline graph); library=list shelved graphs richly (name, description, tags, provenance, path-relative id). validate=dry-run the door's validation pipeline (defaults fill + defect collection + model/route policy) with no ping and no writes; returns {ok, errors:[{node,field,msg}], resolved_routes}. run from=<name> replays a shelved graph. submit=quarantine a hand-rolled graph for study (requires why_not_library >=80 chars; never joins the library — the quartermaster's human-gated loop decides); inbox kind=submissions lists them newest-first. doctor_version=read-only version truth for THIS install: {live_version, newest_packaged, source_commit, drift} comparing plugin.yaml against the install.json provenance that pack.py stamps at build time \u2014 one read, no network.",
+            "description": "run=launch a graph; wait=read state, RESPAWNING an idle runner if work is pending (blocks to the next boundary when one is live; when the lock is PROVEN wedged — Errno 11 with the kernel ledger showing zero holders and the admission lease dead — wait heals it first, the #44 escape hatch); status=read-model of a run; release=answer a held human gate; release_lock=operator hatch for a wedged runner.lock (#44): renames the stranded inode aside under the admission heal-barrier and hands the lane a fresh lock path — REFUSES unless zero live holders are proven (never heals on EACCES or a live holder); steer=queue steering text for a node; inbox=(child-side, cooperative) pull late steering lines baked for THIS spawn — call once at a natural seam; amend=replace the graph (invalidates changed nodes + all downstream by fingerprint), or pass patch to edit a few node fields without resubmitting the whole graph; diff=confirm surface: runs the amend door with dry_run FORCED (accepts patch or graph), returns the preview + graph_diff and touches nothing; stop=request stop; kill=node-targeted lane kill (node required): that lane's in-flight children are SIGKILLed, the node finishes failed error_class=killed, siblings and the run keep going; list=all runs; save=shelve a graph in the library under a name (from run_id or inline graph); library=list shelved graphs richly (name, description, tags, provenance, path-relative id). validate=dry-run the door's validation pipeline (defaults fill + defect collection + model/route policy) with no ping and no writes; returns {ok, errors:[{node,field,msg}], resolved_routes}. run from=<name> replays a shelved graph. submit=quarantine a hand-rolled graph for study (requires why_not_library >=80 chars; never joins the library — the quartermaster's human-gated loop decides); inbox kind=submissions lists them newest-first. doctor_version=read-only version truth for THIS install: {live_version, newest_packaged, source_commit, drift} comparing plugin.yaml against the install.json provenance that pack.py stamps at build time \u2014 one read, no network.",
         },
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
         "name": {"type": "string", "description": "run: overrides graph.name (default workflow); save: library name overrides graph.name (lowercase, [-_.]); library: return one entry with refs-derived required params and an instantiate command. amend: set graph.name in the replacement graph; omitting it retains the run name."},
@@ -792,7 +779,7 @@ WORKFLOW_PARAMS = {
         "answer": {"type": "string", "description": "release: the human's answer text (from clarify)."},
         "graph_revision": {"type": "string", "description": "amend/steer/release: optional CAS token — the run's current graph revision (from run/status/amend). A token that differs from the head is refused with {error:'graph_revision_stale', yours, head} and NOTHING is written (no graph.json, no amends row, no restart.request, no inbox line, no gate answer). Absent = last-writer-wins (today's behavior). amend echoes the new head as graph_revision."},
         "gate_id": {"type": "string", "description": "release: gate node id."},
-        "node": {"type": "string", "description": "steer: target node id (pending node picks it up at spawn; a LIVE child pulls it at its next seam via its own inbox call — the prompt is never rewritten)."},
+        "node": {"type": "string", "description": "steer/kill: target node id (steer: a pending node picks it up at spawn; a LIVE child pulls it at its next seam via its own inbox call — the prompt is never rewritten. kill: see action=kill)."},
         "text": {"type": "string", "description": "steer: the steering message."},
         "cmd": {"type": "string", "enum": ["kill"], "description": "steer: cmd=kill = node-targeted lane kill (node required): that lane's in-flight children are SIGKILLed and the node finishes failed with error_class=killed; sibling nodes and the run keep going. Never queues steering text."},
         "dry_run": {"type": "boolean", "description": "amend: true = validate + preview {added, removed, changed, will_rerun, unchanged, graph_diff} ONLY — nothing is written, the runner is not touched. Normal amends echo the same lists. run: true = the same pre-launch gates (validate, bind, profile, policy, model resolve, route ping, quota, route enforcement) return {ok, dry_run, models, routes} and NOTHING is written — no run dir, no lane entry, no spawned runner."},
@@ -1496,10 +1483,7 @@ def _quota_refusal(graph, routes=None, cache_path=None, skip=()):
     `skip` = node ids that replay-skip and never spawn (A1: the amend call passes
     the frozen set — a DONE node pinning a quota-marked model must not refuse the
     whole amend when it will not re-run). Returns the error string or None."""
-    pth = Path(cache_path) if cache_path else (
-        Path(os.environ.get("WF_QUOTA_CACHE")
-            or (Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-                / "cache" / "workflow-quota-cache.json")))
+    pth = _common.quota_cache_path(cache_path)
     try:
         cache = json.loads(pth.read_text()) if pth.exists() else {}
     except Exception:
@@ -1567,7 +1551,7 @@ def _seat_model_cfg():
             al = {str(k): (v if isinstance(v, str) else (v or {}).get("model") or "") for k, v in (mc.get("aliases") or {}).items()}
             # Keep EMPTY targets in what we return: the FEEDBACK #43 preflight must see an
             # alias that declares itself but resolves to nothing. Resolution consumers
-            # derive their known-name sets via _seat_model_names(), which filters there.
+            # inline their known-name sets (aliases + default + tiers) at _resolve_models.
             return {"default": str(mc["default"]) if mc.get("default") else None, "aliases": al,
                     "workflows_forbidden_models": _common.seat_forbidden_models()}
     except Exception:
@@ -1621,9 +1605,8 @@ def _seat_aliases():
 def _seat_default():
     return _seat_model_cfg()["default"]
 
-def _seat_model_names():
-    """Names the seat itself resolves for -m: model aliases + the default model."""
-    return set(_seat_aliases()) | ({_seat_default()} - {None})
+# (est-7m6wv horde) _seat_model_names() deleted: zero callers; the one consumer
+# (_resolve_models) inlines the filtered set plus tier values on purpose.
 
 # ---------- run-dir plumbing ----------
 
@@ -2826,7 +2809,14 @@ def _params_resolve(graph, binding):
             V(slot, "required pin is unbound — pin slots carry run content and are never defaulted")
     if violations:
         return None, None, violations
-    return dict(graph, nodes=kept), eff, []
+    concrete = dict(graph, nodes=kept)
+    # est-7m6wv P-02 (horde): the WHOLE contract is popped, not just the node
+    # seams — graph.json is the fully concrete graph. The launch contract lives
+    # in run.json meta.binding (the stamp is the law); a committed params block
+    # could only ever go stale beside that stamp, and a stale declaration is
+    # exactly the disease class of this estate.
+    concrete.pop("params", None)
+    return concrete, eff, []
 
 
 def _profile_error(graph):
@@ -3185,6 +3175,19 @@ def act_run(args):
                     "errors": _viol, "field": "params",
                     "error_type": "params_contract", "violations": _viol}
         graph = _mat
+        # est-7m6wv P-01/P-03 (horde): the seam may patch node VALUES the grammar
+        # never enumerated (patch keys are legal node keys; values were unchecked)
+        # and cascade-prune can orphan the `result` target — the committed
+        # artifact must satisfy every door law. Re-validate the CONCRETE graph
+        # before any write (_params_resolve already popped the whole contract —
+        # what we validate is exactly what ships). "What you read is what runs"
+        # is now ENFORCED, not merely promised.
+        _bad = _validation_error(graph)
+        if _bad:
+            return {"error": "params contract: materialized graph invalid — "
+                             + str(_bad.get("error")),
+                    "errors": _bad.get("errors") or [_bad.get("error")],
+                    "field": "params", "error_type": "params_contract"}
         args = dict(args, run_context=_params_eff)
         # The triple is meaningful only for the graph as SUBMITTED (pre-
         # materialization): row bytes + binding reproduce everything else.
@@ -3485,14 +3488,17 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
     # written: a plain run keeps the exact golden key set.
     if "max_seats" in graph:
         meta["max_seats"] = graph["max_seats"]
-    if graph.get("params") is not None:
+    if binding is not None:
         # est-bwv0h: THE RUN RECORD IS THE ARCHIVE. The triple (row/graph bytes,
         # effective binding — tune defaults included, engine version) is the whole
         # reproducibility contract: re-materialize the concrete graph on demand for
         # replay and diff; nothing else needs stamping, and a plain (paramless) run
         # never grows this key — the golden bytes of every legacy run stand.
-        if binding is not None:
-            meta["binding"] = binding
+        # est-7m6wv P-02 corollary: the OUTER probe used to re-read
+        # graph["params"] — harmless while materialization kept the block, a
+        # silent stamp-dropper once the committed graph went fully concrete.
+        # The built stamp is the only authority: if act_run made one, it stamps.
+        meta["binding"] = binding
     # Composite runs record which shelf bytes they expanded from (author-form
     # provenance) and any non-fatal resolver notes (scratch collisions). Empty =
     # key omitted: a plain run keeps the exact pre-include run.json key set.
@@ -4312,6 +4318,16 @@ def act_amend(args):
             return {"error": f"patch: {e}"}
     if new is None:
         return {"error": "amend needs full replacement graph, graph_path, or patch"}
+    if new.get("params") is not None:
+        # est-7m6wv P-02 (horde): params seams are LAUNCH-TIME — this run's binding
+        # stamp already fixed them, and re-shelving seams into a committed graph
+        # would leave graph.json's "concrete graph" claim and meta.binding lying
+        # to each other. Materialize (launch reproduces it deterministically from
+        # row bytes + binding) and amend the concrete graph.
+        return {"error": "amend takes the CONCRETE graph: a params seam is a launch-time "
+                         "contract and this run's binding stamp fixed it at launch — "
+                         "send the materialized graph (or launch a new run)",
+                "field": "params", "error_type": "params_contract"}
     # #19 (est-19k9w): opt-in compare-and-set on the graph revision, checked
     # EARLY so a stale caller is refused before the expensive gates and before
     # anything is written (a dry_run reports staleness too). Tokenless = today's
@@ -4514,7 +4530,7 @@ def act_kill(args):
     if nid not in {n.get("id") for n in graph.get("nodes") or []}:
         return {"error": f"unknown node {nid!r} in run {run_id}"}
     st = run_state(r)
-    if st and st["status"] in ("done", "failed", "stopped"):
+    if st and st["status"] in ("done", "partial", "failed", "stopped"):
         return {"ok": True, "already": st["status"]}
     kd = r / "kill"
     kd.mkdir(exist_ok=True)

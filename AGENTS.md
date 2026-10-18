@@ -253,7 +253,7 @@ publication guards, and crash recovery.
 - `node.failed` events carry `error_class` from the closed set defined in code
   (`wf.py ERROR_CLASSES`) — `bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | early_death | effect_receipt |
   fanout_empty | fatal_quota | forbidden_model | incomplete_work |
-  inputs | item_record | lane_wreckage | lease_busy | left_live_descendants | malformed_turn | precondition | provider_400 | quorum |
+  inputs | item_record | killed | lane_wreckage | lease_busy | left_live_descendants | malformed_turn | precondition | provider_400 | quorum |
   ratelimit |
   route_substitution_denied | route_unavailable | schema | seat_cap | seat_unsupported | seat_wait | spawn | stale_graph | timeout | transport | transport_exhausted |
   unresolved_model`, plus `unknown` as the harvest-time default when nothing matches —
@@ -431,9 +431,9 @@ subscription routes.
 
 | Path | Owns |
 |---|---|
-| `__init__.py` | The tool door: schema, action dispatch (`run/status/wait/release/release_lock/steer/inbox/amend/stop/list/save/library`), model-tier resolution, preflight, compact/full payload shaping |
+| `__init__.py` | The tool door: schema, action dispatch (all 17: `run/status/wait/release/release_lock/steer/inbox/amend/stop/kill/diff/list/save/library/submit/validate/doctor_version` — the tool schema is the closed list), model-tier resolution, preflight, compact/full payload shaping |
 | `wf.py` | The background runner: scheduling, child spawn (`-Q` contract), retry gate, typed error classification, steer baking, tier stamping |
-| `wfcommon.py` | The read model: run state, fingerprints (`efp`), node records, metrics join, liveness. Read-only over a run directory |
+| `wfcommon.py` | The read model: run state, fingerprints (`efp`), node records, metrics join, liveness. Read-only over a run directory. Also the ONE grammar: `params`/`where`/`by` and the shared run-contract enumeration live here |
 | `dashboard/plugin_api.py` | Dashboard routes (API-only; the manifest hides the tab) |
 | `desktop/plugin.js` | Desktop half: runs list, DAG canvas, fan-out stacks, timeline, gate hand-off, `::workflow` card |
 | `SKILL.md`, `references/` | The authoring skill loaded into sessions. Portable: no host names, install paths, or provider lore |
@@ -443,7 +443,7 @@ subscription routes.
 | `scripts/pack.py` | Release zip + `SHA256SUMS` + sidecar |
 | `scripts/wofify.py` | WOFification authoring seam (est-h0huv): `inventory`/`scaffold`/`validate`/`shelf` for way-of-working-repo→pack conversion; not a door action — the deterministic half of the shelf factory (`references/wofification.md`) |
 | `scripts/make_public.py` | Publish-tree exporter with a private-string audit gate (`scripts/.scrub-guards` allow-list) |
-| `docs/` | Patched-core guide, manifest decisions, catalog entry + PR body, scrub audit |
+| `docs/` | Patched-core guide, manifest decisions, catalog entry + PR body, scrub audit, [native-hooks.md](docs/native-hooks.md) (the default-off p1/p3/p5 switch board) |
 
 ### 4b. Run the checks
 
@@ -516,6 +516,8 @@ draw the example workflow diagrams in `examples/README.md`, which DO ship.)
 
 ```sh
 # bump plugin.yaml / SKILL.md / references/grammar.md / CHANGELOG.md to the new version
+# re-pin every file:line cite in docs/catalog/disclosure-check.md (AGENTS 4d law:
+# the audit is exact-at-commit — a drifted cite sends readers to unrelated code)
 python3 scripts/suite.py . ci-out && hermes plugins validate . && python3 scripts/make_public.py /tmp/pub
 python3 scripts/pack.py                            # artifacts/hermes-workflows-<v>.zip + .sha256
 git tag v<version> && git push --tags
