@@ -3151,6 +3151,14 @@ def act_run(args):
     if bad:
         return bad
     assert graph is not None   # bad None <=> expansion succeeded (same law as `assert models`)
+    # #498: launch-time concurrency args join the graph channel BEFORE validation, so the
+    # existing law applies unchanged (shape, owner clamp, bake, fingerprint exemption);
+    # one channel per key — co-declaration is refused, silence is not an option.
+    for _ck in _CONCURRENCY_CAPS:
+        if _ck in args:
+            if _ck in graph:
+                return {"error": f"run: {_ck} declared both as a run arg and a graph key (one channel per key)"}
+            graph = {**graph, _ck: args[_ck]}
     bad = _validation_error(graph) or _team_args_error(args)
     if bad:
         return bad
