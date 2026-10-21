@@ -976,6 +976,17 @@ def _wake_resolved_failed(run, graph):
     except Exception:
         return None
 
+def _wake_failed_log_paths(run, graph):
+    """Log paths of the run's committed failed nodes, for the run.failed wake
+    pointer. Same fact path as the discriminant (node_rec's efp law via
+    _wake_resolved_failed); unreadable/absent log_path fields are omitted."""
+    failed = _wake_resolved_failed(run, graph)
+    if not failed:
+        return []
+    return [lp for lp in (
+        (jload(run / "nodes" / f"{nid}.json", {}) or {}).get("log_path")
+        for nid in failed) if lp]
+
 def _wake_identity(run, event, key, graph=None):
     """THE transition-instance discriminant (B3 law): a string that is IDENTICAL
     across retries/respawns of one lifecycle decision and DIFFERENT for every
@@ -1111,6 +1122,16 @@ def notify(run, event, key=None, graph=None):
         text = _wake_owner_text(run.name, event)   # AUTHORITY LAW: runner-generated only
         # never None since est-jbcrw: unmapped classes take the fixed catch-all
         # body — the template table remains the ONLY author of owner text.
+        if event in ("run.failed", "run.done"):
+            # Run-dir pointer (ratified fix shape): the template names log
+            # FILENAMES; without the directory a woken seat starts archaeology
+            # before it can read the failure. Protocol fields, runner-computed
+            # here from the run's own ledger — authority law r5 holds.
+            text += f" run_dir={json.dumps(str(run))}"
+            if event == "run.failed":
+                logs = _wake_failed_log_paths(run, graph)
+                if logs:
+                    text += f" failed_node_logs={json.dumps(logs)}"
         text = _wake_safe(text)          # second net: the fixed templates carry no secret,
         # but the run name is caller-supplied and every persisted field runs the redactor.
         tid = _wake_tid(run.name, event, disc)
