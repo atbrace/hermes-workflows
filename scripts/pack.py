@@ -174,6 +174,7 @@ INCLUDE_FILES = (
     "tests/fake_hermes.py",
     "tests/wf_test_isolation.py",
     "tests/wf_test_markers.py",  # est-jue3: shared parseable-content marker waits, imported by the shipped tests (est-4vnq finding-4 shape: an unshipped helper kills the suite)
+    "tests/fake_runner.py",  # shared fake-runner helper for door-scan fixtures — same unshipped-helper shape as wf_test_markers above
     "tests/fixtures/mac-source.txt",
     "tests/fixtures/seat_acquire_driver.py",   # est-g2xx: seat-semaphore driver
     # est-2ek.1.762: the spawn-isolation law's shared helpers — SHIPPED because
