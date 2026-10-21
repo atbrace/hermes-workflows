@@ -68,6 +68,11 @@ check("retry {bounded:0} validates (disable)", not graph_errs({"retry": {"bounde
 check("retry {transient:8} validates (cap edge)", not graph_errs({"retry": {"transient": 8}}))
 e = graph_errs({"retry": {"transient": 9}})
 check("retry transient 9 refused by name", any(x["field"] == "retry" for x in e), e)
+# est-jzi8a (PR #497 review, finding 2): the node-level `retry` validation block
+# was pasted TWICE in wfcommon — one malformed value reported the door error
+# twice. This pin is RED against the duplicated block.
+check("retry refusal reported exactly once (no duplicated validation block)",
+      sum(1 for x in e if x["field"] == "retry") == 1, e)
 e = graph_errs({"retry": 3})
 check("retry bare int refused", any(x["field"] == "retry" for x in e), e)
 e = graph_errs({"retry": {"max": 3}})
@@ -146,6 +151,34 @@ with tempfile.TemporaryDirectory() as td:
                                     {"node": "a"}, node=node)
         check("bounded 0 disables the ladder", calls["n"] == 0 and r["status"] == "failed", calls)
 
+        # est-jzi8a (PR #497 review, finding 1): at the consolidate.batch site the
+        # tuned re-drive must run under the PARTNER node (attempt identity and
+        # evidence paths — skey, work dir, log stem — are partner-keyed) while
+        # the cap keeps reading the CARRIER's retry key via cap_node.
+        seen = {}
+        orig_br = wf._bounded_retry
+
+        def spy_bounded(meta_, r, respawn, ev, ev_kw, node=None, index=None):
+            seen["node"] = node
+            return orig_br(meta_, r, respawn, ev, ev_kw, node=node, index=index)
+        wf._bounded_retry = spy_bounded
+        try:
+            carrier = node_with(bounded=3)                     # fan-out carrier owns the knob
+            partner = {"id": "cons", "type": "agent", "goal": "g"}   # no retry key
+            meta = mk_meta(td, partner)
+            respawn, calls = fake_bounded("transport")
+            try:
+                r = wf._bounded_retry_tuned(meta, death("transport"), respawn, "node",
+                                            {"node": "a"}, node=partner, cap_node=carrier)
+                check("cap_node reads the carrier's bounded cap (3 re-drives)",
+                      calls["n"] == 3, calls)
+                check("guard/evidence context stays on the passed node",
+                      seen.get("node") is partner, seen)
+            except TypeError as exc:
+                check("cap_node keyword accepted by _bounded_retry_tuned", False, exc)
+        finally:
+            wf._bounded_retry = orig_br
+
         # transient: author N=3 lets the api_calls==0 ladder re-spawn 3 times
         orig_calls = wf._attempt_api_calls
         wf._attempt_api_calls = lambda *a, **k: 0
@@ -185,6 +218,19 @@ if "run_id" in res:
     door.act_stop({"run_id": res["run_id"]})
 res = door.act_run({"graph": copy.deepcopy(G), "retry_budget": -1})
 check("door refuses a negative retry_budget", "error" in res, res)
+
+# ---------- 4. batch-site wiring (est-jzi8a finding 1, source-shape pin) ----------
+_wf_src = (ROOT / "wf.py").read_text()
+_i = _wf_src.find('_bounded_retry_tuned(meta, rb, _bs, "consolidate.batch"')
+check("consolidate.batch tuned call site present in wf.py source", _i != -1)
+if _i != -1:
+    _seg = _wf_src[_i:_i + 400].splitlines()
+    _seg = [l for l in _seg if not l.strip().startswith(("except", "rb = {"))]
+    _seg = "\n".join(_seg)
+    check("batch tuned re-drive passes partner context (node=cons_partner)",
+          "node=cons_partner" in _seg, _seg)
+    check("batch tuned re-drive keeps carrier caps (cap_node=node)",
+          "cap_node=node" in _seg, _seg)
 
 print("\nchecks failed: %d" % len(FAILS))
 sys.exit(1 if FAILS else 0)

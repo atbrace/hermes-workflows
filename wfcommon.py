@@ -1609,12 +1609,6 @@ def validate_graph_errors(nodes, *, admission=False):
         if "retry" in n:
             # hw-23c: node-level retry budget, defaults cascade already applied;
             # the same closed shape the defaults key gets (shared helper).
-            for e in _retry_block_errors(n["retry"], f"retry"):
-                e["node"] = nid
-                errs.append(e)
-        if "retry" in n:
-            # hw-23c: node-level retry budget; defaults cascade already applied.
-            # Same closed shape as the defaults key, through the shared helper.
             for e in _retry_block_errors(n["retry"], "retry"):
                 e["node"] = nid
                 errs.append(e)

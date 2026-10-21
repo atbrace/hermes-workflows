@@ -2169,9 +2169,11 @@ def _retry_caps(node):
     rb = (node or {}).get("retry")
     if not isinstance(rb, dict):
         return wfcommon.RETRY_DEFAULTS["transient"], wfcommon.RETRY_DEFAULTS["bounded"]
-    return (rb.get("transient") if isinstance(rb.get("transient"), int)
+    # est-jzi8a nit: `type is int`, not isinstance — bool must fall to the default
+    # law, never silently act as 0/1.
+    return (rb.get("transient") if type(rb.get("transient")) is int
             else wfcommon.RETRY_DEFAULTS["transient"],
-            rb.get("bounded") if isinstance(rb.get("bounded"), int)
+            rb.get("bounded") if type(rb.get("bounded")) is int
             else wfcommon.RETRY_DEFAULTS["bounded"])
 
 
@@ -7413,12 +7415,16 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
         r2["banked"] = r["banked"]
     return r2
 
-def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None):
-    """hw-23c: the bounded ladder under the node`s author cap (default 1 = the
+def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None, cap_node=None):
+    """hw-23c: the bounded ladder under the node's author cap (default 1 = the
     established single re-drive, byte-identical behavior). Every pass re-enters
     _bounded_retry whole, so all guards re-apply per pass: class, tool progress,
-    stop, per-run budget draw, #61 quarantine, #102 fresh-session evidence."""
-    cap = _retry_caps(node)[1]
+    stop, per-run budget draw, #61 quarantine, #102 fresh-session evidence.
+    est-jzi8a: `cap_node` decouples the cap source from the guard/evidence node —
+    the consolidate.batch site re-drives under the PARTNER node (attempt identity
+    and evidence paths are partner-keyed) while the author cap keeps reading the
+    fan-out CARRIER's retry key (per-node-key-wins law). Default: cap from node."""
+    cap = _retry_caps(node if cap_node is None else cap_node)[1]
     for _ in range(cap):
         r2 = _bounded_retry(meta, r, respawn, ev, ev_kw, node=node, index=index)
         if r2 is r or r2 is None:
@@ -7783,7 +7789,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                             rb = _bounded_retry_tuned(meta, rb, _bs, "consolidate.batch",
                                                       {"node": nid, "partner": cons_partner["id"],
                                                        "batch": b},
-                                                      node=node, index=b)
+                                                      node=cons_partner, index=b, cap_node=node)
                         except Exception as e:
                             rb = {"status": "failed", "error": f"batch worker crashed: {e}",
                                   "error_class": "crashed", "ms": 0, "skey": sk}
