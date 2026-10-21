@@ -1229,8 +1229,11 @@ def _defaults_errors(d):
         E(f"defaults.{k}", "unknown key; allowed: " + json.dumps(sorted(DEFAULTS_KEYS)))
     for k, hi in (("timeout", 86400), ("max_turns", 200)):
         v = d.get(k)
-        if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool)
-                              or v <= 0 or v > hi):
+        # hw-8xv: max_turns false is an author-declared no-cap; the runner spawns
+        # --max-turns only on truthiness, so false never reaches the CLI.
+        if v is not None and not (k == "max_turns" and v is False) \
+                and (not isinstance(v, (int, float)) or isinstance(v, bool)
+                     or v <= 0 or v > hi):
             # fb-validator-duo (2026-09-26): name the offending value AND the cap — the
             # old message cited only the cap, so 'max_turns 240 vs 200' read as a riddle.
             E(f"defaults.{k}", f"{k} {v!r} exceeds cap {hi} (must be a number in (0, {hi}])")
@@ -1760,7 +1763,10 @@ def validate_graph_errors(nodes, *, admission=False):
                                          "(drop the braces or fan the node out)")
         for k, hi in (("timeout", 86400), ("max_turns", 200), ("run_budget", 86400)):
             v = n.get(k)
-            if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0 or v > hi):
+            # hw-8xv: max_turns false is an author-declared no-cap; the runner spawns
+            # --max-turns only on truthiness, so false never reaches the CLI.
+            if v is not None and not (k == "max_turns" and v is False) \
+                    and (not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0 or v > hi):
                 # fb-validator-duo (2026-09-26): value AND cap in every numeric-bound
                 # rejection; the parenthetical is kept for substring-matchers.
                 E(nid, k, f"{k} {v!r} exceeds cap {hi} (must be a number in (0, {hi}])")

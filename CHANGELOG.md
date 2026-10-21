@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- fix(door): `max_turns: false` validates as an author-declared no-cap. The
+  runner already spawns `--max-turns` only on truthiness, so a declared false
+  was a working no-cap at spawn time; the two numeric-bound checks (node loop
+  and `defaults:` block) still rejected any bool, so the graph never booted.
+  They admit `false` for `max_turns` only — `true`, `timeout: false`, zero,
+  negatives, and over-cap numbers keep their existing rejections, and a
+  declared false survives the defaults merge untouched (no `--max-turns` flag
+  is spawned, committed-node metadata stays byte-stable since budget keys are
+  def-hash-excluded). Tests: tests/test_max_turns_false_hw8xv.py.
+
 - feat(door): #509 — door UX on unknown-key refusals. Every `graph_invalid`
   refusal banner now names the door's own version (`[door X.Y.Z]`, plus the
   machine field `door_version`), a refused top-level key that belongs to a
