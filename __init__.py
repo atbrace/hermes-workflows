@@ -267,6 +267,30 @@ _common.set_owner_setting_reader(_owner_setting_read)
 _CONCURRENCY_CAPS = {"concurrency": ("max_concurrency", 4),
                      "item_concurrency": ("max_item_concurrency", 8)}
 
+def _retry_bake(args):
+    """hw-23c: the door owns run.json meta; the runner has read retry_backoff /
+    retry_budget from it since #5/Q4 but the door never wrote them — the knobs
+    were test-only in practice. Bake the run args (validated) so an author can
+    reach them: retry_backoff [a, b] seconds, retry_budget N per-run draws."""
+    baked = {}
+    if "retry_backoff" in args:
+        v = args["retry_backoff"]
+        if (isinstance(v, list) and len(v) == 2
+                and all(type(x) in (int, float) and not isinstance(x, bool) and x >= 0
+                        for x in v)):
+            baked["retry_backoff"] = [float(v[0]), float(v[1])]
+        else:
+            return None, {"error": "retry_backoff must be a 2-element list of "
+                                   "non-negative numbers [first, second]"}
+    if "retry_budget" in args:
+        v = args["retry_budget"]
+        if type(v) is int and v >= 0:
+            baked["retry_budget"] = v
+        else:
+            return None, {"error": "retry_budget must be a non-negative integer"}
+    return baked, None
+
+
 def _concurrency_bake(graph):
     baked = {}
     for key, (setting, default) in _CONCURRENCY_CAPS.items():
@@ -740,6 +764,8 @@ WORKFLOW_PARAMS = {
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
         "name": {"type": "string", "description": "run: overrides graph.name (default workflow); save: library name overrides graph.name (lowercase, [-_.]); library: return one entry with refs-derived required params and an instantiate command. amend: set graph.name in the replacement graph; omitting it retains the run name."},
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
+        "retry_backoff": {"type": "array", "items": {"type": "number"}, "description": "run only: two non-negative seconds [first, second] replacing the transient ladder's retry schedule (default [5, 20]). The runner reads them from run.json meta; the node-level `retry` key caps attempts."},
+        "retry_budget": {"type": "integer", "description": "run only: non-negative cap on total retry draws across ALL ladders for the run (default 6). A storm beyond the budget fails typed retry_skipped, never silently retries on."},
         "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Library-sourced launches also render profile, echo string output, gate options and wait.until_argv; every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys."},
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "params": {"type": "object", "additionalProperties": {"type": "object"}, "description": "save: optional meta.params descriptions/default suggestions for run_context keys. Required keys derive from graph refs, never this metadata. Omission retains prior params; {} deliberately clears them. Missing/dead declarations warn, never prevent saving."},
@@ -3495,6 +3521,12 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
             "owner": _owner_stamp()}
     if concurrency_meta:
         meta.update(concurrency_meta)
+    # hw-23c: author-reachable retry knobs (validated at the door before any
+    # write; absent args => no keys => run.json byte-identical to pre-fix).
+    _rb, _rb_err = _retry_bake(args)
+    if _rb_err:
+        return _rb_err
+    meta.update(_rb)
     # est-3acn: RunBudget bake beside concurrency — the graph-root cap becomes
     # run.json meta.budget at submit (the submit-time truth; like concurrency it
     # does NOT ride amends — a capped run's ceiling is what its owner admitted).

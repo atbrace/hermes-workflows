@@ -2163,6 +2163,18 @@ DEFAULT_RETRY_BUDGET = 6
 # below is documentary law — membership in _BOUNDED_RETRY_CLASSES is the gate:
 # provider_400, unresolved_model, schema/no_json, cancelled,
 # spawn (3 real runs retried a permfail byte-identically 3x).
+def _retry_caps(node):
+    """hw-23c: author caps per ladder half for a node def. Absent key ==
+    today's hardcoded law (transient 2 re-spawns, bounded 1 re-drive)."""
+    rb = (node or {}).get("retry")
+    if not isinstance(rb, dict):
+        return wfcommon.RETRY_DEFAULTS["transient"], wfcommon.RETRY_DEFAULTS["bounded"]
+    return (rb.get("transient") if isinstance(rb.get("transient"), int)
+            else wfcommon.RETRY_DEFAULTS["transient"],
+            rb.get("bounded") if isinstance(rb.get("bounded"), int)
+            else wfcommon.RETRY_DEFAULTS["bounded"])
+
+
 _BOUNDED_RETRY_CLASSES = ("transport", "early_death", "cap_exhausted", "timeout",
                           # est-2ek.1.541: a malformed turn (final reply IS serialized
                           # tool-call markup, turn_exit_reason unknown) by definition made
@@ -7030,10 +7042,11 @@ def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
     ladder never touched."""
     run = meta["_run"]
     backoff = _retry_conf_params(meta)[0]
+    cap = _retry_caps(node)[0]   # hw-23c: author-tunable (default 2 = today's law)
     attempts_log = list(r.get("attempts_log") or [])   # est-ja41: inherited park history
     ladder_attempts = 0
     while (r.get("status") == "failed" and r.get("error_class") in _RETRYABLE_CLASSES
-           and ladder_attempts < 2):
+           and ladder_attempts < cap):
         if meta["_stop"].is_set():
             break
         calls = (_attempt_api_calls(run, r.get("skey"), r["profile_home"])
@@ -7400,6 +7413,24 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
         r2["banked"] = r["banked"]
     return r2
 
+def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None):
+    """hw-23c: the bounded ladder under the node`s author cap (default 1 = the
+    established single re-drive, byte-identical behavior). Every pass re-enters
+    _bounded_retry whole, so all guards re-apply per pass: class, tool progress,
+    stop, per-run budget draw, #61 quarantine, #102 fresh-session evidence."""
+    cap = _retry_caps(node)[1]
+    for _ in range(cap):
+        r2 = _bounded_retry(meta, r, respawn, ev, ev_kw, node=node, index=index)
+        if r2 is r or r2 is None:
+            return r if r2 is None else r2
+        r = r2
+        failed = (r.get("status") == "failed" and not r.get("harvest")) or (
+            r.get("status") == "partial" and isinstance(r.get("harvest"), dict))
+        if not failed or r.get("error_class") not in _BOUNDED_RETRY_CLASSES \
+                or meta["_stop"].is_set():
+            return r
+    return r
+
 def _harvest_clamp(node, r):
     """est-ggqs clamp policy, per node (`harvest_policy`, agent key; solo nodes —
     a fan-out aggregate already merges harvest credit). Runs at the commit edge
@@ -7749,10 +7780,10 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                                   {"node": nid, "partner": cons_partner["id"],
                                                    "batch": b},
                                                   node=cons_partner, cancel=meta["_stop"])
-                            rb = _bounded_retry(meta, rb, _bs, "consolidate.batch",
-                                                {"node": nid, "partner": cons_partner["id"],
-                                                 "batch": b},
-                                                node=cons_partner, index=b)
+                            rb = _bounded_retry_tuned(meta, rb, _bs, "consolidate.batch",
+                                                      {"node": nid, "partner": cons_partner["id"],
+                                                       "batch": b},
+                                                      node=node, index=b)
                         except Exception as e:
                             rb = {"status": "failed", "error": f"batch worker crashed: {e}",
                                   "error_class": "crashed", "ms": 0, "skey": sk}
@@ -7977,8 +8008,8 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                          lambda m, rp="": spawn(rp, model_override=m),
                                          "item", {"node": nid, "index": i},
                                          node=node, cancel=fo_cancel)      # est-2ek.1.164
-                    r = _bounded_retry(meta, r, spawn, "item", {"node": nid, "index": i},
-                                       node=node, index=i)
+                    r = _bounded_retry_tuned(meta, r, spawn, "item", {"node": nid, "index": i},
+                                             node=node, index=i)
                     r = _final_quiesce(meta, r, "item", {"node": nid, "index": i})   # #61
                 except Exception as e:
                     r = {"status": "failed", "error": f"worker crashed: {type(e).__name__}: {e}",
@@ -8188,7 +8219,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
             r = _transient_retry(meta, r, spawn, "node", {"node": nid}, node=node)
             r = _fallback_ladder(meta, r, lambda m, rp="": spawn(rp, model_override=m),
                                  "node", {"node": nid}, node=node)   # est-2ek.1.164
-            r = _bounded_retry(meta, r, spawn, "node", {"node": nid}, node=node)
+            r = _bounded_retry_tuned(meta, r, spawn, "node", {"node": nid}, node=node)
             r = _final_quiesce(meta, r, "node", {"node": nid})   # #61: never commit over a live tree
             r = _stamp_served(meta, r, node)   # dad50be0: seat truth at the commit, never the alias
             r = _lane_gate(run, node, r)   # 64c6772b: a declared lane must be clean at commit

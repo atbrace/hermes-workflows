@@ -830,6 +830,10 @@ AGENT_KEYS = {"id", "type", "after", "goal", "context", "schema", "model", "prov
               # 'validate' commits a schema-valid, self-declared-complete harvest
               # `done` with the death kept visible (wf._harvest_clamp). Solo only.
               "harvest_policy",
+              # hw-23c: author-tunable retry caps per ladder half ({transient,
+              # bounded}, 0..8, default = today's law 2/1). Rides graph
+              # `defaults` too; the per-run budget still caps every ladder.
+              "retry",
               # #459 G3 (est-vp148): bounded rework cycle — GRAMMAR ACCEPTANCE ONLY.
               # `rework:{to, max_iters}` names the node a verdict can send work back
               # to, with a hard iteration bound. The engine has no loop-back edge yet
@@ -839,6 +843,30 @@ AGENT_KEYS = {"id", "type", "after", "goal", "context", "schema", "model", "prov
               # until then a pack can express the shape and get a typed refusal, not a
               # silent degradation to exit-and-relaunch.
               "rework"}
+RETRY_BOUNDS = {"transient": 8, "bounded": 8}   # hw-23c: author ceiling per half
+RETRY_DEFAULTS = {"transient": 2, "bounded": 1}  # today's hardcoded law
+
+
+def _retry_block_errors(v, field):
+    """hw-23c: the ONE retry-block shape law, shared by the node key and the
+    graph defaults key. {transient?: int 0..8, bounded?: int 0..8}, either half
+    optional; 0 disables that ladder. Returns an error-list fragment."""
+    errs = []
+    def E(f, m):
+        errs.append({"node": None, "field": f, "msg": m})
+    if not isinstance(v, dict) or not v or set(v) - set(RETRY_BOUNDS):
+        E(field, f"retry {v!r} invalid: an object with optional integer keys "
+                 + json.dumps(sorted(RETRY_BOUNDS)) + f", each 0..{RETRY_BOUNDS['transient']} "
+                 "(0 disables that ladder; transient = api_calls==0 re-spawns, "
+                 "bounded = resume re-drive after a progressed death)")
+        return errs
+    for k in sorted(v):
+        x = v[k]
+        if type(x) is not int or x < 0 or x > RETRY_BOUNDS[k]:
+            E(field, f"retry.{k} {x!r} invalid: must be an integer 0..{RETRY_BOUNDS[k]}")
+    return errs
+
+
 HARVEST_POLICIES = ("strict", "validate")   # est-ggqs: agent `harvest_policy` values
 GATE_KEYS = {"id", "type", "after", "question", "options", "context", "when", "wait", "on_skip",
              "default_option", "hold_timeout",
@@ -1170,7 +1198,8 @@ DEFAULTS_KEYS = {"schema", "timeout", "max_turns", "reasoning", "provider", "mod
                  "require_route",   # #25: bool — fail-closed pinned routes (see AGENT_KEYS)
                  # est-2ek.1.164: the transport fallback rungs fill from graph
                  # defaults like any defaults key (per-node key wins).
-                 "fallback_models"}
+                 "fallback_models",
+                 "retry"}   # hw-23c: the retry block rides defaults too (per-node key wins)
 # Shape presets (sprint101 #11): max_turns/timeout per rough node shape = the p95 of
 # SUCCESSFUL agent nodes per shape, measured 2026-09-25 over the run dirs behind
 # census.json (80 runs, 219 committed-success agent nodes; shape classified from
@@ -1223,6 +1252,9 @@ def _defaults_errors(d):
             E("defaults.provider", "provider requires a non-empty model")
     if d.get("context") is not None and not isinstance(d["context"], str):
         E("defaults.context", "context must be a string")
+    if "retry" in d:
+        # hw-23c: same closed shape as the node key, shared through one helper.
+        errs.extend(_retry_block_errors(d["retry"], "defaults.retry"))
     if "fallback_models" in d:
         # est-2ek.1.164: same closed shape as the node key — list of non-empty
         # strings, <=8 rungs — so a bad defaults value is named at the door,
@@ -1295,6 +1327,10 @@ def apply_graph_defaults(graph):
             # (per-node key wins; a COPY so mutation never touches defaults).
             if n.get("fallback_models") is None and defaults.get("fallback_models") is not None:
                 n["fallback_models"] = list(defaults["fallback_models"])
+            # hw-23c: the retry block fills like any defaults key (per-node key
+            # wins; a COPY so mutation never touches defaults).
+            if n.get("retry") is None and defaults.get("retry") is not None:
+                n["retry"] = dict(defaults["retry"])
             # #25: `require_route` fills from defaults like any defaults key, but is
             # NEVER baked when both author and defaults left it unset — the runner
             # treats absent as the effective default (True on pinned nodes). Baking
@@ -1570,6 +1606,18 @@ def validate_graph_errors(nodes, *, admission=False):
                 E(nid, "harvest_policy", "harvest_policy is meaningless on a fan-out node "
                                          "(the aggregate already merges harvested items as "
                                          "done credit); set it on solo agent nodes")
+        if "retry" in n:
+            # hw-23c: node-level retry budget, defaults cascade already applied;
+            # the same closed shape the defaults key gets (shared helper).
+            for e in _retry_block_errors(n["retry"], f"retry"):
+                e["node"] = nid
+                errs.append(e)
+        if "retry" in n:
+            # hw-23c: node-level retry budget; defaults cascade already applied.
+            # Same closed shape as the defaults key, through the shared helper.
+            for e in _retry_block_errors(n["retry"], "retry"):
+                e["node"] = nid
+                errs.append(e)
         if "rework" in n:
             # #459 G3 spike: shape-only acceptance; the door refuses the LAUNCH
             # (act_run/act_amend) with error_type engine_loop_not_wired until the

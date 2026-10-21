@@ -55,6 +55,17 @@
   finished-green), the on-disk `runner_exit.json` key set is unchanged, and
   no second stored copy of the fact can drift from its law.
 
+- feat(retry): author-tunable retry. A node (or graph `defaults`) may now carry
+  `retry: {transient: N, bounded: K}` — integer caps 0..8 on the two auto-retry
+  ladders (defaults 2/1 = the previous hardcoded law; 0 disables that ladder
+  for the node). Every pass re-enters the existing guards whole (class, tool
+  progress, stop, per-run budget draw, #61 quarantine, #102). Alongside it the
+  door finally wires the knobs the runner has always read from run.json meta:
+  the run verb accepts `retry_backoff [a, b]` and `retry_budget N` and bakes
+  them (absent args => run.json byte-identical). Motivation (estate ledger):
+  council seats dying once on transport failed whole fan-outs where one bounded
+  re-drive would have healed the seat.
+
 - fix(contract): between-turns wake is the delivery DEFAULT; the wait loop was
   demoted to what it always mechanically was — optional blocking observation and
   the revive verb. Operator-facing truth audit (host ledger, ~40 runs): the
