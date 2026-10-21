@@ -9,6 +9,7 @@ apt-get install -y -qq -t noble python3.12 python3.12-venv nodejs git curl ca-ce
   apt-get install -y -qq python3 python3-venv nodejs git curl ca-certificates >/dev/null 2>&1
 PY=python3.12; command -v python3.12 >/dev/null || PY=python3
 $PY -c "import yaml" 2>/dev/null || $PY -m pip install -q pyyaml >/dev/null 2>&1 || true
+git config --global --add safe.directory '*' || true
 cd "$(dirname "$0")/.."
 git init -q 2>/dev/null; git config user.email ci@local; git config user.name ci
 BASE="${BASE_SHA:-$(git rev-parse HEAD~1 2>/dev/null || true)}"
