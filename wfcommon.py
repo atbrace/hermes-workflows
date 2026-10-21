@@ -4632,21 +4632,42 @@ def blocked_by(n, states, nodes_meta=None):
 def prune_states(nodes, states):
     """ONE derivation shared by runner and read model (no second store). A gate skipped
     with on_skip:'prune' commits `skipped`; a node whose `after` deps are ALL skipped is
-    itself `skipped` (terminal, non-failure). A join with >=1 live dep runs normally —
-    skipped deps count as satisfied. Mutates `states`; returns ids newly derived skipped
+    itself `skipped` (terminal, non-failure) — as is a node whose only live deps are
+    DONE ancestors of a skipped dep (prune is terminal: the pruned dep already waits on
+    them, so they carry no independent signal, and the fan-out's items_from head can no
+    more resurrect its pruned arm than a gate's own parent can). A join with a live dep
+    that is NOT an ancestor of a pruned dep runs normally — skipped deps count as
+    satisfied. Mutates `states`; returns ids newly derived skipped
     (pending before) so the runner can commit them as efp-stamped facts."""
     derived, changed = set(), True
     by_map = {n["id"]: n for n in nodes}
+    anc = {}
+    def ancestors(nid, guard=()):
+        if nid in anc:
+            return anc[nid]
+        s = anc[nid] = set()  # DAG is validated; the guard below is a walk-away belt
+        if nid in guard:
+            return s
+        for a in (by_map.get(nid) or {}).get("after") or ():
+            if a in by_map:
+                s.update(ancestors(a, guard + (nid,)) | {a})
+        return s
     while changed:
         changed = False
         for n in nodes:
             deps = n.get("after", [])
-            if states.get(n["id"]) == "pending" and deps and all(states.get(a) == "skipped" for a in deps):
-                # jam-h23: ONE exception — a fallback survives the pruner. If a
-                # skipped dep died FAILED and its on_fail names THIS node, that
-                # death is the node's reason to run, not a reason to prune it.
-                if any((by_map.get(a) or {}).get("on_fail") == n["id"] for a in deps):
-                    continue
+            if states.get(n["id"]) != "pending" or not deps:
+                continue
+            # jam-h23: ONE exception — a fallback survives the pruner. If a
+            # skipped dep died FAILED and its on_fail names THIS node, that
+            # death is the node's reason to run, not a reason to prune it.
+            if any((by_map.get(a) or {}).get("on_fail") == n["id"] for a in deps):
+                continue
+            live = [a for a in deps if states.get(a) != "skipped"]
+            if not live or all(states.get(a) == "done"
+                               and any(states.get(d) == "skipped" and a in ancestors(d)
+                                       for d in deps)
+                               for a in live):
                 states[n["id"]] = "skipped"; derived.add(n["id"]); changed = True
     return derived
 
