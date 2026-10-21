@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- fix(prune): prune is terminal — `prune_states` pruned a node only when ALL of
+  its `after` deps were skipped, so a fan-out on a PRUNED arm could be resurrected
+  by a live dep. The items_from+after lockstep law forces the (always-live)
+  classifier head into a fan-out's own `after` list, so under a complementary
+  when-gate pair the pruned arm's fan-out stayed live via that shared ancestor and
+  dispatched while the sibling arm held a human gate — mutating state the human was
+  holding. Precedence fix: a node whose live deps are all DONE ancestors of a
+  pruned dep is itself pruned (the pruned dep already waits on them, so they carry
+  no independent signal); joins with a genuinely live sibling dep keep running
+  unchanged, and the jam-h23 on_fail fallback exemption is preserved.
+
 - fix(contract): between-turns wake is the delivery DEFAULT; the wait loop was
   demoted to what it always mechanically was — optional blocking observation and
   the revive verb. Operator-facing truth audit (host ledger, ~40 runs): the
