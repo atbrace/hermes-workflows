@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- fix(engine): the status payload now carries the completeness truth as a
+  derived field. `completed` (bool) rides every `status` read, derived in the
+  same fold as `status` and `failed_nodes` — true only for a terminal
+  done-verdict with zero failed nodes — so a green-looking ledger line can
+  never hide a failed or unfinished node: the
+  `completed:true`-with-failed-triage shape measured on the estate ledger
+  reads false through the read model. `status` itself is untouched (the
+  sys-1603 leaf-fail law keeps its meaning: done = no work left, not
+  finished-green), the on-disk `runner_exit.json` key set is unchanged, and
+  no second stored copy of the fact can drift from its law.
+
 - fix(contract): between-turns wake is the delivery DEFAULT; the wait loop was
   demoted to what it always mechanically was — optional blocking observation and
   the revive verb. Operator-facing truth audit (host ledger, ~40 runs): the

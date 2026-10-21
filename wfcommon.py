@@ -5425,6 +5425,17 @@ def run_state(r, *, telemetry=True, lock_state=None):
                                       if k != "probe"}}
               if _lock_state[0] in ("wedged", "eacces") else {}),
            "runner_exit": exit_state,
+           # hw-on5 truth law: status is NOT a completion fact — 'done' legitimately
+           # reads done when no work is left (the sys-1603 leaf-fail law), so it must
+           # never be consumed as 'finished green'. `completed` is the one field that
+           # separates the two senses, derived through the SAME fold as status and
+           # failed_nodes (derive-not-stored, sys-5lnm17 law): true only for a
+           # terminal done-verdict with zero failed nodes. The key rides only runs
+           # that carry a recorded terminal verdict — a run with no verdict stamped
+           # yet keeps its exact pre-key key set (the est-3acn D7 verbatim-key-set
+           # law), so the field is honest absence before terminal, never a guess.
+           **({"completed": (status == "done" and not failed_nodes)}
+              if isinstance(exit_state, dict) and exit_state.get("reason") else {}),
            "started": (jload(r / "run.json", {}) or {}).get("started"),
            "owner": (jload(r / "run.json", {}) or {}).get("owner"),
            "done": sum(1 for s in states.values() if s in ("done", "skipped", "partial")),   # #4: a harvest counts done

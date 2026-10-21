@@ -73,7 +73,7 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
 
 - `running` needs a verified live runner; `interrupted` means unfinished work without
   one — inspect surviving outputs, then `wait` to resume. Fatal runner errors are
-  `failed`, not respawn loops; held gates are not running. Every `status`/`wait`
+  `failed`, not respawn loops; held gates are not running; the completion truth is the derived `completed`, not `status`. Every `status`/`wait`
   payload carries `next` — do what it says while you hold a run open; a live run with a
   stamped owner needs no loop: the wake IS your next turn. Derived, never a guess. Before `amend` or stop, read the failed node's `node_facts`
   (error_class from the closed set; `cancelled` is never a failure) and committed
