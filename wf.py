@@ -2541,10 +2541,14 @@ def _quota_cache_path():
     ONE resolver lives in wfcommon (shared with the door's refusal gate)."""
     return wfcommon.quota_cache_path()
 
-def _quota_note(model, marker):
+def _quota_note(model, marker, provider=None):
     """#24 (b): record model -> reset horizon from a fatal_quota marker.
     Advisory only: the cache NEVER deletes or blocks on its own; the door pings
-    once before refusing, so a stale stamp can't wedge a run forever."""
+    once before refusing, so a stale stamp can't wedge a run forever. A death on
+    an EXPLICIT provider rides the key as 'provider/model' (the est-699 identity
+    law, at the stamp seam): the mark names the subscription that died, not the
+    bare model name shared across providers — a door-side refusal against a
+    different subscription is a false refusal."""
     import os, re, time, json, tempfile
     m = _QUOTA_HORIZON_RE.search((marker or "").lower())
     if m and m.group(2).startswith(("h",)):
@@ -2561,9 +2565,13 @@ def _quota_note(model, marker):
         if not isinstance(data, dict): data = {}
     except Exception:
         data = {}
-    data[str(model or "unknown")] = {"resets_epoch": time.time() + hours * 3600,
-                                     "at": time.time(),
-                                     "marker": (marker or "")[:200]}
+    key = str(model or "unknown")
+    prov = str(provider or "").strip()
+    if prov and "/" not in key and key not in ("unknown", "seat default") and key != prov:
+        key = f"{prov}/{key}"
+    data[key] = {"resets_epoch": time.time() + hours * 3600,
+                 "at": time.time(),
+                 "marker": (marker or "")[:200]}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(p.parent))
@@ -5796,7 +5804,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
                 "error_class": "crashed", "raw": "", "ms": ms, **evd}
     eclass, marker = _classify_rc_output(out)
     if eclass == "fatal_quota":   # #24: adopted death caches the horizon too
-        _quota_note(node.get("model") or node.get("provider") or "seat default", marker)
+        _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
     if eclass == "unknown" and _tool_call_as_text(final_reply or out or ""):
         # est-2ek.1.541 R8 (sibling coverage): the adopted-death path must classify
         # the malformed-turn shape exactly like the fresh-head path — same reply,
@@ -6675,7 +6683,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             # #24: name the model + record the horizon (advisory cache); the class
             # is outside _RETRYABLE_CLASSES/_BOUNDED_RETRY_CLASSES, so the ladder
             # never fires — this ONE attempt is the node's verdict.
-            _quota_note(node.get("model") or node.get("provider") or "seat default", marker)
+            _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
             return {"status": "failed",
                     "error": f"child exited rc={rc}: subscription quota exhausted for model "
                              f"'{node.get('model') or 'seat default'}' — reset horizon in the "

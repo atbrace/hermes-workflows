@@ -1508,16 +1508,27 @@ def _quota_refusal(graph, routes=None, cache_path=None, skip=()):
         res = ent.get("resolved") or {}
         names = {str(n.get("model")),
                  *( [str(res.get("model"))] if res.get("model") else [] )}
-        # #291 F3: entries stamped under the full 'provider/model' id (the pre-bake
-        # literal) still bind the baked node {provider, model}.
         req = (ent.get("requested") or {}).get("model")
         if req:
             names.add(str(req))
-        if n.get("provider") and "/" not in str(n.get("model")):
-            names.add(f"{n['provider']}/{n['model']}")
-        for key in names:
-            hit = cache.get(key)
+        # The AUTHOR's provider pin, never the resolve-baked one: routes.requested
+        # carries the author's spelling (an inherited alias provider is not a
+        # request); with no routes the node's own spelling is all there is.
+        author_provider = ((ent.get("requested") or {}).get("provider")
+                           if routes else n.get("provider"))
+        prov = str(res.get("provider") or n.get("provider") or "")
+        for key, hit in list(cache.items()):   # the recovery pop must not resize mid-iteration
+            # The est-699 route-identity contract at the quota seam: a quota death
+            # marks ONE subscription, not a name. A provider-BLANK (bare) stamp
+            # cannot name an explicit-provider subscription and never refuses one;
+            # a qualified key binds the node's route by IDENTITY, never by raw
+            # spelling (spelling never evades). #291 F3's full-id stamps keep
+            # binding — the identity comparison absorbs them.
             if not isinstance(hit, dict) or hit.get("resets_epoch", 0) <= _t.time():
+                continue
+            if author_provider and "/" not in key:
+                continue
+            if not any(_common.route_ids_equal(key, c, prov) for c in names):
                 continue
             if not offline:
                 # A5 (deep review): the same-route law makes _ping_route_once('')
@@ -1529,7 +1540,6 @@ def _quota_refusal(graph, routes=None, cache_path=None, skip=()):
                 # RECORDED MODEL is the stamped one (_ping_reachable: reachability,
                 # not alive-attribution; an exception, an unimportable core, or a
                 # fallback-ladder answer never recovers).
-                prov = str(res.get("provider") or "")
                 recovered = (_ping_route_once(prov, key).get("liveness") == "alive"
                              if prov else _ping_reachable(key))
                 if recovered:
