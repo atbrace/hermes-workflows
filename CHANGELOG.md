@@ -80,6 +80,16 @@
   vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
   (est-h0huv).
 
+- feat(door): optional `concurrency` / `item_concurrency` launch-time args on
+  the `run` verb (#498). A caller that must not edit the graph (`from=` library
+  launch, re-run under a different seat budget) could not set run width at all:
+  the keys were graph-only, a run arg of that name was silently dropped, and a
+  co-declared graph key won without a word. The door now injects the args into
+  the graph channel before validation — same shape law, owner clamp and
+  submit-time bake as graph keys, same fingerprint exemption — and refuses arg+
+  graph co-declaration at submit naming the key (one channel per key). Absent
+  args leave `run.json` byte-identical (no-cap stability law).
+
 ## 1.3.9 — 2026-10-17
 
 Patch release: 43 merged PRs since v1.3.8 — runner hardening (zombie-reap
