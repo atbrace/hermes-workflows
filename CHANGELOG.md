@@ -10,7 +10,10 @@
   negatives, and over-cap numbers keep their existing rejections, and a
   declared false survives the defaults merge untouched (no `--max-turns` flag
   is spawned, committed-node metadata stays byte-stable since budget keys are
-  def-hash-excluded). Tests: tests/test_max_turns_false_hw8xv.py.
+  def-hash-excluded). The shape-p95 validate advisory skips a `false` cap —
+  `False < budget` compares as 0 and would warn spuriously on every legit
+  no-cap declaration. Tests: tests/test_max_turns_false_hw8xv.py,
+  tests/test_max_turns_false_advisory_hw8xv.py.
 
 - feat(door): #509 — door UX on unknown-key refusals. Every `graph_invalid`
   refusal banner now names the door's own version (`[door X.Y.Z]`, plus the

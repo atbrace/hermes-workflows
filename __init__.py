@@ -2547,7 +2547,9 @@ def act_validate(args):
         shape = node.get("shape") or _common.DEFAULT_SHAPE
         budget = _common.SHAPE_PRESETS[shape]["max_turns"]
         cap = node["max_turns"]  # already resolved by apply_graph_defaults
-        if cap < budget:
+        # hw-8xv: a declared false cap is an author-declared no-cap, not a
+        # number; False < budget would compare as 0 and warn spuriously.
+        if cap is not False and cap < budget:
             warnings.append({"node": node["id"], "field": "max_turns",
                              "msg": f"max_turns {cap} is below shape {shape!r} p95 "
                                     f"budget {budget}; leave max_turns unset to use "
