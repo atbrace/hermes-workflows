@@ -1,5 +1,12 @@
 # Changelog
 
+- fix(door): a `from:<name>` string handed to the `graph` slot — the retired
+  library pin — is no longer fed to `json.loads` and refused as
+  "graph is not valid JSON: Expecting value...", which names the wrong
+  offender and no remedy. The refusal now names the pin as such and carries a
+  `hint` pointing at the live seam: `run` with `from="<name>"` (the name is
+  quoted back). Malformed-JSON refusals are unchanged.
+  Tests: tests/test_graph_legacy_pin_hw_sl0.py.
 ## Unreleased
 
 - feat(ci): P1 observe instruments for the estate-ci contract (NEXTGEN-CI
