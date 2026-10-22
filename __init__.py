@@ -50,7 +50,12 @@ _orphan_watch.bind(_common)
 def _coerce_graph(graph):
     """The door only ever sees `graph` as a parsed object from the tool schema, but a
     model CAN hand the string form; parse it and, on malformed JSON, quote ±40 chars
-    around the error offset. Returns (graph_or_None, error_response_or_None)."""
+    around the error offset. A `from:<name>` string is the retired library pin: it is
+    refused with a pointer to the live `from` argument, never parsed as JSON.
+    Returns (graph_or_None, error_response_or_None)."""
+    if isinstance(graph, str) and graph.startswith("from:"):
+        return None, {"error": f"graph {graph!r} is the retired library pin; replay a saved graph with the from argument",
+                      "hint": f'run with from="{graph[len("from:"):]}"'}
     if isinstance(graph, str):
         try:
             graph = json.loads(graph)
