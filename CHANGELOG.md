@@ -49,7 +49,6 @@
   every existing `on_skip:"pass"` graph is byte-identical. Not folded into
   #517 (the probe read it; the defect pre-dates it). New test:
   tests/test_skip_pass_effects_0lxnh.py (red at base, green after).
-
 - feat(door): #509 — door UX on unknown-key refusals. Every `graph_invalid`
   refusal banner now names the door's own version (`[door X.Y.Z]`, plus the
   machine field `door_version`), a refused top-level key that belongs to a
@@ -64,8 +63,6 @@
   release must re-pin `CODE_VERSION` beside plugin.yaml — both enforced by
   tests/test_door_ux_509.py. No semantics change: refusals refuse exactly as
   before, only the text and an extra field are richer.
-
-
 - feat(runner): run.failed/run.done wake payloads carry run-dir/log pointers
   (#501). The wake text for those two events additionally rides `run_dir="<path>"`
   and, on run.failed, `failed_node_logs=["<log_path>", ...]` — the efp-valid
@@ -79,7 +76,6 @@
   so authority law (no caller-authored owner text) is untouched and
   delivery/identity/dedupe behavior is unchanged (the discriminant never reads
   them). Other events' text is byte-identical.
-
 - chore(ci): the `gates` check is now a fan-in over 8 matrix lanes instead of
   one 30-minute serial job. Measured wall census over the last full passes:
   serial suite 28.7-32.0 min (97% of CI time; median case 1.1 s, top-25 cases
@@ -91,6 +87,34 @@
   suite to its lanes. `concurrency.cancel-in-progress` joins the workflow, so a
   re-push replaces the stale pass instead of queueing a second one. Expected
   PR wall: ~7-9 min from ~31 at unchanged coverage.
+- feat(retry): author-tunable retry. A node (or graph `defaults`) may now carry
+  `retry: {transient: N, bounded: K}` — integer caps 0..8 on the two auto-retry
+  ladders (defaults 2/1 = the previous hardcoded law; 0 disables that ladder
+  for the node). Every pass re-enters the existing guards whole (class, tool
+  progress, stop, per-run budget draw, #61 quarantine, #102). Alongside it the
+  door finally wires the knobs the runner has always read from run.json meta:
+  the run verb accepts `retry_backoff [a, b]` and `retry_budget N` and bakes
+  them (absent args => run.json byte-identical). Motivation (estate ledger):
+  council seats dying once on transport failed whole fan-outs where one bounded
+  re-drive would have healed the seat.
+- feat(door): optional `concurrency` / `item_concurrency` launch-time args on
+  the `run` verb (#498). A caller that must not edit the graph (`from=` library
+  launch, re-run under a different seat budget) could not set run width at all:
+  the keys were graph-only, a run arg of that name was silently dropped, and a
+  co-declared graph key won without a word. The door now injects the args into
+  the graph channel before validation — same shape law, owner clamp and
+  submit-time bake as graph keys, same fingerprint exemption — and refuses arg+
+  graph co-declaration at submit naming the key (one channel per key). Absent
+  args leave `run.json` byte-identical (no-cap stability law).
+- docs(skill): SKILL.md now states the shelf-save semantics the code already
+  implements: `save(run_id)` shelves the run's door-baked `graph.json`
+  (defaults and shape budgets concrete, provenance `source: null` unless
+  passed), so its `source_digest` — sha256 over the canonical `nodes`, budgets
+  included — never equals the author file's digest; a `graph`/`graph_path`
+  save shelves author bytes and the digests match, and a composite run refuses
+  `save(run_id)`. Also names where the graph-bound runner verdict lives:
+  `graph_fingerprint` rides `runner_exit.json`, not `run.json`. Pinned by
+  `tests/test_skill_shelf_save_4ut.py`.
 
 - fix(engine): the status payload now carries the completeness truth as a
   derived field. `completed` (bool) rides every `status` read, derived in the
@@ -102,17 +126,6 @@
   sys-1603 leaf-fail law keeps its meaning: done = no work left, not
   finished-green), the on-disk `runner_exit.json` key set is unchanged, and
   no second stored copy of the fact can drift from its law.
-
-- feat(retry): author-tunable retry. A node (or graph `defaults`) may now carry
-  `retry: {transient: N, bounded: K}` — integer caps 0..8 on the two auto-retry
-  ladders (defaults 2/1 = the previous hardcoded law; 0 disables that ladder
-  for the node). Every pass re-enters the existing guards whole (class, tool
-  progress, stop, per-run budget draw, #61 quarantine, #102). Alongside it the
-  door finally wires the knobs the runner has always read from run.json meta:
-  the run verb accepts `retry_backoff [a, b]` and `retry_budget N` and bakes
-  them (absent args => run.json byte-identical). Motivation (estate ledger):
-  council seats dying once on transport failed whole fan-outs where one bounded
-  re-drive would have healed the seat.
 
 - fix(contract): between-turns wake is the delivery DEFAULT; the wait loop was
   demoted to what it always mechanically was — optional blocking observation and
@@ -191,16 +204,6 @@
   (adoption script with sha256 drift refusal). Not a door action, like the
   vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
   (est-h0huv).
-
-- feat(door): optional `concurrency` / `item_concurrency` launch-time args on
-  the `run` verb (#498). A caller that must not edit the graph (`from=` library
-  launch, re-run under a different seat budget) could not set run width at all:
-  the keys were graph-only, a run arg of that name was silently dropped, and a
-  co-declared graph key won without a word. The door now injects the args into
-  the graph channel before validation — same shape law, owner clamp and
-  submit-time bake as graph keys, same fingerprint exemption — and refuses arg+
-  graph co-declaration at submit naming the key (one channel per key). Absent
-  args leave `run.json` byte-identical (no-cap stability law).
 
 ## 1.3.9 — 2026-10-17
 
