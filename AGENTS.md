@@ -171,13 +171,14 @@ See [grammar](references/grammar.md#terminal-postmortem-optional) for validation
 publication guards, and crash recovery.
 
 - `node.failed` events carry `error_class` from the closed set defined in code
-  (`wf.py ERROR_CLASSES`) — `bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | early_death | effect_receipt |
+  (`wf.py ERROR_CLASSES`) — `bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | declared_failure | early_death | effect_receipt |
   fanout_empty | fatal_quota | forbidden_model | incomplete_work |
   inputs | item_record | killed | lane_wreckage | lease_busy | left_live_descendants | malformed_turn | precondition | provider_400 | quorum |
   ratelimit |
   route_substitution_denied | route_unavailable | schema | seat_cap | seat_unsupported | seat_wait | spawn | stale_graph | timeout | transport | transport_exhausted |
-  unresolved_model`, plus `unknown` as the harvest-time default when nothing matches —
-  plus `attempts`. Read the class, not the prose. `cancelled` (a `stop`, or a fan-out
+  unresolved_model`, plus `unknown` (the harvest-time default) — plus `attempts`. Read the
+  class, not the prose; the exit-0-is-not-success settle law (`declared_failure`, transient
+  sentinels) is in references/operations.md. `cancelled` (a `stop`, or a fan-out
   straggler at quorum) is never a failure: the run reads `stopped`, and a `wait` re-drives it.
   `budget_exhausted` (est-3acn): a RunBudget cap (graph-root or node `budget:{tokens:N}`; tokens-only —
   USD is excluded per the repo cost-trust law, issue #124) refused the spawn BEFORE submit, logged as
