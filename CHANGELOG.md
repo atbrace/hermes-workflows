@@ -1,5 +1,91 @@
 # Changelog
 
+## 1.4.1 — 2026-10-25
+
+Patch release: 37 merged PRs since v1.4.0 — the door-UX version handshake (name the door + grammar-layer/nearest-key refusal hints, #511), outcome truth beyond exit-0 (output classifier + `node_outcome` self-report, #537), exhaustive fail-closed resolution (#536) and the `on_skip:pass` effect gate (#523), per-item `bead_close` receipts (#486) and `{run.X}` admission validation (#484), the name-keyed cron tick lifecycle (#534), 8-lane sharded `gates` CI fan-out (#502), author-tunable retry caps (#497), `run.failed`/`run.done` wake payload pointers (#507), the queue-executor starter (#514), quota stamps by route identity (#505), the skip-sentinel and truncated-inputs fixes (#480 #482), `maxItems` joining the admitted schema subset (#478), and the observe instruments + hint-cap doc folds. (The `## 1.4.0` section below is restored verbatim from the tag: its bump commit landed off `main`, so this file never recorded it.)
+
+### Merged PRs
+
+- docs(runner): state the turn/accounting contract; pin it with a test (#387 option (b)) (#543)
+- docs(agents): fold §4b′ and the §4d pointers out — back under the 32,000-char hint cap (unblocks CI) (#542)
+- fix(1n7gx): collapse-to-one law — name a total order at every pick-one-row site (#540)
+- feat(outcome): exit-0-is-not-success — pure output classifier + node_outcome self-report token (WF-GRAFT-2, est-imp1z) (#537)
+- fix(wf): exhaustive fail-closed resolution — dead-end fails run, abort outranks (est-f1w4u) (#536)
+- test(px11): anchor the RLIMIT_AS ceiling on the live set, not allocator residue (#535)
+- feat(cron): name-keyed singleton tick job lifecycle (est-ip975 PR-1 of 3) (#534)
+- fix(watchdog): straggler disc formats a missing launch stamp as 'q', never :.3f (est-waf8y D1) (#532)
+- test(fixtures): shared fake-runner helper for door-scan fixtures (#530)
+- docs(agents): fold AGENTS.md under the 32k hint cap via references/example-tour.md (#528)
+- ci-P1 observe instruments: budget, timing, registry, md_inputs, observe preflight, run_attempt ledger fields (#526)
+- chore(hygiene): gitignore agent scratch dirs (.routing-test/, .wf-rerun/) (#524)
+- fix(runner): gate the on_skip:pass done-commit through _effect_gate (#523)
+- fix(door): retired from:<name> pin in the graph slot names the from argument instead of a JSON parse error (#519)
+- docs(changelog): record the shelf-save doc law entry (#516)
+- test(door): move the quota-gate regression to its door-prefixed name (#515)
+- feat(library): general/queue-executor — sixth starter (execute-the-queue verb) (#514)
+- chore(ue): mill CI-parity assets (cluster gate script + in-lane template + design record) (#513)
+- chore(retry): hw-23c fallout — law comments say tunable; _retry_bake at door parity (est-mcwq6) (#512)
+- feat(door): name the door version + grammar-layer + nearest-key hints on graph refusals (#509) (#511)
+- docs(readme): concurrency blurb names the launch-time run-arg channel (est-1awgu) (#510)
+- feat(runner): run.failed/run.done wake payloads carry run_dir + failed_node_logs pointers (#507)
+- feat(door): launch-time concurrency override args on the run verb (#498) (#506)
+- fix(door,runner): quota cost gate and stamps obey the route-identity contract (#499) (#505)
+- ci: fan the serial suite out to 8 matrix lanes behind the same gates check (#502)
+- feat(retry): author-tunable per-node retry caps + door-wired run-level retry knobs (#497)
+- fix(engine): derive the completeness truth in the status read (#496)
+- chore(bead_close): single-source _RE_BC_ITEM_TOKEN in wfcommon; wf.py binds off the private instance (#493)
+- chore(bead_close): pin per-item receipts empty-array asymmetry + say per-item probe cost in grammar (est-fxh6v) (#492)
+- chore(tests): behavior pins in test_i — drop SOURCE-text def-name greps (est-luk28) (#490)
+- docs(grammar): scope bead_close unrenderable clause to .id (actor not enforced in code) (#489)
+- fix(contract): between-turns wake is the delivery default — stop teaching the wait loop (#487)
+- feat(bead_close): per-item {FIELD} interpolation on fan-out nodes with per-item close receipts (#486)
+- validate: refuse malformed {run.X} refs at admission (estate-2026-10-19 class) (#484)
+- fix(inputs): #476 truncated input blocks carry a standard read-the-full-record advisement (#482)
+- fix(inputs): #473 explicit ref to a skipped head resolves to a labelled skip-sentinel block (#480)
+- feat(door): maxItems joins the admitted schema subset; enum widens to boolean/integer (#472, est-v2fr6) (#478)
+
+### Contributors by PR
+
+- #543 — @jacobhausler.
+- #542 — @jacobhausler.
+- #540 — @jacobhausler.
+- #537 — @jacobhausler.
+- #536 — @jacobhausler.
+- #535 — @jacobhausler.
+- #534 — @jacobhausler.
+- #532 — @jacobhausler.
+- #530 — @atbrace.
+- #528 — @atbrace.
+- #526 — @jacobhausler.
+- #524 — @jacobhausler.
+- #523 — @jacobhausler.
+- #519 — @atbrace.
+- #516 — @atbrace.
+- #515 — @atbrace.
+- #514 — @jacobhausler.
+- #513 — @atbrace.
+- #512 — @jacobhausler.
+- #511 — @jacobhausler.
+- #510 — @jacobhausler.
+- #507 — @jacobhausler.
+- #506 — @atbrace.
+- #505 — @atbrace.
+- #502 — @jacobhausler.
+- #497 — @atbrace.
+- #496 — @atbrace.
+- #493 — @jacobhausler.
+- #492 — @jacobhausler.
+- #490 — @jacobhausler.
+- #489 — @jacobhausler.
+- #487 — @jacobhausler.
+- #486 — @jacobhausler.
+- #484 — @jacobhausler.
+- #482 — @jacobhausler.
+- #480 — @jacobhausler.
+- #478 — @jacobhausler.
+
+### Notes
+
 - feat(cron): `cron_bridge.py` — the self-terminating watchdog tick's lifecycle
   (est-ip975, PR-1 of 3; dormant module, no caller yet). One core cron job
   keyed BY NAME (`hermes-workflows-tick`, `no_agent=True`, prompt None):
@@ -20,8 +106,6 @@
   `hint` pointing at the live seam: `run` with `from="<name>"` (the name is
   quoted back). Malformed-JSON refusals are unchanged.
   Tests: tests/test_graph_legacy_pin_hw_sl0.py.
-## Unreleased
-
 - docs(runner): turn/accounting contract (issue #387,
   option-(b) ruling 2026-10-11; est-lw1eh). `references/budgets.md` now says
   plainly that `max_turns` is billed per API call — `api_calls == turns`, ONE
@@ -278,6 +362,45 @@
   (adoption script with sha256 drift refusal). Not a door action, like the
   vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
   (est-h0huv).
+
+## [1.4.0] - 2026-10-19
+
+- docs(v1.4.0): revitalization pass — README drift fixes (`/wf <name>` returns
+  a run instruction, `/wf gates` behind `admission_gates`, `library name:` /
+  `amend patch` forms documented), four spec-backed showcase diagrams under
+  `docs/pr-diagrams/` with `docs/showcase.md` glosses; removed
+  `docs/event-driven-wake.md` (unreferenced pattern essay; history in git).
+  (est-7m6wv)
+- feat(spawn): marker-gated creation-override flag strip (est-yq2xq). On seats
+  whose gateway freezes the session route at create, `--continue <skey>
+  --create-if-missing` + any creation override is refused (child dies rc=2,
+  whole waves die). The runner now strips the frozen-route flag pairs
+  (`--max-turns`, `--run-budget`, `--reasoning`, `-t`, `-m`, `--provider`)
+  when `WF_OMIT_POLICY_FLAGS=1` or the marker
+  `<hermes_home>/workflows/omit-policy-flags.on` exists — children ride seat
+  defaults and per-node pinning is unavailable while on; delete the marker /
+  unset the env to return byte-identical stock argv. This replaces the
+  estate-side monkey-patch that every plugin update wiped. Contract in
+  `references/operations.md`.
+- `tests/test_mechanic_admission_gate_104.py`: the issue-#104 admission gate as
+  an executable check — L1 drives a mechanic-shaped probe graph through the
+  real runner with the recording fake door and asserts deny-default
+  auto-release on `hold_timeout`, arm self-no-op, and audit-shape gate skips
+  with zero arm spawns; L2 pins the blind-holdout ledger (run.json.status
+  blinded, sealed-key digests, battery counts as measured ints); L3 becomes
+  binding on any vendoring PR via `WF_MECHANIC_CANDIDATE` (engine validation
+  in admission mode, deny-named defaults, single-gate arm dependencies).
+  Battle cards in `references/mechanic-battle-cards.md`; ledger in
+  `receipts/workflow-mechanic/admission-104.json` (est-t3m6).
+
+- `scripts/wofify.py`: the WOFification authoring-time seam — `inventory`
+  (path-shape census of a way-of-working repo), `scaffold` (never-clobber pack
+  skeleton), `validate` (pack graphs compiled and measured by the door's own
+  validator; card sidecars skipped; zero graphs is never green), `shelf`
+  (adoption script with sha256 drift refusal). Not a door action, like the
+  vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
+  (est-h0huv).
+
 
 ## 1.3.9 — 2026-10-17
 
