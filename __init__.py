@@ -3225,6 +3225,10 @@ def act_amend(args):
     except Exception:
         pass
     meta = jload(r / "run.json", {}) or {}
+    # #24: an amend REPLACES the graph, so it re-bakes the knob family from the
+    # NEW graph — a knob the new graph dropped returns to default with provenance
+    # flipped. No knobs anywhere (old and new graph) => run.json untouched.
+    _old_meta = dict(meta)
     # An author-form amend of a composite run restamps run.json's include truth the
     # same way act_run writes it: the notes/provenance describing THIS graph, not
     # the previous one. SET-OR-REMOVE: fresh author-form provenance replaces the
@@ -3233,17 +3237,15 @@ def act_amend(args):
     # kept warning about the old graph's fixed scratch path — a stale note list
     # describes a graph the run no longer carries). An expanded-form amend yields
     # empty lists here, so the keys are left exactly as they stand (the
-    # intentional no-op: a plain run never grows them).
+    # intentional no-op: a plain run never grows them). Rides INSIDE the
+    # before/after diff so a notes-clear alone turns the write on (post-rebase F:
+    # the old `or _includes` term could not see a pop-only change).
     if _includes:
         meta["includes"] = _includes
         if _include_notes:
             meta["include_notes"] = _include_notes
         else:
             meta.pop("include_notes", None)
-    # #24: an amend REPLACES the graph, so it re-bakes the knob family from the
-    # NEW graph — a knob the new graph dropped returns to default with provenance
-    # flipped. No knobs anywhere (old and new graph) => run.json untouched.
-    _old_meta = dict(meta)
     _stripped = False
     for _k in KNOB_META_KEYS:
         _stripped = (_k in meta) or _stripped
