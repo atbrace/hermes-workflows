@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- docs(grammar): document the fan-out seat-cap trap where authors read it. One
+  sentence in `references/grammar.md` states the per-run `max_seats` law as the
+  engine's ceiling law — it lowers within range from the host ceiling
+  (`WORKFLOW_MAX_SEATS` / `.env` / config), never raises it; ranges ride the
+  live `SEAT_CAP_FLOOR`/`SEAT_CAP_CEILING` from `wfcommon.py`. The test bites
+  on DIRECTION: a mutation probe carrying the backwards sentence (as shipped
+  at daa0aba) must be refused. Test: tests/test_grammar_hw-bgb.py (10 checks).
+
 ## 1.4.2 — 2026-10-26
 
 Patch release: 4 merged PRs since v1.4.1 — the ra-release merge step now ships a machine gate (est-clrlx, #547): the release lane issues its squash-merge only through `scripts/release_merge_gate.py`, which refuses (exit 1, zero writes) unless the newest review marker carries `verdict=merge` at the exact current head from a non-author peer; CI-green alone is no longer merge authority. Plus the lane-declaration invariant for ra-work worktree verbs (#549), the W1/B3 wall-pin retiming against the v0.22.5 cold config-import floor (#550), and the §3b front-door skipped-head sentinel exception docs (#551).
