@@ -71,11 +71,6 @@ GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_policy",
                               # expand, so a committed graph.json never carries it (only the
                               # library author form does)
 KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance", "_requested")
-# #100 item 4: the ONE owner-settings key that caps an author's fan-out width
-# ("16-wide stays an estate allowance, never an author pick"). Read through
-# wfcommon.owner_setting — the same channel as runs_root/profile: the door's
-# plugin ctx when it has one, else the resolved home's config.yaml raw.
-OWNER_CONCURRENCY_CAP_KEY = "max_concurrency"
 
 def _knob_errors(graph):
     """#100: reject malformed knob values with the repo's {node, field, msg}
@@ -84,7 +79,7 @@ def _knob_errors(graph):
     at bake time — an over-wide author ask rides down, never a refusal), so a
     typo'd width still cannot open thousands of processes."""
     errs = []
-    cap, cap_src = _common.CONCURRENCY_CAP, "default"
+    cap = _common.CONCURRENCY_CAP
     for key in ("concurrency", "item_concurrency"):
         if key in graph:
             v = graph[key]
@@ -93,8 +88,7 @@ def _knob_errors(graph):
                              "msg": f"{key} must be a positive int (cap {cap})"})
             elif v > cap:
                 errs.append({"node": None, "field": key,
-                             "msg": f"{key} {v} exceeds cap {cap}"
-                                    + ("" if cap_src == "default" else f" ({cap_src})")})
+                             "msg": f"{key} {v} exceeds cap {cap}"})
     if "retry" in graph:
         rt = graph["retry"]
         if not isinstance(rt, dict):
@@ -114,17 +108,19 @@ def _knob_errors(graph):
     return errs
 
 def _knob_bake(graph, bake_all=False):
-    """#24: (effective values, author-vs-default provenance, requested) from a
-    graph that _knob_errors accepted. Door-written. A graph carrying NO knob
-    bakes NOTHING (returns empty dicts): the run.json key set stays frozen for
-    pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
+    """#24: (effective values, author-vs-default provenance, requested, cap-error)
+    from a graph that _knob_errors accepted. Door-written. A graph carrying NO
+    knob bakes NOTHING (returns empty dicts): the run.json key set stays frozen
+    for pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
     bake_all=True (amend over a run.json that already carried knobs): the widths
     bake to their defaults with provenance "default" — a key that was once
-    stamped stays stamped, so watchers never lose author-vs-default truth."""
+    stamped stays stamped, so watchers never lose author-vs-default truth.
+    A malformed owner cap is NOT baked over: it rides back as the 4th element
+    (the #42 fail-closed error) so every door refuses, never DEFAULTs silently."""
     has_cap = any(_common.owner_setting(s) is not None
                   for s in ("max_concurrency", "max_item_concurrency"))
     if not bake_all and not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
-        return {}, {}, {}
+        return {}, {}, {}, None
     effective, provenance = {}, {}
     # #100 item 4: widths ride _concurrency_bake, the ONE clamp truth (owner cap,
     # else the author value clamped to the default). The later _knob_bake merge in
@@ -143,7 +139,7 @@ def _knob_bake(graph, bake_all=False):
                  if provenance[k] == "author"}
     if author_retry:
         requested["retry"] = effective["retry"]
-    return effective, provenance, requested
+    return effective, provenance, requested, _cap_err
 
 def _model_names_valid(names):
     return isinstance(names, list) and all(isinstance(n, str) and n.strip() for n in names)
@@ -2686,7 +2682,7 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
     # #24 knob family: bake the EFFECTIVE widths + retry mode with author-vs-default
     # provenance, and the author's REQUEST (what validation saw) so the runner can
     # receipt requested-vs-applied. Absent knobs => no keys land (legacy shape).
-    _eff, _prov, _req = _knob_bake(graph)
+    _eff, _prov, _req, _ = _knob_bake(graph)   # a malformed cap was refused upstream
     meta.update(_eff)
     if _prov:
         meta["knobs_provenance"] = _prov
@@ -3168,6 +3164,12 @@ def act_amend(args):
     bad = _validation_error(new) or _profile_error(new)
     if bad:
         return bad
+    # #42 fail-closed at the amend door too (same law as act_run): a malformed
+    # owner settings.max_concurrency REFUSES the amend, never silently bakes
+    # DEFAULT widths when the re-bake below re-reads the clamp channel.
+    _cap_err = _concurrency_bake(new)[1]
+    if _cap_err:
+        return _cap_err
     old = jload(r / "graph.json") or {}
     new = dict(new, name=new.get("name", old.get("name", "workflow")))
     # Same resolved-truth rule as run: bake defaults/shape before the write, so
@@ -3248,7 +3250,9 @@ def act_amend(args):
     for _k in KNOB_META_KEYS:
         _stripped = (_k in meta) or _stripped
         meta.pop(_k, None)
-    _eff, _prov, _req = _knob_bake(new, bake_all=_stripped)
+    _eff, _prov, _req, _cap_err = _knob_bake(new, bake_all=_stripped)
+    if _cap_err:
+        return _cap_err
     meta.update(_eff)
     if _prov:
         meta["knobs_provenance"] = _prov

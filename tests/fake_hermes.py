@@ -186,6 +186,15 @@ if _FAKE_MODE == "quota":          # #24: subscription-quota 429 with a reset ho
 # ---- committee wf159c pins. Placed ABOVE the est-t0vz block on purpose: both
 # ---- mode names start with "ratelimit" and would otherwise be hijacked by its
 # ---- startswith() dispatch; they carry their own counter, same file shape. ----
+def _fake_record_wall():
+    # Records the wall the spawn was GIVEN (env stamp) — hoisted above the
+    # ratelimit dispatch so parked respawns are observable (park test W4).
+    w = os.environ.get("HERMES_WF_SPAWN_WALL_S")
+    if w and os.environ.get("FAKE_ATTEMPT_DIR"):
+        os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
+        with open(os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "walls.txt"), "a") as f:
+            f.write(w + "\n")
+
 def _rl159_count(key):
     if not os.environ.get("FAKE_ATTEMPT_DIR"):
         return 0
@@ -231,6 +240,7 @@ if _FAKE_MODE and _FAKE_MODE.startswith("ratelimit"):
         open(p, "w").write(str(c + 1))
         return c
     _rl_key = "".join(ch for ch in (q.splitlines()[0] if q.strip() else "x") if ch.isalnum())[:24] or "x"
+    _fake_record_wall()                       # W4: the wall each parked spawn was GIVEN is observable
     if _FAKE_MODE == "ratelimit_always" or _rl_count(_rl_key) < int(os.environ.get("FAKE_RL_FAILS", "9999")):
         print("Warning: Unknown toolsets: bogus")
         print("hermes -z: agent failed: Anthropic credentials are rate-limited for "
@@ -449,12 +459,7 @@ def _fake_attempt_count():
     open(p, "w").write(str(cnt + 1))
     return cnt
 
-def _fake_record_wall():
-    w = os.environ.get("HERMES_WF_SPAWN_WALL_S")
-    if w and os.environ.get("FAKE_ATTEMPT_DIR"):
-        os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
-        with open(os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "walls.txt"), "a") as f:
-            f.write(w + "\n")
+# (_fake_record_wall hoisted above the ratelimit dispatch, ~line 189)
 
 if _FAKE_MODE in ("work_metered", "work_metered_dead", "work_metered_zero"):
     _fake_record_wall()

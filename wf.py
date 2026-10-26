@@ -3918,12 +3918,6 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                # (which reads HERMES_WF_PROCTREE_*) would read nothing.
                **{SIDECAR_ENV_PATH: str(_sidecar_path(run)),
                   SIDECAR_ENV_SPAWN: token})
-    if wall is not None and isinstance(meta.get("retry"), dict):
-        # #100 golden-solo: the child sees the wall it is being given (the RESUME
-        # spawn's is the remaining wall, not the full fare) — observable, and the
-        # liveness tests assert on it. Rides ONLY when the retry knob exists: a
-        # knob-free run's child env stays byte-identical to the frozen capture.
-        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     # fb 625a3241: WORK_DIR_NOTE advertises wd as durable; under a safe root it must
     # also be writable. Append the child's OWN dir only; unset/'' = unrestricted in
     # core, so leave it exactly as inherited (setting it would newly restrict).
@@ -3941,6 +3935,25 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                if k in keep or k.startswith("LC_") or k.startswith("HERMES_WF_")}
         env["HERMES_HOME"] = str(hermes_root())
     t0 = time.time()
+    # wf159c finding 1 (wall-clamp): after a credential park, the remaining
+    # wall IS the per-spawn timeout for this (node,index) — a park can never
+    # buy a fresh full timeout, for the parked respawn or any later ladder
+    # spawn. #11's one-time extend still stacks on top of the clamp. The
+    # #24 env stamp rides AFTER the clamp: the child sees the wall it is
+    # actually given, and the work-metered resume's min() stacks on this one.
+    _rl_cap = (meta.get("_rl_timeout_cap") or {}).get((node["id"], index))
+    if isinstance(_rl_cap, (int, float)):
+        _rem = float(_rl_cap) - t0
+        if _rem <= 0:
+            _rem = 0.05
+        if not isinstance(wall, (int, float)) or wall > _rem:
+            wall = _rem
+    if wall is not None and isinstance(meta.get("retry"), dict):
+        # #100 golden-solo: the child sees the wall it is being given (the RESUME
+        # spawn's is the remaining wall, not the full fare) — observable, and the
+        # liveness tests assert on it. Rides ONLY when the retry knob exists: a
+        # knob-free run's child env stays byte-identical to the frozen capture.
+        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     logf = open(lp, "w", encoding="utf-8", errors="replace")
     log_created = time.time()   # the file's own creation stamp: never counts as activity
     try:
@@ -4035,7 +4048,6 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     silence_deadline = t0 + first_msg_s if first_msg_s > 0 else None
     rc = None
     tclass, treason = None, ""
-    timeout_s = wall
     final_reply = ""
     # #61: live tree accounting — children are attributed to this spawn ONLY
     # while it lives (after death+reap they reparent); the pgid walk reaches the
@@ -4805,7 +4817,7 @@ def _dead_letter_metered(run, ev, ev_kw, r1, r2, cfg):
         log_paths=[r1.get("log_path"), r2.get("log_path")],
         **ev_kw)
 
-def _width_tracker(meta, lock):
+def _width_tracker(meta):
     """#24: count concurrently-running children (solo nodes + fan-out items) and
     log the peak per observation key as node.running_width. One dict in main();
     cheap on the wave threads; observation only — never gates a spawn."""
@@ -5645,7 +5657,7 @@ def main(run_id):
     meta["_reasoning_server_clamp"] = {}   # est-vsgj B1-crossed: (node,index,lane,asked)
                                            # -> server-declared value; runner-private,
                                            # never persisted; survives outer-ladder respawns
-    _width_tracker(meta, None)                # #24: observed fan-out width per node
+    _width_tracker(meta)                    # #24: observed fan-out width per node
     exit_graph = [jload(run / "graph.json")]
 
     def _stop_watcher():
