@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- fix(runner): the RunBudget-capped fan-out `partial` (the est-3acn harvest
+  path) is a commit edge — the lane, effect and bead-close gates now run over
+  its record before save (est-13z1/#56 law; est-ps8i9, adversarial R8 sweep of
+  PR #525 @8fd158ca — the census row the #525 entry's edge list missed). The
+  budget elif committed `{status: partial, output:{items, all_results}}`
+  straight to `save_node` inside its own branch (`merged_rec` is assigned only
+  in the else), so a fan-out declaring `{effects}` or `{bead_close id:{item}}`
+  that the cap cuts mid-run banked harvested item outputs with ZERO store
+  read-back and ZERO receipt proof: the est-13z1 lying-done class at the THIRD
+  commit edge, PRE-EXISTING on main (est-3acn era), not introduced by #525.
+  The record now runs the same boundary chain as the aggregate edge —
+  `_lane_gate`, then `_effect_gate`, then `_bead_close_gate` (per-item
+  read-back included) — and an unproven claim DEMOTES it to the gate's own
+  typed `failed` (the harvest still rides the demoted record's output — the
+  demote kills the claim, never the work). That demote line NAMES THE CAP TOO
+  (est-6ig3s, review of this entry's own branch): `node.failed` keeps the
+  gate's verdict in `error_class` and adds `harvested`,
+  `budget_cause: budget_exhausted` and `harvested_items`, because the demote
+  otherwise swallowed the one event that named the node-level budget cause and
+  an event-only reader read `effect_receipt` where the truth was "an unproven
+  claim on a capped fan-out that banked N items" (the legibility est-60ca
+  closed on the solo path). The honest commit keeps `node.finished
+  harvested=True error_class=budget_exhausted` and mints none of the cause kv
+  — the golden pins that key set. The zero-harvest commit stays `failed` and
+  ungated: nothing is asserted there. A
+  demoted budget commit also forfeits est-3acn's graceful closure — a capped
+  run whose capped commit cannot be proven must not close gracefully over the
+  lie (the demote classes are proven-fails, outside both ladders). Honest
+  degradation is asserted as the golden control: no gate key = today's
+  byte-identical record and events, ZERO probe argv (exact pre-fix error
+  string and key set pinned). Run-the-gates over reject-at-door: refusing
+  `budget` + `effects`/`bead_close` on fan-outs at the door would price
+  cap-protection out of the close-the-queue lanes — the exact lanes the
+  read-back gates exist for — to paper over a gate the runner simply never
+  ran. New test: tests/test_budget_fanout_gates_ps8i9.py (red at 8fd158ca on
+  legs A/C/G — one failing-if-broken leg per gate key on that branch, lane
+  gate included; honest legs B/D/E/F green BEFORE and AFTER). Its event-shape
+  asserts A5/C6/G3 + the golden key-set pin E4 carry the est-6ig3s contract:
+  red at 103284a on A5/C6/G3 (the demote line carried no cause), green after,
+  E4 green across the whole sitting — the honest event never grows a key.
+
+- fix(runner): `budget_ledger.json` is now MERGE-ON-WRITE (est-y938s, P3 from
+  the PR #529 review — the second row on that same review, est-6ig3s above).
+  The loop's terminal hook rewrote the ledger whole at every budget closure,
+  so the persisted cause was always the LAST occurrence: a run capped first at
+  a fan-out and re-expressed at a downstream node lost the first cause from
+  the ledger. The re-expression is reachable, not hypothetical — a capped
+  fan-out whose boundary-gate demote (est-ps8i9) forfeits the graceful closure
+  leaves a record classed by the GATE, so the hook's re-scan arrives with a
+  narrower set than an earlier closure wrote. The write moves out of the hook
+  into `wf.close_budget_ledger`, the ONE writer: top-level `cause`/`at` now
+  name the FIRST closure (the run's first budget death),
+  `exhausted_nodes`/`never_launched` are first-seen-order unions, and
+  `occurrences[]` is the cause chain in close order — one row per DISTINCT
+  closure, so a benign resume re-passing the hook (the est-3acn resume law: a
+  later pass sees the same file) mints no duplicate row. A pre-fix legacy
+  ledger (no occurrences[]) is absorbed as the chain's first occurrence; the
+  run_state read view is untouched (same top-level keys, now first-cause
+  semantics). Test: tests/test_run_budget_3acn.py grows leg E (two cap
+  occurrences with the real stub meter — a capped fan-out, then a downstream
+  run-scope refusal after a demote narrows the re-scan — asserting ledger
+  CONTENT, not existence; red at 80e4004 on E0, green after).
+
 - fix(runner): the `bead_close` gate now rides the two remaining done-commit
   edges — the `on_skip:"pass"` skip-pass commit and the `on_exit` terminal
   postmortem commit (est-13z1 law; est-ikeon, the R8 sibling sweep of PR #523).
