@@ -101,3 +101,10 @@ scripts/scrub-list.txt
 # because the runner's give-up error must quote it back byte-for-byte — the
 # same GUARD class as tests/fake_hermes.py / tests/test_ratelimit_54.py.
 tests/fake-b1
+# pr-feed.yml (sys-asvm0c, main): the digest row carries the fork channel id and
+# the bead-prefix regex — public on the fork, GUARD line guards like the ones
+# above; CI parity of the widened audit reads this file.
+.github/workflows/pr-feed.yml:32
+.github/workflows/pr-feed.yml:38
+.github/workflows/pr-feed.yml:39
+.github/workflows/pr-feed.yml:42

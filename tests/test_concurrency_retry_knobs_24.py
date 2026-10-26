@@ -49,6 +49,10 @@ os.environ["HERMES_WF_HERMES_BIN"] = FAKE
 sys.path.insert(0, str(ROOT))
 _spec = importlib.util.spec_from_file_location("hw", ROOT / "__init__.py")
 hw = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(hw)
+# S3 (test_shelf_isolation_71): a bare env drop is not a sandbox — pin the door's
+# settings.runs_root channel beside it, like every other in-process door writer.
+import wf_test_isolation
+wf_test_isolation.install(hw)
 
 def call(**a):
     return json.loads(hw.handle(a))
@@ -115,8 +119,12 @@ rid = r.get("run_id"); check("knobbed run launches", bool(rid), r)
 if rid:
     call(action="stop", run_id=rid); wait_dead(rid)
     m = run_json_meta(rid)
+    # #100 item 4 (main ruling, rides the rebase): an over-default author ask
+    # bakes DOWN to the default; the raw ask lands in _requested.
     check("run.json carries requested values",
-          m.get("concurrency") == 16 and m.get("item_concurrency") == 12
+          m.get("_requested", {}).get("concurrency") == 16
+          and m.get("_requested", {}).get("item_concurrency") == 12
+          and m.get("concurrency") == 4 and m.get("item_concurrency") == 8
           and m.get("retry") == {"mode": "work-metered", "resume_floor_s": 30}, m)
     check("run.json carries author-vs-default provenance",
           (m.get("knobs_provenance") or {}).get("concurrency") == "author"

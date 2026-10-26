@@ -77,24 +77,14 @@ KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance"
 # plugin ctx when it has one, else the resolved home's config.yaml raw.
 OWNER_CONCURRENCY_CAP_KEY = "max_concurrency"
 
-def _concurrency_cap():
-    """(cap, source) for width validation. The owner setting wins whenever it
-    carries a POSITIVE INT (booleans/strings/negatives are not a cap — a typo'd
-    owner value must never silently drop the hardcoded floor); otherwise the
-    hardcoded CONCURRENCY_CAP. Source rides the refusal so an author told 'cap
-    N (owner settings)' knows who set N."""
-    v = _common.owner_setting(OWNER_CONCURRENCY_CAP_KEY)
-    if isinstance(v, int) and not isinstance(v, bool) and v >= 1:
-        return v, f"owner setting {OWNER_CONCURRENCY_CAP_KEY}"
-    return _common.CONCURRENCY_CAP, "default"
-
 def _knob_errors(graph):
     """#100: reject malformed knob values with the repo's {node, field, msg}
-    shape. Type rules mirror the validator's house style; the width cap is
-    OWNER-FIRST (_concurrency_cap — the estate allowance), and the hardcoded
-    ceiling still keeps a typo'd width from opening thousands of processes."""
+    shape. Type rules mirror the validator's house style; the HARDCODED
+    ceiling is the refusal (#100 item 4: the owner cap is enforced as a CLAMP
+    at bake time — an over-wide author ask rides down, never a refusal), so a
+    typo'd width still cannot open thousands of processes."""
     errs = []
-    cap, cap_src = _concurrency_cap()
+    cap, cap_src = _common.CONCURRENCY_CAP, "default"
     for key in ("concurrency", "item_concurrency"):
         if key in graph:
             v = graph[key]
@@ -131,20 +121,28 @@ def _knob_bake(graph, bake_all=False):
     bake_all=True (amend over a run.json that already carried knobs): the widths
     bake to their defaults with provenance "default" — a key that was once
     stamped stays stamped, so watchers never lose author-vs-default truth."""
-    if not bake_all and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+    has_cap = any(_common.owner_setting(s) is not None
+                  for s in ("max_concurrency", "max_item_concurrency"))
+    if not bake_all and not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
         return {}, {}, {}
     effective, provenance = {}, {}
+    # #100 item 4: widths ride _concurrency_bake, the ONE clamp truth (owner cap,
+    # else the author value clamped to the default). The later _knob_bake merge in
+    # act_run would otherwise overwrite the clamp-channel merge with raw author widths.
+    baked, _cap_err = _concurrency_bake(graph)
     for key, dflt in (("concurrency", _common.DEFAULT_CONCURRENCY),
                       ("item_concurrency", _common.DEFAULT_ITEM_CONCURRENCY)):
         author = isinstance(graph.get(key), int) and not isinstance(graph.get(key), bool)
-        effective[key] = graph[key] if author else dflt
+        effective[key] = (baked or {}).get(key, dflt)
         provenance[key] = "author" if author else "default"
     author_retry = isinstance(graph.get("retry"), dict)
     if author_retry:
         effective["retry"] = dict(graph["retry"])
     provenance["retry"] = "author" if author_retry else "default"
-    requested = {k: effective[k] for k in ("concurrency", "item_concurrency", "retry")
+    requested = {k: graph[k] for k in ("concurrency", "item_concurrency")
                  if provenance[k] == "author"}
+    if author_retry:
+        requested["retry"] = effective["retry"]
     return effective, provenance, requested
 
 def _model_names_valid(names):
