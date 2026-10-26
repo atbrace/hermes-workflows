@@ -4773,10 +4773,12 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
             and r2.get("error_class") == "timeout" and not r2.get("harvest"):
         # #24: second death at ANY wall = dead-letter — residue classified in the
         # payload, honest failure, and returning here guarantees no third spawn.
-        _dead_letter(run, ev, ev_kw, r, r2, cfg)
+        # Renamed off main's est-ij0 _dead_letter (run-finished ledger summary):
+        # same name, later def, silent shadow that swallowed the dead_letter event.
+        _dead_letter_metered(run, ev, ev_kw, r, r2, cfg)
     return r2
 
-def _dead_letter(run, ev, ev_kw, r1, r2, cfg):
+def _dead_letter_metered(run, ev, ev_kw, r1, r2, cfg):
     """#24 one-strike law: a work-metered node that died a SECOND time (any wall)
     is dead-lettered, not re-driven. The payload classifies the residue so the
     owner can bank it: which session ledgers carry tool progress, whether the
