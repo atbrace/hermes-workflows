@@ -3924,11 +3924,6 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         # liveness tests assert on it. Rides ONLY when the retry knob exists: a
         # knob-free run's child env stays byte-identical to the frozen capture.
         env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
-        # remaining wall, not the full fare) — observable, and the liveness tests
-        # assert on it. KNOB-GATED: a knob-free run's spawn env stays byte-identical
-        # to the frozen capture (golden-solo EMPTY-diff gate); the env key only
-        # means something once the retry knob exists.
-        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     # fb 625a3241: WORK_DIR_NOTE advertises wd as durable; under a safe root it must
     # also be writable. Append the child's OWN dir only; unset/'' = unrestricted in
     # core, so leave it exactly as inherited (setting it would newly restrict).
