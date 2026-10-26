@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix(consolidate): the bead close-effect gate now rides the partner-consolidation
+  edge in `wf.py` — an unreadable bead store refuses the consolidate-partner step
+  (typed failed, ledger holds) instead of a silent pass, and the case is pinned by
+  tests/test_consolidate_effect_gate_5e1.py. Grammar path list names the partner.
+
 - feat(validate): three advisory semantic lints ride the `validate`
   action's existing never-fatal `warnings` channel. (1) a `when` operand
   `out.<head>.<field>` whose head declares an object schema that does not
