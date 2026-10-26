@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- fix(runner): the `bead_close` gate now rides the two remaining done-commit
+  edges — the `on_skip:"pass"` skip-pass commit and the `on_exit` terminal
+  postmortem commit (est-13z1 law; est-ikeon, the R8 sibling sweep of PR #523).
+  The commit-edge census applies BOTH boundary gates (`_effect_gate`, then
+  `_bead_close_gate`) on the agent-solo, fan-out aggregate and echo paths; these
+  two rode the effect gate alone. The door admits the combo (`on_skip` validates
+  as enum + `when`-presence, `bead_close` by shape only), so an agent
+  `{bead_close, when: false, on_skip: "pass"}` with NO effects booked
+  `done {agent:"skipped"}` with ZERO store read-back — the 13z1 lying-done at
+  the skip edge — and the terminal postmortem booked its `done` on the child's
+  prose. PRE-EXISTING on main, not introduced by #523, which stays
+  owner-scoped to the #56 axis and certified at head 47879ee: this lands as a
+  stacked follow-up, forward-only. Each edge now reads the estate store itself
+  and an unproven close DEMOTES the commit to typed `failed`
+  (`error_class:"bead_close"`, `error: bead_close_unproven: ...`, the measured
+  row rides the record, never retried). The skip edge reuses the gate-agnostic
+  demote branch #523 landed; the `on_exit` demote moves the node record and
+  `on_exit_receipt.md`, never the run verdict — `write_runner_exit` stamps that
+  before `_run_on_exit` runs (#129), asserted not assumed. Honest degradation
+  holds: no `bead_close` key = today's behavior byte-identical, not one probe
+  argv spent. Join/consolidate/gate commit edges stay exempt — their closed key
+  sets carry neither gate key, so the door refuses the declaration before a
+  runner must honour one. New test: tests/test_skip_pass_bead_close_ikeon.py
+  (red at 47879ee on the four close-claim cases a/b/d/e, green on the two
+  honest-degradation controls c/f; 6/6 green after).
+
 ## 1.4.3 — 2026-10-26
 
 Patch release: 6 merged PRs since v1.4.2 — the grammar-doc seat-cap trap named where authors read it, with the direction-biting mutation test (#527, @atbrace), the `[SILENT]` verdict honored plus per-node wake tiers (WF-GRAFT-1, #533), the autouse test-sandbox conftest with env floor, resolver wrap and merge-gate subprocess items (WF-GRAFT-6, #538), held gates presented via core's public injection route with flag-gated hooks declared upstream-compatible (#141665 points 2–3, #546), the lint gate requiring option strings to appear verbatim in doc text (#477, #552), and the per-item `precheck_argv` custody probe before fan-out spawn (#453, #554). The seat-cap sentence in `references/grammar.md` now states the engine's ceiling law — `max_seats` lowers within range from the host ceiling (`WORKFLOW_MAX_SEATS` / `.env` / config), never raises it — and `tests/test_grammar_hw-bgb.py` (10 checks) refuses a mutation probe carrying the backwards sentence.
