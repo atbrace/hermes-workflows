@@ -384,12 +384,12 @@ python3 scripts/suite.py . ci-out                 # full serial suite → ci-out
 python3 scripts/suite.py . ci-out --shard 3/8     # one CI lane (sorted-list position slice)
 python3 scripts/suite.py . ci-out --merge ci-out-shard-0 … ci-out-shard-7   # fan-in: fuses lane ledgers, refuses missing/interrupted/empty lanes
 hermes plugins validate .                         # manifest + SDK-surface + security scan
+python3 wf.py validate [--json] <graph.json>      # door graph lint; exit 0/1/2 (#474)
 python3 scripts/make_public.py /tmp/public-tree   # private-string audit; must print "0 scrub hits"
 ```
 
-A change is done when: its targeted test is green, the full suite is green, validate
-prints `Validation passed.`, and the scrub audit prints `0 scrub hits`. CI runs the
-same gates ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+A change is done when: targeted test, full suite, and validate green; scrub prints
+`0 scrub hits`. CI runs the same gates (ci.yml).
 
 ### 4b′. Navigate with the knowledge graph (optional)
 
