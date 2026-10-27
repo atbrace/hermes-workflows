@@ -102,6 +102,12 @@ INCLUDE_FILES = (
     # ZIP, the parked-hold watchdog #566 just shipped is a SILENT NO-OP on every
     # packaged install (the est-4vnq finding-4 pack law). Stdlib-only.
     "park_watch.py",
+    # #571 (est-ip975 PR-2/3): the shipped tests/test_tick_bridge.py imports this
+    # at top level (flat root layout) — absent from the ZIP the watchdog-tick
+    # lifecycle module is a ModuleNotFoundError at the unpacked root, the #105
+    # dead-package shape (est-4vnq finding-4 pack law; the sibling of
+    # park_watch.py shipped by 8763ea1). Stdlib-only.
+    "cron_bridge.py",
     "docs/native-hooks.md",  # the p3/p5 switch board: an unshipped doc is invisible to ZIP installs
     "dashboard/manifest.json",
     "dashboard/index.js",  # hidden API plugin still needs the web host's script/registration contract
@@ -177,7 +183,6 @@ INCLUDE_FILES = (
     # beside its test.
     "scripts/release_merge_gate.py",
     "scripts/suite.py",
-    ".graphifyignore",
     "tests/fake",
     # B1 and its gitpin snapshot this fixture before generating the child copy.
     "tests/fake-b1",
