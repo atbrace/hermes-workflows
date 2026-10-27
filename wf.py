@@ -9629,6 +9629,33 @@ class Run:
         self.nodes = wfcommon.workflow_nodes(self.graph)
         self.byid = {n["id"]: n for n in self.graph["nodes"]}
 
+def arm_tick(async_boot=False):
+    """est-ip975 PR-2: arm the watchdog tick (the door's post-flock launch tail
+    is the live seam - see _arm_from_launch in __init__.py). Kept as the sync
+    loader for the `arm` verb and tests: loads the sibling runner_watchdog by
+    path and delegates; every failure mode degrades to a no-op.
+
+    async_boot=True was the runner-boot fork shape - POISONED at both ends:
+    cold-cron latency inside the door's lane flock broke claim dedupe, and a
+    runner-spawned child (Popen or double-fork) is re-adopted by the runner's
+    own #61b census, so an external SIGTERM settles it and attributes the
+    death to the claimed node (gateway_sigterm_detach_6226 C, CI red on the
+    pinned core). The fork is refused: async_boot now arms inline, never
+    forks."""
+    def _do():
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_hw_boot_watchdog", Path(__file__).resolve().parent / "runner_watchdog.py")
+            if spec is None or spec.loader is None:
+                return
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.ensure_tick()
+        except Exception:
+            pass
+    return _do()
+
+
 def main(run_id):
     run = find_run(run_id)   # resolved runs_root first; a pre-fix run stays resumable from the launch root
     # #152 T3 provenance read (first reader wins — the key NEVER rides into a
@@ -10660,6 +10687,21 @@ if __name__ == "__main__":
         register_job(r, n, byid, int(sys.argv[4]), sys.argv[5], sys.argv[6])
         print("WORKFLOW_JOB_REGISTERED " + n["id"])
         sys.exit(0)
+    # est-ip975 PR-2: the watchdog cron entry. PR-1's generated shim execs this
+    # exact argument-free line (`wf.py tick`), so the body loads by path on
+    # bare stdlib python - no core, no plugin-loader - and prints its census.
+    if len(sys.argv) == 2 and sys.argv[1] == "arm":
+        arm_tick()
+        sys.exit(0)
+    if len(sys.argv) == 2 and sys.argv[1] == "tick":
+        _wd_spec = importlib.util.spec_from_file_location(
+            "_hw_tick_watchdog", Path(__file__).resolve().parent / "runner_watchdog.py")
+        if _wd_spec is None or _wd_spec.loader is None:
+            print("TICK REFUSED runner_watchdog.py not present")
+            sys.exit(1)
+        _wd_mod = importlib.util.module_from_spec(_wd_spec)
+        _wd_spec.loader.exec_module(_wd_mod)
+        sys.exit(_wd_mod.main())
     # #44 (issue ask 2): the owner escape hatch rides the SAME entry point —
     # `wf.py release-lock <run_id>` heals a PROVEN-wedged runner.lock (zero live
     # holders on the kernel ledger + dead lease) so wait-resume recovers without
