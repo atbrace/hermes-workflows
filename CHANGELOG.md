@@ -37,7 +37,10 @@ Ops/chore:
   itself; sibling of `8763ea1` shipping `park_watch.py`). The two new scrub
   pins join `SOURCE_ONLY_TESTS` in `tests/test_package_source_only_756.py`:
   they execute the source-only `make_public.py`, the `test_scrub_yml_166b`
-  shape, so the ZIP's derived sweep keeps every shipped test runnable.
+  shape, so the ZIP's derived sweep keeps every shipped test runnable. The
+  knobs suite carries the `#762` launch-env pin token for the spawn legs
+  (audit-level; children still resolve under the pinned `HERMES_HOME`, so
+  the golden-solo zero-key leg is untouched).
 
 - fix(knobs): width receipts fail OPEN, never crash — the #24 tracker keys
   (`meta["_width"]` / `meta["_width_flush"]`) are runner-private installs from

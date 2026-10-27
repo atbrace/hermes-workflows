@@ -185,7 +185,12 @@ if r.get("run_id"):
     call(action="stop", run_id=r["run_id"]); wait_dead(r["run_id"])
 
 # ---------- part B: the runner (subprocess wf.py + fake children)
-envb = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(HOME / "fake.log"))
+# est-2ek.1.762 pin (lane arrival): the spawn legs carry the code-level
+# WF_RUNS_ROOT pin to THIS test's own scratch runs root — exactly the dir the
+# door already resolves under the pinned HERMES_HOME (line 54's pop), so child
+# behaviour is unchanged; the in-process golden-solo leg (A) never sees this
+# key and its zero-key contract (LEGACY above) stays intact.
+envb = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(HOME / "fake.log"))
 
 def mk(run_id, nodes, meta):
     r = RUNS / run_id
