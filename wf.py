@@ -2311,6 +2311,11 @@ def _open_spawn_log(lp):
     """est-hls8y: the ONE place a spawn log's open mode is decided — append, so a
     re-driven attempt's log survives verbatim and the next spawn's capture is
     appended after it, never truncating the attempt it resumes from."""
+    if str(os.environ.get("WF_TEST_FAIL_SPAWN_LOG_OPEN", "")) == "1":
+        # Test-only deterministic capture-failure hook (same discipline as
+        # WF_TEST_KILL_ITEM_AT_FINALIZE): a real ENOSPC race is undeterministic,
+        # the seam under test is the typed settlement. Never set outside tests.
+        raise OSError(errno.ENOSPC, "simulated full filesystem", str(lp))
     return open(lp, "a", encoding="utf-8", errors="replace")
 
 def spawn_prompt_path(run, node, index, spawn_no):
@@ -2333,8 +2338,10 @@ def _node_file(node, index):
 
 def write_spawn_record(run, node, byid, index, spawn_no, argv, lp, pid, skey, started=None,
                        prompt_path=None):
-    """Q1 spawn-time record: written right after Popen succeeds, BEFORE the child
-    is awaited, so a babysitter sees the live child (pid, log, argv) mid-run.
+    """Q1 spawn-time record, written at TWO instants of every spawn (est-w95h7):
+    BEFORE the exec with pid=None (the started marker: a crash anywhere after it
+    settles from this file's own name) and again after the exec with the proven
+    pid, so a babysitter sees the live child (pid, log, argv) mid-run.
     status="running" is SAFE BY CONSTRUCTION: node_rec() returns pending for any
     status outside done/failed, so this can never be mistaken for a commit and
     replay-skip law is untouched (the merged node record remains the commit)."""
@@ -6673,9 +6680,16 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
 
     try:
         logf = _open_spawn_log(lp)   # est-hls8y: append, never truncate a prior attempt
-    except OSError:
+    except OSError as e:
+        # est-w95h7 (atbrace:hw-i6e #21): a capture the filesystem refuses is a
+        # deterministic spawn death, not a crash. Settle it typed at this seam
+        # (the launcher-failure record shape); the old bare raise reached the
+        # caller's catcher as an untyped `node crashed` commit with no class.
         _seat_release(seat)
-        raise
+        return {"status": "failed",
+                "error": f"spawn capture could not open ({lp}): {e}",
+                "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                "attempts": 1, **route}
     log_created = time.time()   # the file's own creation stamp: never counts as activity
     launched = False
     try:
@@ -6762,6 +6776,29 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                     return {**_stale, "spawn": spawn_no, "attempts": 1, **route}
                 tokens.append(token)     # registered BEFORE Popen — a spawn that
                                          # dies mid-launch still owns its survivors
+                # est-w95h7 (atbrace:hw-i6e #21): the started marker lands BEFORE
+                # the exec, so no window exists between "decided to spawn" and
+                # "the record says a child may exist". The crash path is
+                # recoverable from this file alone: its name IS the settle
+                # target and its fields carry the spawn identity; the door
+                # reaper derives the interruption receipt from the record path.
+                # pid=None never passes _verify_spawn_rec, so an unproven spawn
+                # is never adopted; the existing Q1 record after the exec
+                # stamps the proven pid over the marker.
+                try:
+                    write_spawn_record(run, node, byid, index, spawn_no, cmd, lp, None,
+                                       skey, prompt_path=str(pp))
+                except OSError as e:
+                    logf.close()
+                    return {"status": "failed",
+                            "error": f"started marker could not be written: {e}",
+                            "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                            "attempts": 1, **route}
+                if str(os.environ.get("WF_TEST_KILL_AT_SPAWN_MARKER", "")) == "1":
+                    # Test-only deterministic crash hook at the marker instant
+                    # (same discipline as WF_TEST_KILL_ITEM_AT_FINALIZE).
+                    # Never set outside tests.
+                    os.kill(os.getpid(), signal.SIGKILL)
                 # est-ulwpg (witness 20261009-072611-fb-closeout-batch): the wd
                 # snapshot above is captured BEFORE the seat wait; an external
                 # sweeper can prune <run>/work/<node> while this spawn sits on
@@ -6844,9 +6881,10 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         # est-2ek.1.641: this spawn billed under the door's alive-proof — record
         # the lane's proved-alive receipt (durable, replacement-runner-visible).
         _route_receipt_bake(meta, node)
-        # Q1 spawn-time record (after Popen succeeded, before awaiting): the live
-        # child is visible mid-run with pid / log / argv / prompt path (A1: the
-        # prompt as sent is durable in the run dir — no redaction, no unlink).
+        # est-w95h7: the FINALIZE of the started marker written before the exec.
+        # Same file, now carrying the proven pid, so the live child is visible
+        # mid-run with pid / log / argv / prompt path (A1: the prompt as sent is
+        # durable in the run dir, no redaction, no unlink).
         spawn_cmd = list(cmd)
         started_iso = now()
         try:
