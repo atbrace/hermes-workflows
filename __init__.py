@@ -4738,13 +4738,30 @@ def act_amend(args):
                             "event": "graph.amended"}) + "\n")
     (r / "restart.request").write_text("1")
     mode = _resume_after_action(r, consumed=lambda: not (r / "restart.request").exists())
-    if mode == "respawned":
-        applies = "runner respawned; efp replay-skip re-runs changed nodes and everything downstream"
+    # est-gexk5 restart leg (hw-83v): promise continuation only for what the
+    # handoff demonstrably did. A "consumed" answer is believed only when the
+    # restart marker is observed gone; a live handoff names its re-drive
+    # instead of promising automatic success.
+    _observed = mode == "respawned" or (mode == "consumed" and not (r / "restart.request").exists())
+    if _observed:
+        applies = ("runner respawned; efp replay-skip re-runs changed nodes and everything downstream"
+                   if mode == "respawned" else
+                   "runner consumed the amend at its boundary; efp replay-skip re-runs changed nodes and everything downstream")
+        hint = "continuation is automatic and the owner session wakes at the next transition; wait only blocks to a boundary or revives an interrupted runner"
+    elif preview.get("will_rerun"):
+        applies = ("amend durable; live-runner consume NOT observed inside the handoff window"
+                   if mode == "live" else
+                   "amend durable; the run reached a terminal verdict without consuming the restart marker (it stays as residue)")
+        hint = ("the live runner may still hot-reload at its next wave boundary — expected, not observed: "
+                "verify at the next status read; if the run stalls, re-drive by resubmitting this amend once it reads interrupted"
+                if mode == "live" else
+                "nothing will consume this marker for this run: the graph swap is on disk but inert for a terminal run; no re-drive exists")
     else:
-        applies = "live runner hot-reloads at its next wave boundary; the owner session wakes at the next transition"
+        applies = "amend durable; nothing scheduled to re-run, no re-drive needed"
+        hint = "nothing to follow: the replay-skip law re-runs no node for this graph and no runner is bound to it"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
             "graph_revision": _new_rev,   # #19: the new head — the token a next CAS writes against
-            "hint": "continuation is automatic and the owner session wakes at the next transition; wait only blocks to a boundary or revives an interrupted runner" + _rz_note + _liveness_hint_suffix(_liveness_notes), **preview}
+            "hint": hint + _rz_note + _liveness_hint_suffix(_liveness_notes), **preview}
 
 def act_stop(args):
     r = run_dir(args.get("run_id"))
