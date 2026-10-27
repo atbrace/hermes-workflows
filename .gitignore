@@ -14,6 +14,8 @@ examples/diagrams/*.delivery.json
 examples/diagrams/*.finalize.json
 examples/diagrams/*.finalize-summary.json
 # graphify is OPTIONAL local navigation: generate anywhere, never commit.
+# graphify-out retired from tracking (sys-h36sko): a local `graphify update .`
+# stays local
 graphify-out/
 ci-out
 tests/home-*/
@@ -35,3 +37,6 @@ tests/probe_*/
 # committed copies were litter (est-rmsro) — only the generator is tracked
 ci/*.sh
 !ci/ci-parity.sh
+
+# NFS silly-rename phantoms (f9439b2): keep out of every listing
+.nfs*

@@ -78,6 +78,76 @@ def _inline_graph_size_error(graph):
     if len(payload.encode("utf-8")) > GRAPH_MAX_BYTES:
         return {"error": f"graph exceeds {GRAPH_MAX_BYTES} bytes"}
     return None
+KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance", "_requested")
+
+def _knob_errors(graph):
+    """#100: reject malformed knob values with the repo's {node, field, msg}
+    shape. Type rules mirror the validator's house style; the HARDCODED
+    ceiling is the refusal (#100 item 4: the owner cap is enforced as a CLAMP
+    at bake time — an over-wide author ask rides down, never a refusal), so a
+    typo'd width still cannot open thousands of processes."""
+    errs = []
+    cap = _common.CONCURRENCY_CAP
+    for key in ("concurrency", "item_concurrency"):
+        if key in graph:
+            v = graph[key]
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} must be a positive int (cap {cap})"})
+            elif v > cap:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} {v} exceeds cap {cap}"})
+    if "retry" in graph:
+        rt = graph["retry"]
+        if not isinstance(rt, dict):
+            errs.append({"node": None, "field": "retry", "msg": "retry must be an object"})
+        else:
+            for k in sorted(set(rt) - _common.RETRY_KEYS):
+                errs.append({"node": None, "field": "retry",
+                             "msg": "unknown key; allowed: " + json.dumps(sorted(_common.RETRY_KEYS))})
+            if "mode" in rt and rt["mode"] not in _common.RETRY_MODES:
+                errs.append({"node": None, "field": "retry.mode",
+                             "msg": f"invalid retry.mode {rt['mode']!r}; allowed: {sorted(_common.RETRY_MODES)}"})
+            if "resume_floor_s" in rt:
+                rf = rt["resume_floor_s"]
+                if not isinstance(rf, (int, float)) or isinstance(rf, bool) or rf < 1:
+                    errs.append({"node": None, "field": "retry.resume_floor_s",
+                                 "msg": "resume_floor_s must be a positive number of seconds"})
+    return errs
+
+def _knob_bake(graph, bake_all=False):
+    """#24: (effective values, author-vs-default provenance, requested, cap-error)
+    from a graph that _knob_errors accepted. Door-written. A graph carrying NO
+    knob bakes NOTHING (returns empty dicts): the run.json key set stays frozen
+    for pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
+    bake_all=True (amend over a run.json that already carried knobs): the widths
+    bake to their defaults with provenance "default" — a key that was once
+    stamped stays stamped, so watchers never lose author-vs-default truth.
+    A malformed owner cap is NOT baked over: it rides back as the 4th element
+    (the #42 fail-closed error) so every door refuses, never DEFAULTs silently."""
+    has_cap = any(_common.owner_setting(s) is not None
+                  for s in ("max_concurrency", "max_item_concurrency"))
+    if not bake_all and not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+        return {}, {}, {}, None
+    effective, provenance = {}, {}
+    # #100 item 4: widths ride _concurrency_bake, the ONE clamp truth (owner cap,
+    # else the author value clamped to the default). The later _knob_bake merge in
+    # act_run would otherwise overwrite the clamp-channel merge with raw author widths.
+    baked, _cap_err = _concurrency_bake(graph)
+    for key, dflt in (("concurrency", _common.DEFAULT_CONCURRENCY),
+                      ("item_concurrency", _common.DEFAULT_ITEM_CONCURRENCY)):
+        author = isinstance(graph.get(key), int) and not isinstance(graph.get(key), bool)
+        effective[key] = (baked or {}).get(key, dflt)
+        provenance[key] = "author" if author else "default"
+    author_retry = isinstance(graph.get("retry"), dict)
+    if author_retry:
+        effective["retry"] = dict(graph["retry"])
+    provenance["retry"] = "author" if author_retry else "default"
+    requested = {k: graph[k] for k in ("concurrency", "item_concurrency")
+                 if provenance[k] == "author"}
+    if author_retry:
+        requested["retry"] = effective["retry"]
+    return effective, provenance, requested, _cap_err
 
 # (est-7m6wv horde) the door's once-duplicate GRAPH_KEYS table is GONE: the live
 # unknown-graph-key law is wfcommon.STRUCTURAL_GRAPH_KEYS, enforced once in
@@ -178,7 +248,11 @@ def _validation_error(graph, run_dir=None):
     another item's artifacts (WOFS W1f) becomes impossible-by-construction for
     admitted graphs. `run_dir` (amend; validate given a run dir) additionally measures
     the declared artifact bytes; run creation passes None — the dir does not exist yet."""
-    errs = list(_common.structural_graph_errors(graph))
+    # #24: `retry` joins the shared structural key set door-side; the knob
+    # shape rules (_knob_errors) run right after so widths AND retry are
+    # refused in one call.
+    errs = list(_common.structural_graph_errors(graph, extra_keys=("retry",)))
+    errs.extend(_knob_errors(graph))     # #24: knob family (concurrency/item_concurrency/retry)
     nodes = graph.get("nodes")
     # The shared validator assumes hashable ids and iterable dependency lists.
     # Normalize only those invalid shapes in a copy, collecting their errors while
@@ -3684,6 +3758,15 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta["includes"] = includes
     if include_notes:
         meta["include_notes"] = include_notes
+    # #24 knob family: bake the EFFECTIVE widths + retry mode with author-vs-default
+    # provenance, and the author's REQUEST (what validation saw) so the runner can
+    # receipt requested-vs-applied. Absent knobs => no keys land (legacy shape).
+    _eff, _prov, _req, _ = _knob_bake(graph)   # a malformed cap was refused upstream
+    meta.update(_eff)
+    if _prov:
+        meta["knobs_provenance"] = _prov
+    if _req:
+        meta["_requested"] = _req
     (r / "run.json").write_text(json.dumps(meta))
     # AUTHORITY LAW (owner ruling, PR#97 review): every owner-facing automatic wake
     # is RUNNER-AUTHORED protocol text; graph-authored prose (gate questions etc.)
@@ -4583,6 +4666,14 @@ def act_amend(args):
                                               _common.plugin_version())
         if _vh:
             return {"error": _vh}
+    # #42 fail-closed at the amend door too (same law as act_run): a malformed
+    # owner settings.max_concurrency REFUSES the amend. The knob family is
+    # LAUNCH-FROZEN (grammar: `amend` never re-bakes), so nothing downstream
+    # re-reads the clamp channel - this is pure admission hygiene, the same
+    # refusal the run door makes, landing before graph.json is touched.
+    _cap_err = _concurrency_bake(new)[1]
+    if _cap_err:
+        return _cap_err
     old = jload(r / "graph.json") or {}
     new = dict(new, name=new.get("name", old.get("name", "workflow")))
     # Same resolved-truth rule as run: bake defaults/shape before the write, so
@@ -4698,6 +4789,10 @@ def act_amend(args):
     except Exception:
         pass
     meta = jload(r / "run.json", {}) or {}
+    # #24: an amend REPLACES the graph, so it re-bakes the knob family from the
+    # NEW graph — a knob the new graph dropped returns to default with provenance
+    # flipped. No knobs anywhere (old and new graph) => run.json untouched.
+    _old_meta = dict(meta)
     # An author-form amend of a composite run restamps run.json's include truth the
     # same way act_run writes it: the notes/provenance describing THIS graph, not
     # the previous one. SET-OR-REMOVE: fresh author-form provenance replaces the
@@ -4706,7 +4801,9 @@ def act_amend(args):
     # kept warning about the old graph's fixed scratch path — a stale note list
     # describes a graph the run no longer carries). An expanded-form amend yields
     # empty lists here, so the keys are left exactly as they stand (the
-    # intentional no-op: a plain run never grows them).
+    # intentional no-op: a plain run never grows them). Rides INSIDE the
+    # before/after diff so a notes-clear alone turns the write on (post-rebase F:
+    # the old `or _includes` term could not see a pop-only change).
     if _includes:
         meta["includes"] = _includes
         if _include_notes:
