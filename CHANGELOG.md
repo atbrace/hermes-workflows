@@ -36,6 +36,17 @@ Ops/chore:
   at the unpacked root — the #105 dead-package shape, red at main 9bc5bcc
   itself; sibling of `8763ea1` shipping `park_watch.py`).
 
+- fix(knobs): width receipts fail OPEN, never crash — the #24 tracker keys
+  (`meta["_width"]` / `meta["_width_flush"]`) are runner-private installs from
+  `main()`; in-process drivers that hand bare meta dicts to `run_agent_node`
+  / fan-out legs (`test_error_classes_exhaustive_vb65.py`,
+  `test_budget_fanout_gates_ps8i9.py` G1-G3) crashed `KeyError: '_width'`
+  over the take-over. Consumer sites now go through `_width_track(meta)` /
+  `_width_flush(meta, run)` with no-op fallbacks: observation-only, exactly
+  the base-9bc5bcc behavior for un-installed metas; a runner that installed
+  the tracker receipts byte-identically. RED over the take-over (lane), GREEN
+  at 9bc5bcc and over this cure.
+
 - chore(graphify): M02 (sys-h36sko) — retired the committed knowledge graph and
   its whole governance stack: `graphify-out/` (5.2 MB generated),
   `scripts/graph_check.py`/`graph_path_ban.py`/`graph_regen.py`, the graph CI job

@@ -8323,6 +8323,20 @@ def _width_tracker(meta):
             log(run, "node.running_width", node=nid, running=w)
     meta["_width_flush"] = flush
 
+# #24 consumers are FAIL-OPEN, never fail-crash: main() always installs the
+# tracker keys, but library/in-process drivers (tests, embedders) hand bare
+# meta dicts to run_agent_node / fan-out legs all the time. Width receipts are
+# observation only (docstring above: "never gates a spawn"), so a meta that
+# never went through the runner's install simply gets the no-op — the old
+# (base 9bc5bcc) behavior for that caller is preserved byte-identically.
+def _width_track(meta):
+    return meta.get("_width", lambda nid: _nullcontext())
+
+def _width_flush(meta, run):
+    fn = meta.get("_width_flush")
+    if fn is not None:
+        fn(run)
+
 def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None, cap_node=None):
     """hw-23c: the bounded ladder under the node's author cap (default 1 = the
     established single re-drive, byte-identical behavior). Every pass re-enters
@@ -8978,7 +8992,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     sk = skey_for(run, byid, node, i)   # fresh nonce per spawn (retry respawns
                     log(run, "item.started", node=nid, index=i, skey=sk)   # are fresh sessions)
                     _book_launch()   # census launch stamp at the ACTUAL spawn instant
-                    with meta["_width"](nid):   # #24 width receipt (knob-gated flush)
+                    with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
                         return run_child(meta, node, byid, goal, node.get("context", ""),
                                          fo.get("schema") or node.get("schema"), steering=steering,
                                          skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
@@ -9078,7 +9092,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     list(ex.map(lambda t: one(*t), list(enumerate(items))))
             finally:
                 strag_stop.set()
-            meta["_width_flush"](run)   # #24: observed item width of THIS fan-out wave
+            _width_flush(meta, run)   # #24: observed item width of THIS fan-out wave
             # est-fanout-cell: the wave ends -> the open batch ALWAYS flushes with
             # its tail NAMED (never silently dropped), then the pool drains so the
             # finals exist before the partner's boundary tally reads them.
@@ -9254,7 +9268,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                 detached = _poll_registered_job(meta, node, byid)
                 if detached is not None:
                     return detached
-                with meta["_width"](nid):   # #24 width receipt (knob-gated flush)
+                with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
                     return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
                                      node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
                                      resume_preamble=resume_preamble, model_override=model_override, **kw)
@@ -10700,7 +10714,7 @@ def main(run_id):
                 with ThreadPoolExecutor(max_workers=meta.get("concurrency", DEFAULT_CONCURRENCY)) as ex:
                     list(ex.map(lambda n: run_agent_node(run, meta, rs.byid, n, outputs,
                                                          steering.pop(n["id"], None) or []), spawnable))
-                meta["_width_flush"](run)   # #24: peak children of THIS wave, per node
+                _width_flush(meta, run)   # #24: peak children of THIS wave, per node
             continue  # top of loop: consume markers, recompute states
 
         m = consume_markers()
