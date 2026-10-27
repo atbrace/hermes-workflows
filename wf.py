@@ -18,6 +18,7 @@ import json, os, random, re, shutil, signal, socket, subprocess, sys, threading,
 import errno
 import fcntl
 import hashlib
+import math
 from contextlib import nullcontext as _nullcontext
 import importlib.util
 import urllib.error
@@ -4015,7 +4016,14 @@ def _retry_conf(meta):
     rt = meta.get("retry") if isinstance(meta.get("retry"), dict) else {}
     mode = rt.get("mode") if rt.get("mode") in ("wall", "work-metered") else "wall"
     floor = rt.get("resume_floor_s")
-    floor = floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) and floor >= 1 \
+    # #580 B3 (runner seam): the door now refuses a non-finite floor at
+    # admission, but run.json can also arrive from pre-cure or hand-written
+    # bytes — 1e309 round-trips to +inf and an inf resume wall defeats the
+    # bounded-wall guarantee at the spawn. DEFENSIVE normalization, fail-closed
+    # like every other malformed knob value here: non-finite falls back to the
+    # default floor, never an infinite spawn.
+    floor = floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) \
+        and math.isfinite(floor) and floor >= 1 \
         else DEFAULT_RESUME_FLOOR_S
     return {"mode": mode, "resume_floor_s": floor}
 

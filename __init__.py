@@ -6,7 +6,7 @@ its input files. No standing daemon or control plane, no second opinion on run
 state (one runner process per run, detached out of the caller's tree at spawn #8).
 """
 import contextlib
-import importlib.util, json, os, re, select, shutil, stat, subprocess, sys, time
+import importlib.util, json, math, os, re, select, shutil, stat, subprocess, sys, time
 import fcntl, hashlib, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -110,24 +110,29 @@ def _knob_errors(graph):
                              "msg": f"invalid retry.mode {rt['mode']!r}; allowed: {sorted(_common.RETRY_MODES)}"})
             if "resume_floor_s" in rt:
                 rf = rt["resume_floor_s"]
-                if not isinstance(rf, (int, float)) or isinstance(rf, bool) or rf < 1:
+                # #580 B3: valid JSON numeric overflow is NOT a duration —
+                # 1e309 round-trips to +inf and NaN survives json; either one,
+                # baked, would mint an infinite spawn wall downstream. The law
+                # is FINITE positive, refused at admission naming the field.
+                if not isinstance(rf, (int, float)) or isinstance(rf, bool) \
+                        or not math.isfinite(rf) or rf < 1:
                     errs.append({"node": None, "field": "retry.resume_floor_s",
-                                 "msg": "resume_floor_s must be a positive number of seconds"})
+                                 "msg": "resume_floor_s must be a finite positive number of seconds"})
     return errs
 
-def _knob_bake(graph, bake_all=False):
+def _knob_bake(graph):
     """#24: (effective values, author-vs-default provenance, requested, cap-error)
     from a graph that _knob_errors accepted. Door-written. A graph carrying NO
     knob bakes NOTHING (returns empty dicts): the run.json key set stays frozen
     for pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
-    bake_all=True (amend over a run.json that already carried knobs): the widths
-    bake to their defaults with provenance "default" — a key that was once
-    stamped stays stamped, so watchers never lose author-vs-default truth.
+    LAUNCH-ONLY (#580 B1): this bake runs at submit alone — an amend never
+    re-bakes (grammar.md line 7; the response carries knobs_frozen instead),
+    so the launch bake is the whole truth for a run's life.
     A malformed owner cap is NOT baked over: it rides back as the 4th element
     (the #42 fail-closed error) so every door refuses, never DEFAULTs silently."""
     has_cap = any(_common.owner_setting(s) is not None
                   for s in ("max_concurrency", "max_item_concurrency"))
-    if not bake_all and not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+    if not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
         return {}, {}, {}, None
     effective, provenance = {}, {}
     # #100 item 4: widths ride _concurrency_bake, the ONE clamp truth (owner cap,
@@ -248,10 +253,10 @@ def _validation_error(graph, run_dir=None):
     another item's artifacts (WOFS W1f) becomes impossible-by-construction for
     admitted graphs. `run_dir` (amend; validate given a run dir) additionally measures
     the declared artifact bytes; run creation passes None — the dir does not exist yet."""
-    # #24: `retry` joins the shared structural key set door-side; the knob
-    # shape rules (_knob_errors) run right after so widths AND retry are
-    # refused in one call.
-    errs = list(_common.structural_graph_errors(graph, extra_keys=("retry",)))
+    # #24/#580 B2: `retry` is a first-class member of the shared structural key
+    # set (one table, no door-side extra_keys) — the knob shape rules below
+    # refuse malformed widths AND retry in one call.
+    errs = list(_common.structural_graph_errors(graph))
     errs.extend(_knob_errors(graph))     # #24: knob family (concurrency/item_concurrency/retry)
     nodes = graph.get("nodes")
     # The shared validator assumes hashable ids and iterable dependency lists.
@@ -4789,10 +4794,13 @@ def act_amend(args):
     except Exception:
         pass
     meta = jload(r / "run.json", {}) or {}
-    # #24: an amend REPLACES the graph, so it re-bakes the knob family from the
-    # NEW graph — a knob the new graph dropped returns to default with provenance
-    # flipped. No knobs anywhere (old and new graph) => run.json untouched.
-    _old_meta = dict(meta)
+    # #24/#580 B1 (launch-frozen law — grammar.md line 7's promise made code):
+    # an amend NEVER re-bakes the knob family. The runner's hot-reload seam
+    # re-reads graph.json only, so a re-baked run.json would disagree with the
+    # live scheduler until respawn; the launch-time bake and its provenance
+    # STAND. The response says so whenever the run launched with baked knobs:
+    # knobs_frozen names the values that stay in effect for this run.
+    _knobs_frozen = {k: meta[k] for k in KNOB_META_KEYS if k in meta} or None
     # An author-form amend of a composite run restamps run.json's include truth the
     # same way act_run writes it: the notes/provenance describing THIS graph, not
     # the previous one. SET-OR-REMOVE: fresh author-form provenance replaces the
@@ -4858,7 +4866,9 @@ def act_amend(args):
         hint = "nothing to follow: the replay-skip law re-runs no node for this graph and no runner is bound to it"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
             "graph_revision": _new_rev,   # #19: the new head — the token a next CAS writes against
-            "hint": hint + _rz_note + _liveness_hint_suffix(_liveness_notes), **preview}
+            "hint": hint + _rz_note + _liveness_hint_suffix(_liveness_notes),
+            **({"knobs_frozen": _knobs_frozen} if _knobs_frozen else {}),
+            **preview}
 
 def act_stop(args):
     r = run_dir(args.get("run_id"))

@@ -2577,6 +2577,12 @@ STRUCTURAL_GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_poli
                          # is refused (one contract per graph).
                          "params",
                          "concurrency", "item_concurrency",  # #100: optional run-level limits
+                         # #24/#580 B2: the run-level retry ladder knob joins the
+                         # table as a FIRST-CLASS key (was door-only via an
+                         # extra_keys hack — the shelf, measured with the shared
+                         # validate_graph_full, refused what direct submission
+                         # accepted). Shape law stays door-side (_knob_errors).
+                         "retry",
                          # est-3acn: RunBudget — an optional run-wide token cap
                          # ({"tokens": N}); enforced pre-dispatch, graceful
                          # budget_exhausted partial. USD is deliberately NOT a
@@ -2628,6 +2634,9 @@ GRAPH_KEY_MIN_VERSION = {
     "defaults": "1.0.1",
     "grammar": "1.1.1",
     "concurrency": "1.1.4", "item_concurrency": "1.1.4",
+    # #24 knob family's retry row: floor is the NEXT feature release (never
+    # earlier than proven — a 1.4.3 door genuinely refuses top-level retry).
+    "retry": "1.4.4",
     "include": "1.3.0", "model_policy": "1.3.0", "provenance": "1.3.0",
     "requires_plugin": "1.3.1",
     "result": "1.3.2",
