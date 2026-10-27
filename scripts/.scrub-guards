@@ -206,3 +206,8 @@ scripts/scrub-list.txt
 # because the runner's give-up error must quote it back byte-for-byte — the
 # same GUARD class as tests/fake_hermes.py / tests/test_ratelimit_54.py.
 tests/fake-b1
+# ---- #580 take-over (adversary R9 regression): the NUL-README pin file quotes
+# the forbidden token by role — the probe asserts the AUDITOR refuses this
+# exact token in a NUL-prefixed .md; neutralizing it would pin nothing. Same
+# fixture-identity GUARD class as tests/test_scrub_yml_166b.py (file-scope).
+tests/test_scrub_nul_readme_580.py

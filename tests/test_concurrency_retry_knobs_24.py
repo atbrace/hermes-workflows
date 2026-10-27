@@ -19,9 +19,16 @@ the legacy event stream stays byte-identical to the frozen capture) yet launches
 timeout retry (second spawn resumes, inherits ~remaining wall, emits dead_letter
 exactly once, never a third spawn); a zero-ledger hang stays wall-only (2 spawns).
 
+#580 take-over (review blockers B1-B3): the amend leg asserts the LAUNCH-FROZEN
+knob law (grammar.md line 7 made code — an amend re-bakes nothing and answers
+knobs_frozen), the door refuses a non-finite resume_floor_s (1e309/NaN), the
+runner defends the same class at its own seam (a persisted non-finite floor
+normalizes to the default, never an infinite spawn wall), and a shelved entry
+carrying top-level retry INCLUDES like any other graph (shared-validator parity).
+
 Run: python3 tests/test_concurrency_retry_knobs_24.py
 """
-import importlib.util, json, os, shutil, subprocess, sys, time
+import importlib.util, json, math, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -93,6 +100,17 @@ for good in ({"mode": "work-metered"}, {"mode": "wall"},
     r = call(action="save", graph=dict(NARROW, retry=good), name="knob-a-retry-" + good["mode"] + str(good.get("resume_floor_s", "")))
     check(f"retry {good} accepted", "error" not in r, r)
 
+# #580 B3 (admission side): valid JSON numeric overflow is NOT a duration.
+# 1e309 round-trips to +inf and NaN survives json — both must refuse at the
+# door naming the field, so no inf ever reaches a spawn wall.
+for bad_rf in (1e309, float("nan")):
+    r = call(action="save", graph=dict(NARROW, retry={"mode": "work-metered",
+                                                      "resume_floor_s": bad_rf}),
+             name=f"knob-a-retry-nonfinite-{bad_rf}")
+    check(f"retry resume_floor_s {bad_rf!r} refused (finite positive law)",
+          any(e.get("field") == "retry.resume_floor_s" and "finite" in e["msg"]
+              for e in (r.get("errors") or [])), r)
+
 # a missing knob adds NOTHING: the legacy key set must not grow
 def run_json_meta(rid):
     return json.loads((RUNS / rid / "run.json").read_text())
@@ -105,7 +123,9 @@ def wait_dead(rid, budget=15.0):
         time.sleep(0.2)
     return False
 
-LEGACY = {"hermes_bin", "name", "started", "fp_rule_version", "owner"}
+# est-2ek.1.166/ra-plan#125-1: EVERY run now stamps plugin_version (derived from
+# plugin.yaml, never invented) — a sanctioned meta key, not a knob key.
+LEGACY = {"hermes_bin", "name", "started", "fp_rule_version", "owner", "plugin_version"}
 r = call(action="run", graph=NARROW)
 rid = r.get("run_id"); check("bare run launches", bool(rid), r)
 if rid:
@@ -130,8 +150,11 @@ if rid:
           (m.get("knobs_provenance") or {}).get("concurrency") == "author"
           and (m.get("knobs_provenance") or {}).get("retry") == "author", m)
 
-# amend re-bakes: replace graph WITHOUT the knob -> value returns to default,
-# provenance flips to default
+# #580 B1 (launch-frozen law — grammar.md line 7's promise made code): an amend
+# NEVER re-bakes the knob family. The runner's hot-reload seam re-reads only
+# graph.json at the wave boundary, so a re-baked run.json would disagree with
+# the live scheduler until respawn; the launch-time bake and its provenance
+# STAND, and the amend response names the frozen values (knobs_frozen).
 nodes_v1 = NARROW["nodes"]
 r = call(action="run", graph={"name": "knob-a-amend", "nodes": nodes_v1, "concurrency": 16})
 rid = r.get("run_id")
@@ -140,10 +163,26 @@ if rid:
     am = call(action="amend", run_id=rid, graph={"name": "knob-a-amend", "nodes": nodes_v1})
     check("amend without knob accepted", am.get("ok"), am)
     m = run_json_meta(rid)
-    check("amend re-bakes default + provenance",
-          m.get("concurrency") == 4 and (m.get("knobs_provenance") or {}).get("concurrency") == "default", m)
+    check("amend keeps the launch-frozen bake (value and provenance unmoved)",
+          m.get("concurrency") == 4 and m.get("_requested", {}).get("concurrency") == 16
+          and (m.get("knobs_provenance") or {}).get("concurrency") == "author", m)
+    check("amend response carries knobs_frozen naming the frozen bake",
+          bool(am.get("knobs_frozen")) and am["knobs_frozen"].get("concurrency") == 4, am)
 else:
     check("amend lane run launched", False, r)
+
+# #580 B2 (shared-validator parity): the shelf is measured with the SAME full
+# validator a submitted graph gets (validate_graph_full, no door-side extra
+# keys) — a shelved graph carrying top-level `retry` must INCLUDE, not die
+# `unknown graph key` at expansion while direct submission accepts it. The
+# merged payload correctly drops child top-level keys (fusion projects the
+# parent's); the leg pins ACCEPTANCE, not a child-baked knob.
+r = call(action="run", graph={"name": "knob-a-include", "nodes": nodes_v1,
+                              "include": [{"as": "klib", "use": "knob-a-retry-work-metered"}]})
+check("included shelf entry carrying retry expands (no unknown-key refusal)",
+      bool(r.get("run_id")) and "unknown graph key" not in json.dumps(r), r)
+if r.get("run_id"):
+    call(action="stop", run_id=r["run_id"]); wait_dead(r["run_id"])
 
 # ---------- part B: the runner (subprocess wf.py + fake children)
 envb = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(HOME / "fake.log"))
@@ -247,8 +286,14 @@ check("metered+finish: resume spawn gets the remaining wall, not the full fare",
 check("metered+finish: no dead_letter (resume committed)",
       not [e for e in events(r) if e["event"] == "dead_letter"], events(r))
 check("metered+finish: run completes on the resume", out.startswith("WORKFLOW_DONE"), out)
-check("metered+finish: total wall bounded (fare + backoff + remaining, < identical-wall legacy)",
-      wall < 4 + 5 + 2 + 3, f"wall={wall:.1f}s")
+# Retime per the repo's measured-floor precedent (#581/9bc5bcc and the
+# park-walls 159c W-series): the components are exact — walls.txt fares
+# [4, 2], backoff 5 s — the term the old bound omitted is the ~4 s host reap
+# overhead between wall expiry and the runner noticing. Measured worst leg
+# 15.7 s on this estate host (2026-10-27). Bound = fare + backoff + resume
+# fare + reap overhead + 3 s margin.
+check("metered+finish: total wall bounded (fare+backoff+resume+reap overhead+3s margin)",
+      wall < 4 + 5 + 2 + 4 + 3, f"wall={wall:.1f}s")
 
 # B5: work-metered timeout, SECOND DEATH AT ANY WALL = dead-letter, never a third spawn
 r = mk("knob-b-dead", [{"id": "h", "type": "agent", "goal": "RESUME hang"}],
@@ -263,8 +308,8 @@ check("second death: never a third spawn", len(logs) == 2, str([p.name for p in 
 check("second death: dead_letter once, residue classified",
       dl.get("residue") == "tool-ledger>0", dl)
 check("second death: node failed honestly", rec_of(r, "h")["status"] == "failed", rec_of(r, "h"))
-check("second death: bounded wall (fare + backoff + resume), not unbounded",
-      wall < 4 + 5 + 2 + 3, f"wall={wall:.1f}s")
+check("second death: bounded wall (fare+backoff+resume+reap overhead+3s margin), not unbounded",
+      wall < 4 + 5 + 2 + 4 + 3, f"wall={wall:.1f}s")
 
 # B6: zero-ledger hang stays wall-only (identical to the legacy ladder, fail-closed)
 r = mk("knob-b-zero", [{"id": "z", "type": "agent", "goal": "z"}],
@@ -286,6 +331,23 @@ walls = [float(x) for x in (ad / "walls.txt").read_text().split()] if (ad / "wal
 check("wall mode re-drives with the full wall again (no resume meter)",
       len(walls) >= 2 and walls[0] == walls[1] == 4.0, str(walls))
 check("wall mode emits no dead_letter", not [e for e in events(r) if e["event"] == "dead_letter"], events(r))
+
+# B8 (#580 B3, runner seam): a persisted NON-FINITE resume floor — 1e309 is
+# JSON-legal round-trip (writes Infinity) and lands in run.json from a
+# pre-cure/hand-written byte, the door now refuses it at admission but the
+# runner must not wear an author-inf wall either. _retry_conf normalizes the
+# non-finite floor to the default 30 s: the second spawn gets a FINITE wall
+# (<= the default floor), the run completes on it, never a third spawn.
+r = mk("knob-b-overflow", [{"id": "h", "type": "agent", "goal": "RESUME hang"}],
+       {"node_timeout": 4, "retry": {"mode": "work-metered", "resume_floor_s": 1e309}})
+ad = attempt_walls(BASE_ATTEMPTS / "knob-b-overflow")
+out = wf("knob-b-overflow", extra={"FAKE_MODE": "work_metered", "FAKE_ATTEMPT_DIR": str(ad)})
+walls = [float(x) for x in (ad / "walls.txt").read_text().split()] if (ad / "walls.txt").exists() else []
+logs = sorted((r / "logs").glob("h.a*.log"))
+check("overflow floor: second spawn wall is FINITE (normalized, never inf)",
+      len(walls) == 2 and math.isfinite(walls[1]) and walls[1] <= 30.0, str(walls))
+check("overflow floor: run completes on the resume, never a third spawn",
+      len(logs) == 2 and out.startswith("WORKFLOW_DONE"), out[:80])
 
 print("TOTAL", "OK" if ok else "FAILED")
 sys.exit(0 if ok else 1)
