@@ -27,6 +27,9 @@ SOURCE_ONLY_TESTS = {
     "tests/test_admission_ledger_rows_104.py",
     # #477 (est-xl5n5): same shape — executes source-only make_public.py + gate_lint.py
     "tests/test_gate_lint_477.py",
+    # est-iypbd (#580) suite-arrival: both scrub pins execute the source-only
+    # make_public.py — same shape as test_scrub_yml_166b / test_personal_path_scrub_867.
+    "tests/test_scrub_nul_readme_580.py", "tests/test_scrub_surface_1w0hoy.py",
 }
 # A shipped test that loads/executes `<root> / "scripts" / "<file>"` needs that file in the ZIP.
 SCRIPT_REF = re.compile(r'(?:ROOT|BUILD)\s*/\s*"scripts"\s*/\s*"([^"]+)"|ROOT\s*/\s*"scripts/([^"]+)"')

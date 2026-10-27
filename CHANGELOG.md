@@ -34,7 +34,10 @@ Ops/chore:
   GUARD row for the pr-feed.yml channel routing id (`.github/` untouched), and
   `cron_bridge.py` now ships in the ZIP (its shipped test died ModuleNotFound
   at the unpacked root — the #105 dead-package shape, red at main 9bc5bcc
-  itself; sibling of `8763ea1` shipping `park_watch.py`).
+  itself; sibling of `8763ea1` shipping `park_watch.py`). The two new scrub
+  pins join `SOURCE_ONLY_TESTS` in `tests/test_package_source_only_756.py`:
+  they execute the source-only `make_public.py`, the `test_scrub_yml_166b`
+  shape, so the ZIP's derived sweep keeps every shipped test runnable.
 
 - fix(knobs): width receipts fail OPEN, never crash — the #24 tracker keys
   (`meta["_width"]` / `meta["_width_flush"]`) are runner-private installs from

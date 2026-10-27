@@ -246,6 +246,10 @@ SOURCE_ONLY_TESTS = {
     # scripts/make_public.py (the #298 rule, same shape as test_scrub_yml_166b).
     "tests/test_gate_lint_477.py": "executes source-only scripts/make_public.py + gate_lint.py (#477 refuse seam)",
     "tests/test_admission_ledger_rows_104.py": "loads source-only scripts/admission_ledger.py, reads the estate receipts ledger (issue #104 item-3)",
+    # est-iypbd (#580) suite-arrival: both scrub pins execute the source-only
+    # scripts/make_public.py — same shape as test_scrub_yml_166b / #867.
+    "tests/test_scrub_nul_readme_580.py": "executes source-only scripts/make_public.py (NUL-README pin, est-iypbd)",
+    "tests/test_scrub_surface_1w0hoy.py": "executes source-only scripts/make_public.py (surface audit pin, est-iypbd)",
 }
 
 # Source-only SCRIPTS: repository/estate CI tooling that never travels in the
