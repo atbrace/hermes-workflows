@@ -247,7 +247,10 @@ check(p2["will_rerun"] == ["a", "b", "g", "c"] and p2["unchanged"] == ["d"],
       "a stale 'running' record still counts as not-done in the preview", p2)
 (r / "nodes" / "b.json").unlink()
 
-# A correctly identified fixture runner keeps amend on its hot-reload path.
+# A live fixture runner that never consumes inside the handoff window gets
+# promise-only-observed truth (hw-83v / est-gexk5 restart leg — the same law that
+# hardened release/stop in #548): the durable write is named, hot-reload is NOT
+# promised, and the response names the re-drive instead of implying free healing.
 _sleeper = r.parent.parent / "wf.py"
 _sleeper.write_text("import time\ntime.sleep(120)\n")
 _live = subprocess.Popen([sys.executable, str(_sleeper), "run", r.name],
@@ -255,9 +258,13 @@ _live = subprocess.Popen([sys.executable, str(_sleeper), "run", r.name],
 (r / "wf.pid").write_text(str(_live.pid))
 try:
     am = call(action="amend", run_id=r.name, graph=json.loads(json.dumps(g2)))
-    check(am.get("ok") and "hot-reloads" in am.get("applies", "")
+    _am_dump = json.dumps(am).lower()
+    check(am.get("ok") and "hot-reloads" not in am.get("applies", "")
+          and "respawn" not in am.get("applies", "").lower()
+          and "not observed" in am.get("applies", "").lower()
+          and "re-drive" in _am_dump
           and (r / "restart.request").exists(),
-          "normal amend echoes applies=hot-reload (no respawn) when runner is live", am)
+          "normal amend with an unconsumed live runner states durable-only + re-drive (promise-only-observed, hw-83v)", am)
 finally:
     _live.terminate(); _live.wait()
     (r / "wf.pid").unlink(missing_ok=True)

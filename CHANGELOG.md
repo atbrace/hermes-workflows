@@ -55,6 +55,15 @@
   an overridden ceiling, C2 certify round-trip over the clip boundary,
   C2b forged >clip claim still refused, C3 redaction upstream of the clip).
 
+- fix(amend): the amend response's continuation promise is gated on observed
+  effect, not the raw handoff mode string (est-gexk5 restart leg — same law
+  that hardened release/stop in #548). `consumed` is believed only when
+  restart.request is observed gone; a live handoff is named as expected-but-
+  unobserved with a re-drive pointer; a run that terminalized without
+  consuming the marker is reported inert, residue named. The old else-branch
+  promised hot-reload for live AND terminal-inert runs alike. New probe:
+  tests/test_amend_handoff_truth_83v.py (T2 red at base, green after).
+
 - fix(consolidate): the bead close-effect gate now rides the partner-consolidation
   edge in `wf.py` — an unreadable bead store refuses the consolidate-partner step
   (typed failed, ledger holds) instead of a silent pass, and the case is pinned by
