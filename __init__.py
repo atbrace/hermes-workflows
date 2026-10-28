@@ -6,7 +6,7 @@ its input files. No standing daemon or control plane, no second opinion on run
 state (one runner process per run, detached out of the caller's tree at spawn #8).
 """
 import contextlib
-import importlib.util, json, os, re, select, shutil, stat, subprocess, sys, time
+import importlib.util, json, math, os, re, select, shutil, stat, subprocess, sys, time
 import fcntl, hashlib, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +78,81 @@ def _inline_graph_size_error(graph):
     if len(payload.encode("utf-8")) > GRAPH_MAX_BYTES:
         return {"error": f"graph exceeds {GRAPH_MAX_BYTES} bytes"}
     return None
+KNOB_META_KEYS = ("concurrency", "item_concurrency", "retry", "knobs_provenance", "_requested")
+
+def _knob_errors(graph):
+    """#100: reject malformed knob values with the repo's {node, field, msg}
+    shape. Type rules mirror the validator's house style; the HARDCODED
+    ceiling is the refusal (#100 item 4: the owner cap is enforced as a CLAMP
+    at bake time — an over-wide author ask rides down, never a refusal), so a
+    typo'd width still cannot open thousands of processes."""
+    errs = []
+    cap = _common.CONCURRENCY_CAP
+    for key in ("concurrency", "item_concurrency"):
+        if key in graph:
+            v = graph[key]
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} must be a positive int (cap {cap})"})
+            elif v > cap:
+                errs.append({"node": None, "field": key,
+                             "msg": f"{key} {v} exceeds cap {cap}"})
+    if "retry" in graph:
+        rt = graph["retry"]
+        if not isinstance(rt, dict):
+            errs.append({"node": None, "field": "retry", "msg": "retry must be an object"})
+        else:
+            for k in sorted(set(rt) - _common.RETRY_KEYS):
+                errs.append({"node": None, "field": "retry",
+                             "msg": "unknown key; allowed: " + json.dumps(sorted(_common.RETRY_KEYS))})
+            if "mode" in rt and rt["mode"] not in _common.RETRY_MODES:
+                errs.append({"node": None, "field": "retry.mode",
+                             "msg": f"invalid retry.mode {rt['mode']!r}; allowed: {sorted(_common.RETRY_MODES)}"})
+            if "resume_floor_s" in rt:
+                rf = rt["resume_floor_s"]
+                # #580 B3: valid JSON numeric overflow is NOT a duration —
+                # 1e309 round-trips to +inf and NaN survives json; either one,
+                # baked, would mint an infinite spawn wall downstream. The law
+                # is FINITE positive, refused at admission naming the field.
+                if not isinstance(rf, (int, float)) or isinstance(rf, bool) \
+                        or not math.isfinite(rf) or rf < 1:
+                    errs.append({"node": None, "field": "retry.resume_floor_s",
+                                 "msg": "resume_floor_s must be a finite positive number of seconds"})
+    return errs
+
+def _knob_bake(graph):
+    """#24: (effective values, author-vs-default provenance, requested, cap-error)
+    from a graph that _knob_errors accepted. Door-written. A graph carrying NO
+    knob bakes NOTHING (returns empty dicts): the run.json key set stays frozen
+    for pre-existing readers, and the runner keeps its own DEFAULT_* fallbacks.
+    LAUNCH-ONLY (#580 B1): this bake runs at submit alone — an amend never
+    re-bakes (grammar.md line 7; the response carries knobs_frozen instead),
+    so the launch bake is the whole truth for a run's life.
+    A malformed owner cap is NOT baked over: it rides back as the 4th element
+    (the #42 fail-closed error) so every door refuses, never DEFAULTs silently."""
+    has_cap = any(_common.owner_setting(s) is not None
+                  for s in ("max_concurrency", "max_item_concurrency"))
+    if not has_cap and not any(k in graph for k in ("concurrency", "item_concurrency", "retry")):
+        return {}, {}, {}, None
+    effective, provenance = {}, {}
+    # #100 item 4: widths ride _concurrency_bake, the ONE clamp truth (owner cap,
+    # else the author value clamped to the default). The later _knob_bake merge in
+    # act_run would otherwise overwrite the clamp-channel merge with raw author widths.
+    baked, _cap_err = _concurrency_bake(graph)
+    for key, dflt in (("concurrency", _common.DEFAULT_CONCURRENCY),
+                      ("item_concurrency", _common.DEFAULT_ITEM_CONCURRENCY)):
+        author = isinstance(graph.get(key), int) and not isinstance(graph.get(key), bool)
+        effective[key] = (baked or {}).get(key, dflt)
+        provenance[key] = "author" if author else "default"
+    author_retry = isinstance(graph.get("retry"), dict)
+    if author_retry:
+        effective["retry"] = dict(graph["retry"])
+    provenance["retry"] = "author" if author_retry else "default"
+    requested = {k: graph[k] for k in ("concurrency", "item_concurrency")
+                 if provenance[k] == "author"}
+    if author_retry:
+        requested["retry"] = effective["retry"]
+    return effective, provenance, requested, _cap_err
 
 # (est-7m6wv horde) the door's once-duplicate GRAPH_KEYS table is GONE: the live
 # unknown-graph-key law is wfcommon.STRUCTURAL_GRAPH_KEYS, enforced once in
@@ -178,7 +253,11 @@ def _validation_error(graph, run_dir=None):
     another item's artifacts (WOFS W1f) becomes impossible-by-construction for
     admitted graphs. `run_dir` (amend; validate given a run dir) additionally measures
     the declared artifact bytes; run creation passes None — the dir does not exist yet."""
+    # #24/#580 B2: `retry` is a first-class member of the shared structural key
+    # set (one table, no door-side extra_keys) — the knob shape rules below
+    # refuse malformed widths AND retry in one call.
     errs = list(_common.structural_graph_errors(graph))
+    errs.extend(_knob_errors(graph))     # #24: knob family (concurrency/item_concurrency/retry)
     nodes = graph.get("nodes")
     # The shared validator assumes hashable ids and iterable dependency lists.
     # Normalize only those invalid shapes in a copy, collecting their errors while
@@ -3684,6 +3763,15 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta["includes"] = includes
     if include_notes:
         meta["include_notes"] = include_notes
+    # #24 knob family: bake the EFFECTIVE widths + retry mode with author-vs-default
+    # provenance, and the author's REQUEST (what validation saw) so the runner can
+    # receipt requested-vs-applied. Absent knobs => no keys land (legacy shape).
+    _eff, _prov, _req, _ = _knob_bake(graph)   # a malformed cap was refused upstream
+    meta.update(_eff)
+    if _prov:
+        meta["knobs_provenance"] = _prov
+    if _req:
+        meta["_requested"] = _req
     (r / "run.json").write_text(json.dumps(meta))
     # AUTHORITY LAW (owner ruling, PR#97 review): every owner-facing automatic wake
     # is RUNNER-AUTHORED protocol text; graph-authored prose (gate questions etc.)
@@ -4583,6 +4671,14 @@ def act_amend(args):
                                               _common.plugin_version())
         if _vh:
             return {"error": _vh}
+    # #42 fail-closed at the amend door too (same law as act_run): a malformed
+    # owner settings.max_concurrency REFUSES the amend. The knob family is
+    # LAUNCH-FROZEN (grammar: `amend` never re-bakes), so nothing downstream
+    # re-reads the clamp channel - this is pure admission hygiene, the same
+    # refusal the run door makes, landing before graph.json is touched.
+    _cap_err = _concurrency_bake(new)[1]
+    if _cap_err:
+        return _cap_err
     old = jload(r / "graph.json") or {}
     new = dict(new, name=new.get("name", old.get("name", "workflow")))
     # Same resolved-truth rule as run: bake defaults/shape before the write, so
@@ -4698,6 +4794,13 @@ def act_amend(args):
     except Exception:
         pass
     meta = jload(r / "run.json", {}) or {}
+    # #24/#580 B1 (launch-frozen law — grammar.md line 7's promise made code):
+    # an amend NEVER re-bakes the knob family. The runner's hot-reload seam
+    # re-reads graph.json only, so a re-baked run.json would disagree with the
+    # live scheduler until respawn; the launch-time bake and its provenance
+    # STAND. The response says so whenever the run launched with baked knobs:
+    # knobs_frozen names the values that stay in effect for this run.
+    _knobs_frozen = {k: meta[k] for k in KNOB_META_KEYS if k in meta} or None
     # An author-form amend of a composite run restamps run.json's include truth the
     # same way act_run writes it: the notes/provenance describing THIS graph, not
     # the previous one. SET-OR-REMOVE: fresh author-form provenance replaces the
@@ -4706,7 +4809,9 @@ def act_amend(args):
     # kept warning about the old graph's fixed scratch path — a stale note list
     # describes a graph the run no longer carries). An expanded-form amend yields
     # empty lists here, so the keys are left exactly as they stand (the
-    # intentional no-op: a plain run never grows them).
+    # intentional no-op: a plain run never grows them). Rides INSIDE the
+    # before/after diff so a notes-clear alone turns the write on (post-rebase F:
+    # the old `or _includes` term could not see a pop-only change).
     if _includes:
         meta["includes"] = _includes
         if _include_notes:
@@ -4761,7 +4866,9 @@ def act_amend(args):
         hint = "nothing to follow: the replay-skip law re-runs no node for this graph and no runner is bound to it"
     return {"ok": True, "models": _models, "routes": _routes, "applies": applies,
             "graph_revision": _new_rev,   # #19: the new head — the token a next CAS writes against
-            "hint": hint + _rz_note + _liveness_hint_suffix(_liveness_notes), **preview}
+            "hint": hint + _rz_note + _liveness_hint_suffix(_liveness_notes),
+            **({"knobs_frozen": _knobs_frozen} if _knobs_frozen else {}),
+            **preview}
 
 def act_stop(args):
     r = run_dir(args.get("run_id"))

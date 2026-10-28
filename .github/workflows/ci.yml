@@ -1,6 +1,10 @@
 # CI for hermes-workflows: the same gates the release integrator runs by hand,
 # fanned out to bound PR wall clock (the serial pass measured 28.7-32.0 min;
 # census: median case 1.1 s, top-25 cases = 54% of the wall — one lane, one tail).
+# Plus the CONTRIBUTING-documented gates wired up by the fork bootstrap (now run on
+# every push/PR): pr_tag_audit — every `(open PR #NN)` doc tag still points at an
+# OPEN PR; and tests/11-canary / 11-lane-supervisor / 11-golden-solo — the lane
+# kill/resume trio + golden-solo byte compare.
 #
 # Topology: fan-out/fan-in. `gates-shard` runs 8 matrix lanes, each executing
 # `suite.py --shard I/8` — serial-within-lane, the SAME sorted case list, split
@@ -25,6 +29,10 @@
 # Order matters: the pinned core is installed BEFORE the suite because the suite
 # asserts vocabulary parity against it (tests/test_validate_0923.py imports
 # hermes_constants — the same import path the plugin uses at runtime).
+#
+# Fork note: this file is the atbrace fork bootstrap (owner-approved first CI).
+# The 'gates' job is the required check promote.sh consumes; the graph-AST job is
+# named 'graph' (never 'gates') so it can never masquerade as the promote gate.
 
 name: ci
 
@@ -127,6 +135,33 @@ jobs:
             dirs="$dirs shards/ci-out-shard-$i"
           done
           python3 scripts/suite.py . ci-out --merge $dirs
+
+      - name: "PR-tag doc audit (CONTRIBUTING: stale open-PR tags block)"
+        # The `(open PR #NN)` tags in README/CONTRIBUTING/CHANGELOG/references
+        # name PRs in the PARENT repo (upstream numbering); resolving them
+        # against the fork would fail closed on wrong numbers, so pin the repo.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pr_tag_audit.py --repo jacobhausler/hermes-workflows
+
+      - name: Clone pinned core
+        run: |
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent /tmp/hermes-agent
+          git -C /tmp/hermes-agent checkout "$HERMES_PIN"
+
+      - name: Install pinned hermes (editable)
+        run: |
+          pip install -e /tmp/hermes-agent
+          hermes --version || true
+
+      - name: Lane trio (canary + supervisor kill/resume, golden-solo compare)
+        # CONTRIBUTING-documented gates that never ran in CI before this fork
+        # bootstrap. Pre-landing local proof (python 3.12, pinned core):
+        # canary 20/20, lane-supervisor 20/20, golden-solo EMPTY diff.
+        run: |
+          python3 tests/11-canary.py
+          python3 tests/11-lane-supervisor.py
+          python3 tests/11-golden-solo.py compare . tests/golden_solo/v1.0.15.json
 
       - name: Upload merged suite ledger
         if: always()

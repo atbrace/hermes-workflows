@@ -41,6 +41,17 @@ FP_RULE_LEGACY = 1  # before b79fa21: budgets participated in def_hash
 FP_RULE_VERSION = 2  # b79fa21: exclude budgets
 FP_RULES = (FP_RULE_LEGACY, FP_RULE_VERSION)
 
+# #24 knob family — ONE truth for door (validation/bake) and runner (fallbacks):
+# the runner has always read meta["concurrency"]/meta["item_concurrency"] with
+# these defaults; they were simply unreachable through any sanctioned surface.
+DEFAULT_CONCURRENCY = 4         # wf.py:2236 ThreadPoolExecutor(max_workers=...)
+DEFAULT_ITEM_CONCURRENCY = 8    # wf.py:1610 fan-out cap
+CONCURRENCY_CAP = 4096          # ceiling vs floor: a typo'd width must not open
+                                # thousands of child processes at launch
+RETRY_MODES = ("wall", "work-metered")   # wall = today's ladder (the default)
+RETRY_KEYS = {"mode", "resume_floor_s"}  # closed key set for the retry block
+DEFAULT_RESUME_FLOOR_S = 30              # min wall a work-metered resume may get
+
 def def_hash(node, rule=FP_RULE_VERSION):
     # Budgets are not work: raising a wall or naming a shape must not invalidate a
     # committed node (and apply_graph_defaults baking budgets into an old run's
@@ -2566,6 +2577,12 @@ STRUCTURAL_GRAPH_KEYS = {"name", "nodes", "description", "defaults", "model_poli
                          # is refused (one contract per graph).
                          "params",
                          "concurrency", "item_concurrency",  # #100: optional run-level limits
+                         # #24/#580 B2: the run-level retry ladder knob joins the
+                         # table as a FIRST-CLASS key (was door-only via an
+                         # extra_keys hack — the shelf, measured with the shared
+                         # validate_graph_full, refused what direct submission
+                         # accepted). Shape law stays door-side (_knob_errors).
+                         "retry",
                          # est-3acn: RunBudget — an optional run-wide token cap
                          # ({"tokens": N}); enforced pre-dispatch, graceful
                          # budget_exhausted partial. USD is deliberately NOT a
@@ -2617,6 +2634,9 @@ GRAPH_KEY_MIN_VERSION = {
     "defaults": "1.0.1",
     "grammar": "1.1.1",
     "concurrency": "1.1.4", "item_concurrency": "1.1.4",
+    # #24 knob family's retry row: floor is the NEXT feature release (never
+    # earlier than proven — a 1.4.3 door genuinely refuses top-level retry).
+    "retry": "1.4.4",
     "include": "1.3.0", "model_policy": "1.3.0", "provenance": "1.3.0",
     "requires_plugin": "1.3.1",
     "result": "1.3.2",

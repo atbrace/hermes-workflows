@@ -375,5 +375,30 @@ check("M2: overrun returns honest typed ratelimit give-up, never a false done",
       and _res.get("ratelimit_gave_up") is True,
       json.dumps({k: _res.get(k) for k in ("status", "error_class", "ratelimit_gave_up")}))
 
+# ---------- W4 (clamp READ, review 9b57b9c): the parked respawn inherits the ----------
+# ---------- REMAINING wall, not a fresh full fare. The run_child clamp that ----
+# ---------- main shipped (wf159c) must survive rebases: with a park that FITS ----
+# ---------- (interval 0.5 < the 2s wall) and the retry knob present (so the ----
+# ---------- child env stamps its fare), spawn #2's recorded wall must be the ----
+# ---------- post-park remainder — strictly below the node's full timeout. ----
+(HOME / "fake.log").write_text("")
+att = HOME / "att-w4"; shutil.rmtree(att, ignore_errors=True)
+r = mk("w4-fresh-fare", [{"id": "a", "type": "agent", "goal": "GO w4-fresh-fare",
+                          "timeout": 2}],
+       ratelimit_interval=0.5, ratelimit_jitter=0.0, retry_budget=6,
+       retry={"mode": "wall"})
+env = {"FAKE_MODE": "ratelimit", "FAKE_RL_FAILS": "1", "FAKE_ATTEMPT_DIR": str(att)}
+out = runx("w4-fresh-fare", env)
+rec = rec_of(r)
+walls = [float(x) for x in (att / "walls.txt").read_text().split()]
+check("W4: park happened and the respawn recovered (2 spawns, done)",
+      spawns("GO w4-fresh-fare") == 2 and rec.get("status") == "done",
+      f"spawns={spawns('GO w4-fresh-fare')} status={rec.get('status')}")
+check("W4: the parked respawn was GIVEN the remaining wall, never a fresh full "
+      "fare (fare #2 < node timeout 2)",
+      len(walls) == 2 and walls[0] == 2.0 and 0.05 <= walls[1] < 1.7,
+      f"walls={walls}")
+check("W4: WORKFLOW_DONE", "WORKFLOW_DONE" in out, out[:60])
+
 print(("" if ok else "FAILURES PRESENT"), "DONE test_ratelimit_park_walls_159c" if ok else "DONE with FAILURES")
 sys.exit(0 if ok else 1)

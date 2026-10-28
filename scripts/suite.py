@@ -30,6 +30,16 @@ admission.json green:false + zero_discovery:true and exits nonzero, so a
 suite that ran nothing can never report green. An invalid root (missing
 root or missing tests directory) fails closed as exit 2 BEFORE any out-dir
 side effects, leaving no ledger or admission behind.
+
+Agent-terminal hermeticity (sys-1w0hoy ask 1): the suite OWNS its child
+environment. An ambient PYTHONPATH (agent terminals, cron, hooks — anything
+but a clean shell) leaks into every case and has repeatedly red-shifted the
+suite with ModuleNotFoundError/ImportError noise that gets re-diagnosed every
+session. suite.py strips PYTHONPATH unconditionally: tests that need the
+hermes checkout on the path pin it themselves (repo convention: the pinned
+core rides sys.path via site-packages, and tests import hermes_constants
+directly or fall back per their own contract), exactly as the suite already
+pins HERMES_HOME/WF_RUNS_ROOT rather than trusting the caller.
 """
 import json
 import os
@@ -298,7 +308,10 @@ _NO_SESSION_IDENTITY = {k for k in os.environ
                         or k.startswith('HERMES_UI_SESSION_')}
 _base_env = {k: v for k, v in os.environ.items()
              if (not k.startswith('HERMES_WF_') or k in _KEEP_WF_ENV)
-             and k not in _NO_SESSION_IDENTITY}
+             and k not in _NO_SESSION_IDENTITY
+             # sys-1w0hoy (ask 1, via #580): strip ambient PYTHONPATH so an
+             # agent-terminal/cron leak can never decide suite outcomes.
+             and k != 'PYTHONPATH'}
 for argv in cases:
     name = Path(argv[-1]).name
     log = out / (name + '.log')

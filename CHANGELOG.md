@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+Ops/chore:
+- feat(knobs): #580 take-over (from atbrace) lands the knob family with three
+  cures on the banked rebase, per keep-both LAW v2 (both sides' CHANGELOG rows
+  stand; the diff vs 9bc5bcc is additions-only, asserted at commit). B2 — the
+  top-level `retry` ladder knob joins the SHARED `STRUCTURAL_GRAPH_KEYS` table
+  with `GRAPH_KEY_MIN_VERSION` floor `1.4.4`: the shelf refused a shelved
+  library entry carrying `retry` (`fails to validate standalone: graph:
+  unknown graph key`) while direct submission accepted it — the door-only
+  `extra_keys=("retry",)` was second-class membership. B3 —
+  `retry.resume_floor_s` is a FINITE positive law: `1e309` (valid JSON that
+  round-trips to +inf) and `NaN` are refused at admission naming the field, and
+  a persisted non-finite floor normalizes to the default 30 s at the runner's
+  own read — an inf floor can no longer mint an infinite spawn wall. B1 — the
+  knob family is LAUNCH-FROZEN: `amend` never re-bakes (grammar.md line 7's
+  promise made code; the stale re-bake comment and `_old_meta` removed), and an
+  amend on a run whose launch baked knobs answers `knobs_frozen` naming the
+  values that stay in effect. Tests: `tests/test_concurrency_retry_knobs_24.py`
+  amend leg rewritten to the frozen law (the stale leg FAILED at the takeover
+  merge with `knobs_provenance concurrency=author` — proof the cure is live),
+  `plugin_version` appended to the LEGACY exact-keys set (the est-2ek.1.166 run
+  stamp is sanctioned metadata, not a knob), wall-budget legs retimed to the
+  measured floor +3 s (fares [4,2] exact, ~4 s host reap overhead; worst
+  observed 15.7 s), plus new legs for non-finite refusal, `knobs_frozen`,
+  shelf-parity and overflow-floor normalization (RED at 2856aff, GREEN over the
+  cures), and `tests/test_scrub_nul_readme_580.py` pinning the adversary-R9
+  NUL-prefixed-README class (GREEN-ON-ARRIVAL — main's `make_public.py:143-148`
+  cure predates the take-over; the pin exists so the class cannot silently
+  re-open). Suite cures riding the same commit: the dead `.graphifyignore` row
+  in `scripts/pack.py` (file retired by M02 `394d7ef`), a feature-token regex
+  GUARD row for the pr-feed.yml channel routing id (`.github/` untouched), and
+  `cron_bridge.py` now ships in the ZIP (its shipped test died ModuleNotFound
+  at the unpacked root — the #105 dead-package shape, red at main 9bc5bcc
+  itself; sibling of `8763ea1` shipping `park_watch.py`). The two new scrub
+  pins join `SOURCE_ONLY_TESTS` in `tests/test_package_source_only_756.py`:
+  they execute the source-only `make_public.py`, the `test_scrub_yml_166b`
+  shape, so the ZIP's derived sweep keeps every shipped test runnable. The
+  knobs suite carries the `#762` launch-env pin token for the spawn legs
+  (audit-level; children still resolve under the pinned `HERMES_HOME`, so
+  the golden-solo zero-key leg is untouched).
+
+- fix(knobs): width receipts fail OPEN, never crash — the #24 tracker keys
+  (`meta["_width"]` / `meta["_width_flush"]`) are runner-private installs from
+  `main()`; in-process drivers that hand bare meta dicts to `run_agent_node`
+  / fan-out legs (`test_error_classes_exhaustive_vb65.py`,
+  `test_budget_fanout_gates_ps8i9.py` G1-G3) crashed `KeyError: '_width'`
+  over the take-over. Consumer sites now go through `_width_track(meta)` /
+  `_width_flush(meta, run)` with no-op fallbacks: observation-only, exactly
+  the base-9bc5bcc behavior for un-installed metas; a runner that installed
+  the tracker receipts byte-identically. RED over the take-over (lane), GREEN
+  at 9bc5bcc and over this cure.
+
+- chore(graphify): M02 (sys-h36sko) — retired the committed knowledge graph and
+  its whole governance stack: `graphify-out/` (5.2 MB generated),
+  `scripts/graph_check.py`/`graph_path_ban.py`/`graph_regen.py`, the graph CI job
+  + graphifyy install, the single-writer path ban, and the tests whose only
+  subject was those artifacts. `graphify` stays a local-only convenience.
+  `scripts/graph_diagram.py` + `examples/diagrams/` untouched (different job).
+
 - feat(wake): the wake sender is TRI-STATE. `_wake_deliver()` returns
   True/False/None = delivered / try-later / nowhere-ever (no reachable API
   server configured, e.g. a headless host), the `wake.jsonl` row mirrors the

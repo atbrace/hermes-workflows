@@ -187,3 +187,39 @@ tests/test_release_merge_gate_clrlx.py
 # behavior under test reads none of them. Same file-scope class as
 # tests/test_bead_close_claim_13z1.py (AGENTS.md rule 4).
 tests/test_amend_handoff_truth_83v.py
+# ---- sys-1w0hoy ask 3: audit widened to ALL text files (was a suffix
+# whitelist; estate tokens rode in .yml/.txt/extensionless seat/label wording).
+# First hits the widened audit fires, classified per docs/PUBLISH-SCRUB.md: ----
+# Upstream repo pin: the PR-tag audit resolves `(open PR #NN)` doc tags against
+# the PARENT repo (upstream numbering); the owner handle in the repo slug is
+# load-bearing data — resolving against the fork would fail closed on wrong
+# numbers (ci.yml's own comment says so). GUARD line-anchored to the audit
+# invocation, NOT file-wide, so a future stray token in ci.yml still fires.
+regex:pr_tag_audit\.py --repo jacobhausler/
+# Copyright attribution to the upstream owner is the license; GUARD (load-
+# bearing identity, same class as the PR-author-credit regex guards).
+LICENSE
+# The committed scrub-grep list quotes the banned vocabulary because it IS the
+# ban — self-referential GUARD, exactly scripts/.scrub-guards' own exemption.
+scripts/scrub-list.txt
+# Ratelimit-window fake child: the banner quotes the model alias verbatim
+# because the runner's give-up error must quote it back byte-for-byte — the
+# same GUARD class as tests/fake_hermes.py / tests/test_ratelimit_54.py.
+tests/fake-b1
+# ---- #580 take-over (pre-existing red, sys-asvm0c feed lane): the pr-feed
+# workflow's CHANNEL line routes the PR-open digest to the estate's private
+# Discord feed — the routing id IS the integration's load-bearing config,
+# neutralizing it ships a broken feed (same load-bearing-routing class as the
+# pr-compliance citation rows). Anchored by the CHANNEL token + quoted digits,
+# not by file:LINE (est-867 lesson), so a stray non-id private string in
+# pr-feed.yml still fires. FULL-LINE-ANCHORED (#580 adversary R9-narrow): the
+# exemption covers ONLY a pure routing assignment line — a line that carries
+# this shape plus any other content (e.g. a second forbidden token appended)
+# still fires the audit. GUARD, per docs/PUBLISH-SCRUB.md / AGENTS.md rule 4.
+regex:^\s*CHANNEL:\s*"[0-9]{17,20}"\s*$
+
+# ---- #580 take-over (adversary R9 regression): the NUL-README pin file quotes
+# the forbidden token by role — the probe asserts the AUDITOR refuses this
+# exact token in a NUL-prefixed .md; neutralizing it would pin nothing. Same
+# fixture-identity GUARD class as tests/test_scrub_yml_166b.py (file-scope).
+tests/test_scrub_nul_readme_580.py

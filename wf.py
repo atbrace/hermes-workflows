@@ -18,6 +18,7 @@ import json, os, random, re, shutil, signal, socket, subprocess, sys, threading,
 import errno
 import fcntl
 import hashlib
+import math
 from contextlib import nullcontext as _nullcontext
 import importlib.util
 import urllib.error
@@ -112,6 +113,11 @@ substrate_disclosure_text = wfcommon.substrate_disclosure_text
 SUBSTRATE_DISCLOSURE_KEY = wfcommon.SUBSTRATE_DISCLOSURE_KEY
 _wfcommon_hermes_home = wfcommon.hermes_home
 kind = wfcommon.kind
+# #24 knob family defaults (PR#580 take-over): bound in main's import-hygiene
+# style — the runner reads them through the private wfcommon module only.
+DEFAULT_CONCURRENCY = wfcommon.DEFAULT_CONCURRENCY
+DEFAULT_ITEM_CONCURRENCY = wfcommon.DEFAULT_ITEM_CONCURRENCY
+DEFAULT_RESUME_FLOOR_S = wfcommon.DEFAULT_RESUME_FLOOR_S
 # est-2ek.1.641 (ask #1, option A): the receipts trio lives in wfcommon (the
 # door bakes through its private copy, never through this runner module); the
 # forgiving validator moved there too (ask #2). Re-bound here so every
@@ -4003,6 +4009,69 @@ def _retry_conf_params(meta):
         else DEFAULT_RETRY_BUDGET
     return tb, budget
 
+def _retry_conf(meta):
+    """#24: the run-level retry block from run.json meta (same door channel as
+    retry_backoff/retry_budget). Only `mode: "work-metered"` changes behavior —
+    anything absent or malformed is the legacy wall ladder, fail-closed."""
+    rt = meta.get("retry") if isinstance(meta.get("retry"), dict) else {}
+    mode = rt.get("mode") if rt.get("mode") in ("wall", "work-metered") else "wall"
+    floor = rt.get("resume_floor_s")
+    # #580 B3 (runner seam): the door now refuses a non-finite floor at
+    # admission, but run.json can also arrive from pre-cure or hand-written
+    # bytes — 1e309 round-trips to +inf and an inf resume wall defeats the
+    # bounded-wall guarantee at the spawn. DEFENSIVE normalization, fail-closed
+    # like every other malformed knob value here: non-finite falls back to the
+    # default floor, never an infinite spawn.
+    floor = floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) \
+        and math.isfinite(floor) and floor >= 1 \
+        else DEFAULT_RESUME_FLOOR_S
+    return {"mode": mode, "resume_floor_s": floor}
+
+def _metered_remaining(r):
+    """Remaining wall a work-metered resume inherits: the dead attempt's APPLIED
+    wall minus its elapsed ms. No wall stamp (legacy record) = the wall is
+    unknown — return None and the caller falls back to today's identical fare."""
+    wall = r.get("wall")
+    if not isinstance(wall, (int, float)) or isinstance(wall, bool):
+        return None
+    ms = r.get("ms") if isinstance(r.get("ms"), (int, float)) else 0
+    return max(0.0, wall - ms / 1000.0)
+
+def _receipt_concurrency(meta):
+    """#100: at runner start, emit ONE concurrency.applied receipt diffing the
+    author's REQUEST against what THIS runner will actually APPLY, with the
+    author-vs-default provenance the door baked. A request the effective meta
+    cannot honor (stale meta from a hot-reloaded runner, hand-edited run.json)
+    is LOUD: mismatch set, so watchers diff requested-vs-applied without guess.
+    KNOB-GATED (#100 golden-solo): a run.json with NO knob keys, no provenance,
+    and no _requested emits NOTHING — the events stream of a legacy run stays
+    byte-identical to the frozen capture; there is no request to receipt."""
+    run = meta["_run"]
+    if not any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                   "knobs_provenance", "_requested")):
+        return
+    prov = meta.get("knobs_provenance") if isinstance(meta.get("knobs_provenance"), dict) else None
+    if prov is None:
+        # pre-door / hand-surgery meta: a knob key PRESENT in run.json was set by
+        # someone (that's how every wide run launched until #24) — report it as
+        # the request, author-side. No keys at all (legacy default run) => {}.
+        prov = {k: "author" for k in ("concurrency", "item_concurrency", "retry") if k in meta}
+    knobs = {k: v for k, v in sorted(prov.items()) if v == "author"
+             and k in ("concurrency", "item_concurrency", "retry")}
+    req = meta.get("_requested") if isinstance(meta.get("_requested"), dict) else None
+    if req is None:
+        req = {k: meta[k] for k in knobs}
+    else:
+        req = {k: v for k, v in req.items() if k != "knobs"}
+    applied = {"concurrency": meta.get("concurrency", DEFAULT_CONCURRENCY),
+               "item_concurrency": meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY)}
+    mismatch = {k: {"requested": req[k], "applied": applied[k]}
+                for k in ("concurrency", "item_concurrency")
+                if isinstance(req.get(k), int) and isinstance(applied.get(k), int)
+                and req[k] != applied[k]}
+    log(run, "concurrency.applied", requested=req, applied=applied, knobs=knobs,
+        **({"mismatch": mismatch} if mismatch else {}))
+
 _LOG_ACTIVITY_WINDOW_S = 120
 
 def _log_recent(lp, created):
@@ -6556,7 +6625,7 @@ def _omit_policy_flags_if_enabled(cmd, home=None, env=None):
 
 def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering=None, attempt=0, skey=None,
               inputs="", index=None, resume_preamble="", reasoning_override=None,
-              seat_cancel=None, seat_hold=None, seat_admit_lock=None, model_override=None):
+              seat_cancel=None, seat_hold=None, seat_admit_lock=None, model_override=None, wall_s=None):
     # est-g255 P255-1: seat_cancel is the fan-out's quorum cancel Event — it
     # aborts a seat wait and blocks the atomic spawn exactly like meta['_stop'].
     # seat_hold (fan-out items only) is a list the caller owns: a cleanly ended
@@ -6691,6 +6760,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     except OSError as e:   # B1 is an add-on: a bake failure must never kill the spawn
         log(run, "steer.bake.error", node=node["id"], error=f"{type(e).__name__}: {e}")
         steer_file, steer_cur, steer_hwm = "", "", 0
+    wall = wall_s if wall_s is not None else node.get("timeout", meta.get("node_timeout", 900))
     env = dict(os.environ, HERMES_HOME=str(hermes_home()),
                HERMES_QUIET_TURN_REPORT_FILE=str(report_path),
                HERMES_WF_STEER_FILE=steer_file,
@@ -6852,6 +6922,20 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                 "error_class": "seat_wait", "ms": int((time.time() - _seat_w0) * 1000),
                 "spawn": spawn_no, "attempts": 1, **route}
     t0 = time.time()
+    # wf159c finding 1 (wall-clamp) READ EARLY + #24 env stamp (take-over graft):
+    # after a credential park the remaining wall IS this spawn's timeout, and the
+    # stamp rides AFTER the clamp so the child sees the wall it is actually given;
+    # the work-metered resume's min() stacks on this one. Rides ONLY when the
+    # retry knob exists: a knob-free run's child env stays byte-identical.
+    _rl_cap = (meta.get("_rl_timeout_cap") or {}).get((node["id"], index))
+    if isinstance(_rl_cap, (int, float)):
+        _rem = float(_rl_cap) - t0
+        if _rem <= 0:
+            _rem = 0.05
+        if not isinstance(wall, (int, float)) or wall > _rem:
+            wall = _rem
+    if wall is not None and isinstance(meta.get("retry"), dict):
+        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
     proc = None
     reg_key = None
     hb_path = None
@@ -7099,7 +7183,9 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                "spawn_cmd": spawn_cmd, "started": started_iso, "spawn": spawn_no, **route}
         extended = False
         first_msg_s = _first_message_s(meta)
-        wall = node.get("timeout", meta.get("node_timeout", 900))
+        # #24 (take-over graft): `wall` arrives ALREADY resolved — wall_s-aware
+        # and park-clamped at run_child's read — so no re-read here; the clamp
+        # below stays as the belt for the post-Popen clock move.
         # wf159c finding 1 (wall-clamp): after a credential park, the remaining
         # wall IS the per-spawn timeout for this (node,index) — a park can never
         # buy a fresh full timeout, for the parked respawn or any later ladder
@@ -7276,12 +7362,17 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         if bk:
             evd["banked"] = bk
         hv = _harvest_death(out, harvest_schema)   # #4: a timeout that printed a valid answer keeps it
+        # #100 golden-solo: the wall stamp rides the death record ONLY when the
+        # retry knob exists (it meters the work-metered resume); a knob-free run's
+        # node records stay byte-identical to the frozen capture.
+        wallst = {"wall": wall} if isinstance(meta.get("retry"), dict) else {}
         if hv:
             return {"status": "partial", "error": f"timeout after {timeout_s}s "
                     "(answer harvested from stdout before the kill)",
-                    "error_class": "timeout", "ms": ms, "final": final_reply, **hv, **sk, **evd}
+                    "error_class": "timeout", "ms": ms, **wallst, "final": final_reply, **hv, **sk, **evd}
         return {"status": "failed", "error": f"timeout after {timeout_s}s",
-                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
+                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, **wallst,
+                "final": final_reply, **sk, **evd}
     # unsuccessful exit = failure, PERIOD — diagnostic prose on stdout must never
     # be committed as a successful result (fleet-review F: crash-with-prose).
     if rc != 0:
@@ -8041,7 +8132,14 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
     descendant. The harvest is never traded away: a re-drive that dies WITHOUT
     an answer keeps the harvested record (both deaths in attempts_log); only a
     #61 terminal verdict on the re-drive replaces it. A FAILED record carrying a
-    harvest (the cancel-harvest shape) is still never re-driven."""
+    harvest (the cancel-harvest shape) is still never re-driven."
+
+
+    #24 work-metered mode (run.json retry.mode, door-baked) changes ONLY the
+    timeout lane: the resume inherits the dead attempt's REMAINING wall (plus a
+    floor to make it worth driving) instead of the identical fare, and a SECOND
+    death at any wall dead-letters — honest failure, residue classified, never
+    a third spawn. Absent/malformed mode = the ladder above, as before."""
     run = meta["_run"]
     harvested = r.get("status") == "partial" and isinstance(r.get("harvest"), dict)
     if not harvested and (r.get("status") != "failed" or r.get("harvest")):
@@ -8097,14 +8195,26 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
         sess = (_session_has_messages(r.get("skey"), r["profile_home"])
                 if r.get("profile_home") else _session_has_messages(r.get("skey")))
         dead = (sess is False)
-    log(run, ev + ".retry", error_class=eclass,
-        reason=(f"bounded auto-retry: {eclass} — session-lease collision (message never "
-                f"processed); one re-drive as a FRESH session, never --continue the busy one"
-                if lease else
-                f"bounded auto-retry: {eclass} with tool progress — one re-drive as a FRESH "
-                f"session (prior session persisted no messages — #102)" if dead else
-                f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive"),
-        **ev_kw, **({"fresh_session": True} if dead else {}))
+    cfg = _retry_conf(meta)
+    wall_s = None
+    reason = (f"bounded auto-retry: {eclass} — session-lease collision (message never "
+              f"processed); one re-drive as a FRESH session, never --continue the busy one"
+              if lease else
+              f"bounded auto-retry: {eclass} with tool progress — one re-drive as a FRESH "
+              f"session (prior session persisted no messages — #102)" if dead else
+              f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive")
+    if cfg["mode"] == "work-metered" and eclass == "timeout":
+        # #24: the resume inherits the REMAINING wall (liveness, not a bigger
+        # fare) instead of the identical wall that just killed this attempt.
+        remaining = _metered_remaining(r)
+        if remaining is not None:
+            wall_s = max(remaining, min(cfg["resume_floor_s"], remaining + cfg["resume_floor_s"]))
+            reason = (f"work-metered resume: {eclass} at {r.get('wall')}s wall with tool "
+                      f"progress — one resume on the remaining wall ({remaining:.0f}s left, "
+                      f"floor {cfg['resume_floor_s']}s), never a third spawn")
+    log(run, ev + ".retry", error_class=eclass, reason=reason,
+        **({"resume_wall_s": round(wall_s, 3)} if wall_s else {}), **ev_kw,
+        **({"fresh_session": True} if dead else {}))
     al = list(r.get("attempts_log") or [])
     entry = {"attempt": len(al), "error_class": eclass, "at": now(), "resume": True,
              **_attempt_counts(run, r)}
@@ -8121,7 +8231,8 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
     hint = _resume_hint_block(run, node, index if index is not None else ev_kw.get("index"), al)
     preamble = (_dead_session_harvest(r, eclass, run, node, index, inventory=hint) if dead
                 else "\n\n".join(p for p in (_resume_preamble(r), hint) if p))   # #130
-    r2 = respawn(resume_preamble=preamble)
+    r2 = respawn(resume_preamble=preamble,
+                 **({"wall_s": wall_s} if wall_s else {}))
     if harvested and r2.get("status") not in ("done", "partial") \
             and r2.get("error_class") != "left_live_descendants":
         # est-ggqs: an answer-less re-drive never discards the schema-valid
@@ -8140,7 +8251,91 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
     r2["attempts"] = (r2.get("spawn") + 1) if isinstance(r2.get("spawn"), int) else len(al) + 1
     if r.get("banked") is not None and r2.get("banked") is None:
         r2["banked"] = r["banked"]
+    if wall_s is not None and r2.get("status") == "failed" \
+            and r2.get("error_class") == "timeout" and not r2.get("harvest"):
+        # #24: second death at ANY wall = dead-letter — residue classified in the
+        # payload, honest failure, and returning here guarantees no third spawn.
+        # Renamed off main's est-ij0 _dead_letter (run-finished ledger summary):
+        # same name, later def, silent shadow that swallowed the dead_letter event.
+        _dead_letter_metered(run, ev, ev_kw, r, r2, cfg)
     return r2
+
+def _dead_letter_metered(run, ev, ev_kw, r1, r2, cfg):
+    """#24 one-strike law: a work-metered node that died a SECOND time (any wall)
+    is dead-lettered, not re-driven. The payload classifies the residue so the
+    owner can bank it: which session ledgers carry tool progress, whether the
+    resume advanced the ledger, the walls both attempts got. Emitted exactly once
+    per node/item — the runner never spawns a third attempt."""
+    r2["dead_lettered"] = True   # the tuned loop must honour the one-strike verdict
+    home = r2.get("profile_home") or r1.get("profile_home")
+    def _tc(rec):
+        try:
+            m = child_metrics(run.name, home).get(rec.get("skey") or "")
+        except Exception:
+            m = None
+        return (m or {}).get("tool_calls")
+    tc1, tc2 = _tc(r1), _tc(r2)
+    residue = "tool-ledger>0" if ((tc1 or 0) > 0 or (tc2 or 0) > 0) else "no-ledger-evidence"
+    log(run, "dead_letter", kind=ev,
+        reason="work-metered: second timeout death — one resume is the whole fare; "
+               "no third spawn, residue classified for the owner",
+        residue=residue,
+        attempt1={"error_class": r1.get("error_class"), "wall": r1.get("wall"),
+                  "ms": r1.get("ms"), "tool_calls": tc1, "skey": r1.get("skey")},
+        attempt2={"error_class": r2.get("error_class"), "wall": r2.get("wall"),
+                  "ms": r2.get("ms"), "tool_calls": tc2, "skey": r2.get("skey")},
+        resume_floor_s=cfg.get("resume_floor_s"),
+        log_paths=[r1.get("log_path"), r2.get("log_path")],
+        **ev_kw)
+
+
+def _width_tracker(meta):
+    """#24: count concurrently-running children (solo nodes + fan-out items) and
+    log the peak per observation key as node.running_width. One dict in main();
+    cheap on the wave threads; observation only — never gates a spawn."""
+    state = {"live_by_node": {}, "peak_by_node": {}, "lock": threading.Lock()}
+    # KNOB-GATED (#100 golden-solo): a knob-free run's event stream stays byte-
+    # identical to the frozen capture — width receipts only mean something once
+    # an author asked for a width. Counting still happens (cheap, inert).
+    receipted = any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                        "knobs_provenance", "_requested"))
+    def track(nid):
+        class _T:
+            def __enter__(self_inner):
+                with state["lock"]:
+                    n = state["live_by_node"].get(nid, 0) + 1
+                    state["live_by_node"][nid] = n
+                    if n > state["peak_by_node"].get(nid, 0):
+                        state["peak_by_node"][nid] = n
+                return self_inner
+            def __exit__(self_inner, *exc):
+                with state["lock"]:
+                    state["live_by_node"][nid] -= 1
+                return False
+        return _T()
+    meta["_width"] = track
+    def flush(run):
+        with state["lock"]:
+            peaks, state["peak_by_node"] = dict(state["peak_by_node"]), {}
+        if not receipted:
+            return
+        for nid, w in peaks.items():
+            log(run, "node.running_width", node=nid, running=w)
+    meta["_width_flush"] = flush
+
+# #24 consumers are FAIL-OPEN, never fail-crash: main() always installs the
+# tracker keys, but library/in-process drivers (tests, embedders) hand bare
+# meta dicts to run_agent_node / fan-out legs all the time. Width receipts are
+# observation only (docstring above: "never gates a spawn"), so a meta that
+# never went through the runner's install simply gets the no-op — the old
+# (base 9bc5bcc) behavior for that caller is preserved byte-identically.
+def _width_track(meta):
+    return meta.get("_width", lambda nid: _nullcontext())
+
+def _width_flush(meta, run):
+    fn = meta.get("_width_flush")
+    if fn is not None:
+        fn(run)
 
 def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None, cap_node=None):
     """hw-23c: the bounded ladder under the node's author cap (default 1 = the
@@ -8157,6 +8352,8 @@ def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None, cap
         if r2 is r or r2 is None:
             return r if r2 is None else r2
         r = r2
+        if r.get("dead_lettered"):
+            return r          # #24 one-strike: the metered dead-letter IS the verdict
         failed = (r.get("status") == "failed" and not r.get("harvest")) or (
             r.get("status") == "partial" and isinstance(r.get("harvest"), dict))
         if not failed or r.get("error_class") not in _BOUNDED_RETRY_CLASSES \
@@ -8303,7 +8500,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     _set_abort_flag(run, nid, "fanout_empty",
                                     "fanout resolved to no items and no else-arm fallback")
                 return
-            cap = min(len(items), meta.get("item_concurrency", 8))
+            cap = min(len(items), meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY))
             results = [None] * len(items)
             lock = threading.Lock()
             # wf1.1 A5: the WAIT-SET and the COMMIT THRESHOLD are split. Waiting is
@@ -8768,7 +8965,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                 # second home). Wall-clock; the wake identity is revision-keyed.
                 def _book_launch():
                     launch_ts[i] = time.time()
-                def _spawn(resume_preamble="", model_override=None):
+                def _spawn(resume_preamble="", model_override=None, **kw):
                     _honor_retry_window(meta, nid, i, cancel=fo_cancel)   # est-9ceqc: resume honors the persisted window
                     if _lane_killed(run, nid):
                         return {"status": "failed", "error": "killed by lane kill before launch",
@@ -8795,17 +8992,18 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     sk = skey_for(run, byid, node, i)   # fresh nonce per spawn (retry respawns
                     log(run, "item.started", node=nid, index=i, skey=sk)   # are fresh sessions)
                     _book_launch()   # census launch stamp at the ACTUAL spawn instant
-                    return run_child(meta, node, byid, goal, node.get("context", ""),
-                                     fo.get("schema") or node.get("schema"), steering=steering,
-                                     skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
-                                     seat_cancel=fo_cancel, seat_hold=held,
-                                     seat_admit_lock=lock, model_override=model_override)
-                def spawn(resume_preamble="", model_override=None):
+                    with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
+                        return run_child(meta, node, byid, goal, node.get("context", ""),
+                                         fo.get("schema") or node.get("schema"), steering=steering,
+                                         skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
+                                         seat_cancel=fo_cancel, seat_hold=held,
+                                         seat_admit_lock=lock, model_override=model_override, **kw)
+                def spawn(resume_preamble="", model_override=None, **kw):
                     # est-g255 P255-1: only a DONE answer can trip quorum, so only
                     # its seat stays deferred until one()'s quorum block below; any
                     # other verdict frees the seat now (a retry backoff or a
                     # rate-limit park never sits on a global seat).
-                    r = _spawn(resume_preamble, model_override=model_override)
+                    r = _spawn(resume_preamble, model_override=model_override, **kw)
                     if r.get("status") != "done":
                         while held:
                             _seat_release(held.pop())
@@ -8894,6 +9092,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     list(ex.map(lambda t: one(*t), list(enumerate(items))))
             finally:
                 strag_stop.set()
+            _width_flush(meta, run)   # #24: observed item width of THIS fan-out wave
             # est-fanout-cell: the wave ends -> the open batch ALWAYS flushes with
             # its tail NAMED (never silently dropped), then the pool drains so the
             # finals exist before the partner's boundary tally reads them.
@@ -9061,7 +9260,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         error_class=merged_rec.get("error_class", "incomplete_work"), attempts=1)
         else:
             first = {"done": False}
-            def spawn(resume_preamble="", model_override=None):
+            def spawn(resume_preamble="", model_override=None, **kw):
                 if not first["done"]:
                     _honor_retry_window(meta, nid, None, cancel=meta["_stop"])   # est-9ceqc
                 sk = solo_key if not first["done"] else skey_for(run, byid, node)
@@ -9069,9 +9268,10 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                 detached = _poll_registered_job(meta, node, byid)
                 if detached is not None:
                     return detached
-                return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
-                                 node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
-                                 resume_preamble=resume_preamble, model_override=model_override)
+                with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
+                    return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
+                                     node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
+                                     resume_preamble=resume_preamble, model_override=model_override, **kw)
             r = _ratelimit_park(meta, spawn(), spawn, "node", {"node": nid}, node=node)  # est-t0vz
             r = _transient_retry(meta, r, spawn, "node", {"node": nid}, node=node)
             r = _fallback_ladder(meta, r, lambda m, rp="": spawn(rp, model_override=m),
@@ -10062,6 +10262,7 @@ def main(run_id):
     meta["_reasoning_server_clamp"] = {}   # est-vsgj B1-crossed: (node,index,lane,asked)
                                            # -> server-declared value; runner-private,
                                            # never persisted; survives outer-ladder respawns
+    _width_tracker(meta)                    # #24: observed fan-out width per node
     exit_graph = [jload(run / "graph.json")]
     if prior_status and (prior_status == "crashed" or
                          (jload(run / "on_exit.json", {}) or {}).get("phase") != "finished"):
@@ -10134,6 +10335,10 @@ def main(run_id):
     _respawn_attempt_record(run, meta,
                             {n["id"]: n for n in (exit_graph[0] or {}).get("nodes", [])})
     log(run, "run.started" if first else "run.resumed")
+    # #100: the requested-vs-applied receipt rides AFTER the started/resumed
+    # line — emitting it earlier would create events.jsonl and make the FIRST
+    # runner misread itself as a resume (the reaper test pins the trace order).
+    _receipt_concurrency(meta)                # once per runner process
     rs = Run(run)
     exit_graph[0] = rs.graph
     consumed, steering = set(), {}
@@ -10506,9 +10711,10 @@ def main(run_id):
                         continue
                 spawnable.append(n)
             if spawnable:
-                with ThreadPoolExecutor(max_workers=meta.get("concurrency", 4)) as ex:
+                with ThreadPoolExecutor(max_workers=meta.get("concurrency", DEFAULT_CONCURRENCY)) as ex:
                     list(ex.map(lambda n: run_agent_node(run, meta, rs.byid, n, outputs,
                                                          steering.pop(n["id"], None) or []), spawnable))
+                _width_flush(meta, run)   # #24: peak children of THIS wave, per node
             continue  # top of loop: consume markers, recompute states
 
         m = consume_markers()
