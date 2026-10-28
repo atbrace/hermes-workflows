@@ -3588,7 +3588,7 @@ def act_run(args):
                         exit_rec = incumbent.get("runner_exit") or {}
                         return {"error": f"run {incumbent['run_id']} is blocked by failed "
                                          f"node(s): {', '.join(failed) or 'unknown'} — amend the "
-                                         f"failed node or stop the run to relaunch, or use a new lane_key",
+                                         f"failed node to retry, or launch under a new lane_key",
                                 "blocked_by": incumbent.get("blocked_by") or [f"{nid}: failed" for nid in failed],
                                 "reason": exit_rec.get("reason") or "failed",
                                 "deduped": True, "lane_key": key, "run_id": incumbent["run_id"]}
