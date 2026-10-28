@@ -91,6 +91,7 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
 - No double-dispatch for pollers: `run` with `lane_key:<key>` — while an UNFINISHED
   incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume`
   means `wait` it — never replace it; `stop` is the explicit abandonment. Keys are
+  A FAILED incumbent is refused at the door too: a relaunch returns `{error, blocked_by, reason, deduped:true, run_id}` naming the failed node(s) — never a silent new run; the hatch is to `amend` the failed node or launch under a new lane_key (`stopped`/`done` keep fresh-run semantics).
   global per runs root; prefix `<team>/` yourself. Details:
   [operations](references/operations.md).
 - Report a finished run by metrics (token in/out, api calls, tool calls), not the
