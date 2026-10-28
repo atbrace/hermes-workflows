@@ -305,6 +305,13 @@ class _CardText(str):
         self._ce_done = False
         return self
 
+    def __reduce__(self):
+        # Required-arg __new__ breaks copyreg.__newobj__ — core's post-tool
+        # compression deepcopy(messages) TypeError'd and wedged every later
+        # turn (session 20261027_163805_e278f6). Witness attrs rebuild in __new__.
+        return (_CardText, (str(self), self._ce_entries,
+                            self._ce_session, self._ce_turn))
+
     def _ce_confirm(self):
         if object.__getattribute__(self, "_ce_done"):
             return
