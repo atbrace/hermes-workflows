@@ -3117,9 +3117,19 @@ def _lane_state(key, entry):
         state = "orphaned"
     live = st.get("runner_live", False) if st else False   # A2 one-read law
     unfinished = state not in ("done", "partial", "failed", "stopped")   # est-3acn: partial is terminal
-    return {"lane_key": key, "run_id": rid, "state": state,
+    out = {"lane_key": key, "run_id": rid, "state": state,
             "runner_live": live, "unfinished": unfinished,
             "needs_resume": unfinished and not live, "last_event_ts": _last_event_ts(r)}
+    if state == "failed":
+        # sys-6uk25s: a blocked run owes the launcher its WHY at the door — the
+        # attribution run_state already computed, surfaced verbatim.
+        node_states = (st or {}).get("nodes") or {}
+        out["failed_nodes"] = sorted(nid for nid, v in node_states.items()
+                                     if isinstance(v, dict) and v.get("status") == "failed")
+        out["blocked_by"] = sorted({e for v in node_states.values()
+                                    for e in (v.get("blocked_by") or [])})
+        out["runner_exit"] = (st or {}).get("runner_exit")
+    return out
 
 def _lane_key_error(key):
     if not isinstance(key, str) or not key.strip() or len(key) > 128:
@@ -3568,6 +3578,20 @@ def act_run(args):
                             # Keep the incumbent's optional card presentation.
                             "lifecycle_notice": _lifecycle_notice(incumbent["run_id"]),
                             "hint": f"wait run_id={incumbent['run_id']} resumes it"}
+                if incumbent["state"] == "failed":
+                        # sys-6uk25s: fail fast at the door. A relaunch against a
+                        # blocked-by-failed incumbent is REFUSED with the block
+                        # attribution (blind retries re-hit the same block — the
+                        # 8x burst of 2026-10-19); no new run, no spawn, the lane
+                        # entry stays pointed at the blocked run.
+                        failed = incumbent.get("failed_nodes") or []
+                        exit_rec = incumbent.get("runner_exit") or {}
+                        return {"error": f"run {incumbent['run_id']} is blocked by failed "
+                                         f"node(s): {', '.join(failed) or 'unknown'} — amend the "
+                                         f"failed node or stop the run to relaunch, or use a new lane_key",
+                                "blocked_by": incumbent.get("blocked_by") or [f"{nid}: failed" for nid in failed],
+                                "reason": exit_rec.get("reason") or "failed",
+                                "deduped": True, "lane_key": key, "run_id": incumbent["run_id"]}
             out = _create_run(args, graph, lib_name, models, routes, _liveness_notes, path,
                               includes=_includes, include_notes=_include_notes,
                               concurrency_meta=concurrency_meta, retry_meta=retry_meta,
