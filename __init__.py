@@ -853,7 +853,7 @@ WORKFLOW_PARAMS = {
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
         "retry_backoff": {"type": "array", "items": {"type": "number"}, "description": "run only: two non-negative seconds [first, second] replacing the transient ladder's retry schedule (default: exponential, 2 s base, 30 s ceiling; est-9ceqc persists the backoff deadline + attempt count per node so a restart honors the window). The runner reads them from run.json meta; the node-level `retry` key caps attempts."},
         "retry_budget": {"type": "integer", "description": "run only: non-negative cap on total retry draws across ALL ladders for the run (default 6). A storm beyond the budget fails typed retry_skipped, never silently retries on."},
-        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Library-sourced launches also render profile, echo string output, gate options, wait.until_argv and fan-out precheck_argv; every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string, or a graph with {run.KEY} refs launched with NO run_context (the door names the key; literal placeholders never spawn, dry_run included). Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
+        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Every map launch renders the shared text surface — node goals/contexts, gate questions, agent profile/repo lanes, fan-out goals/item goals, echo string output, gate options, wait.until_argv and fan-out precheck_argv (inline and library alike); every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string, or a graph with {run.KEY} refs launched with NO run_context (the door names the key; literal placeholders never spawn, dry_run included). Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "params": {"type": "object", "additionalProperties": {"type": "object"}, "description": "save: optional meta.params descriptions/default suggestions for run_context keys. Required keys derive from graph refs, never this metadata. Omission retains prior params; {} deliberately clears them. Missing/dead declarations warn, never prevent saving."},
         "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). For explicit curation, library exposes tag_vocab for optional reuse. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
@@ -2853,45 +2853,40 @@ def _bind_run_context(graph, binding, *, library_sourced=False):
                         f"run_context[{key!r}] must not contain braces when bound into a "
                         "fan-out goal — the runner re-interpolates fan-out goals per item")
         return out
-    if library_sourced:
-        nodes = []
-        for original in graph["nodes"]:
-            n = original
-            fan = isinstance(n.get("fanout"), dict)
-            for label, path in _common._include_text_fields(original):
-                n = _common._include_set(n, path, render(
-                    _common._include_get(original, path),
-                    fanout=label.startswith("fanout.") or (label == "goal" and fan)))
-            nodes.append(n)
-        return dict(graph, nodes=nodes)
+    # sys-vrovdu: map binding renders the SHARED text surface on EVERY launch,
+    # inline or library-sourced — the same traversal the survivor gates police
+    # (_unbound_run_refs / _unbound_include_refs). The old library-only
+    # asymmetry left echo output / gate options / until_argv / precheck_argv
+    # unrendered for inline graphs: a supplied binding could not reach them and
+    # the survivor gate then refused a fully-bound launch (T8b class drift).
+    # 1.1 (RATIFY F2): `profile` is rendered here, BEFORE profile validation, so a
+    # graph can name its teammate per launch ({"profile": "{run.reviewer}"}).
+    # #459 G2 (est-rza3t): `repo` mirrors profile exactly — rendered before the
+    # runner's lane-boot gate reads it, so a traveling pack can name its git lane
+    # per launch and the mechanical lane guards (incomplete_work/lane_wreckage)
+    # reach portable graphs.
     nodes = []
     for original in graph["nodes"]:
-        n = dict(original)
-        fan = n.get("fanout") if isinstance(n.get("fanout"), dict) else None
-        # 1.1 (RATIFY F2): `profile` is rendered here, BEFORE profile validation, so a
-        # graph can name its teammate per launch ({"profile": "{run.reviewer}"}).
-        # #459 G2 (est-rza3t): `repo` mirrors profile exactly — rendered before the
-        # runner's lane-boot gate reads it, so a traveling pack can name its git lane
-        # per launch and the mechanical lane guards (incomplete_work/lane_wreckage)
-        # reach portable graphs.
-        for field in ("goal", "context", "question", "profile", "repo"):
-            if isinstance(n.get(field), str):
-                # issue #7: a fan-out node's OWN goal is the runner's fallback
-                # template (wf.py: fo.goal or node.goal -> fmt_goal) whenever
-                # items resolve without their own goals — and with items_from
-                # the door cannot know that at launch. Treat it as fan-out
-                # territory: braces-bearing bound values reject like any
-                # other fan-out binding instead of re-interpolating per child.
-                n[field] = render(n[field], fanout=(field == "goal" and fan is not None))
-        if fan is not None:
-            fanout = dict(n["fanout"])
-            if isinstance(fanout.get("goal"), str):
-                fanout["goal"] = render(fanout["goal"], fanout=True)
-            if isinstance(fanout.get("items"), list):
-                fanout["items"] = [dict(item, goal=render(item["goal"], fanout=True))
-                                   if isinstance(item, dict) and isinstance(item.get("goal"), str)
-                                   else item for item in fanout["items"]]
-            n["fanout"] = fanout
+        n = original
+        fan = isinstance(n.get("fanout"), dict)
+        for label, path in _common._include_text_fields(original):
+            if not library_sourced and (label.startswith("wait.until_argv")
+                                        or label.startswith("fanout.precheck_argv")):
+                # #293 (est-2ek.1.792): a plain launch NEVER renders command
+                # argv — a supplied binding must not silently rewrite an exec'd
+                # command, and the survivor's #293 refusal is the pinned law
+                # here. Library launches do render argv (D19: seeded renders
+                # into the committed bytes).
+                continue
+            # issue #7: a fan-out node's OWN goal is the runner's fallback
+            # template (wf.py: fo.goal or node.goal -> fmt_goal) whenever
+            # items resolve without their own goals — and with items_from
+            # the door cannot know that at launch. Treat it as fan-out
+            # territory: braces-bearing bound values reject like any
+            # other fan-out binding instead of re-interpolating per child.
+            n = _common._include_set(n, path, render(
+                _common._include_get(original, path),
+                fanout=label.startswith("fanout.") or (label == "goal" and fan)))
         nodes.append(n)
     return dict(graph, nodes=nodes)
 

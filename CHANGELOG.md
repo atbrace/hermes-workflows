@@ -43,7 +43,12 @@ Door:
   graphs (composites were already fail-closed since 2026-09-30). Literal-free
   graphs and fully-bound launches are byte-unchanged. Tests:
   `tests/test_unbound_run_refs_vrovdu.py` (13 contracts, RED first); D9b/D16b/
-  D19b in `tests/test_include_door.py` flipped from leniency to refusal.
+  D19b in `tests/test_include_door.py` flipped from leniency to refusal. The
+  map binder now renders the SHARED text surface on every launch (inline
+  included), not only library-sourced ones — a supplied binding reaches every
+  ref the survivor gate polices, so gate and renderer cannot drift (a supplied
+  pin referenced only in echo output launches and renders). Command argv keeps
+  the #293 split: a plain launch never renders it, a library launch does.
 
 Ops/chore:
 - fix(read model) est-t7yod (the #583 peer-review residual): the est-mqp1f

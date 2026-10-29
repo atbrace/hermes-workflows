@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """sys-vrovdu: the door must reject unbound {run.KEY} at launch AND on dry_run.
 
-Measured 10-04 (haus counter C2, run 20261004-150243-bindability-probe-real):
+Measured 10-04 (probe run 20261004-150243-bindability-probe-real):
 a graph carrying {run.KEY} placeholders launched with NO run_context spawned
 nodes with literal `{run.KEY}` text in their prompts, and dry_run:true passed
 the same hole. Only the fan-out per-item re-interpolation braces-check existed.
