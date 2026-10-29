@@ -135,6 +135,14 @@ print('```json\\n'+json.dumps(out)+'\\n```',flush=True)
         (state / 'check_cmd.txt').write_text('exit 1')
         # The next dispatch's bootstrap re-installs the seeded command.
         args['run_context']['check_cmd']='exit 2'
+        # sys-6uk25s: re-launch on the same lane_key is now REFUSED while the
+        # incumbent reads failed (run 2's gate timed out on the claimed
+        # transition); the hatch is an amend or a fresh lane_key, never a
+        # silent new run. The probe lifecycle below keeps its own lane.
+        refused = door.act_run(args)
+        assert refused.get('deduped') and refused['run_id'] == again['run_id'], refused
+        assert 'blocked by failed' in refused['error']
+        args['lane_key'] = 'example/machine-watch-94b'
         broken, path3 = start()
         deadline = time.monotonic() + 6
         while time.monotonic() < deadline:
