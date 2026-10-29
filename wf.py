@@ -1356,6 +1356,18 @@ def _wake_tid(run_name, event, disc):
         return _ob.instance_id(run_name, event, disc)
     return hashlib.sha256(f"{run_name}\0{event}\0{disc}".encode()).hexdigest()[:32]
 
+def _wake_body_snip(readable):
+    """sys-8uhkwo: the refused wake POST's body, bounded to the first 512 bytes
+    and bearer-redacted HERE (the persist-time loop in _wake_append covers only
+    text/error — body is a second untrusted field). A read failure or empty body
+    records nothing: the row must survive a broken body (fail-open law unchanged)."""
+    try:
+        raw = readable.read(512)
+    except Exception:
+        return None
+    body = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)).strip()
+    return _wake_safe(body) if body else None
+
 def _wake_deliver(rec, sid, text, tid):
     """Attempt ONE wake POST; return the tri-state outcome: True = delivered
     (2xx), False = try-later (the endpoint answered wrongly, redirected, timed
@@ -1389,9 +1401,15 @@ def _wake_deliver(rec, sid, text, tid):
             if 200 <= status < 300:
                 return True
             rec["error"] = f"HTTP {status}"
+            snip = _wake_body_snip(resp)
+            if snip:
+                rec["body"] = snip
             return False
     except urllib.error.HTTPError as e:
         rec["error"] = f"HTTP {e.code}"
+        snip = _wake_body_snip(e)
+        if snip:
+            rec["body"] = snip
         return False
     except (socket.timeout, TimeoutError):
         # F5: a read timeout is NOT a delivery — we never saw a status line,
