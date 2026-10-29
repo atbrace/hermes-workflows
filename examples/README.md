@@ -13,6 +13,10 @@ whose failure path has never fired is a decoration). The rows without a receipts
 dir are validated cold (structural tests + `validate`), not smoke-run — treat
 them as blueprints, not proofs.
 
+Every example ships with a derived diagram — table, queue, and the
+DIAGRAM LAW v1 layout spec live in [diagrams/README.md](diagrams/README.md) — the
+repo docs tree; the runtime zip ships maps and graphs, not art.
+
 ## basics/ — one idea each, read these first
 
 | File | Shape | Teaches |
@@ -26,7 +30,7 @@ them as blueprints, not proofs.
 
 | File | Shape | Teaches |
 |---|---|---|
-| [`triage-route.workflow.json`](build/triage-route.workflow.json) | intake → classifier → route pair | Queue triage: a boolean the grammar *can* see (`has_urgent`) routes either a human escalation or a rule-driven batch; each arm hangs only on its own route gate. |
+| [`triage-route.workflow.json`](build/triage-route.workflow.json) | intake → classifier → when-guarded arm heads | Queue triage: a boolean the grammar *can* see (`has_urgent`) routes either a human escalation or a rule-driven batch; the complementary `when` rides on each arm head itself. |
 | [`bulk-transform.workflow.json`](build/bulk-transform.workflow.json) | manifest → per-item lanes → audit | Barrier fan-out: the audit reconciles `all_results` against the declared manifest *and* re-checks the filesystem — evidence-without-command is a failed lane. |
 | [`census-fanout.workflow.json`](build/census-fanout.workflow.json) | roster → no-quorum barrier → tally | Deterministic tally over N machines: every item answered or *named missing*, counts computed from the record, a dead gauge prints as a loud red row, never silent loss. |
 | [`quorum-probe.workflow.json`](build/quorum-probe.workflow.json) | raced probe ‖ reconciled barrier | The speed/coverage contrast in one run: `quorum` cancels stragglers (report them honestly); the no-quorum barrier reconciles survivors against a master catalog. |

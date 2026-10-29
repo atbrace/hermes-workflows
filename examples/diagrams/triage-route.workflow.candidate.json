@@ -1,0 +1,196 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "A single classifier node, complementary `when` predicates on the arm heads: the branch is grammar, not agent discretion",
+        "Empty queue is a RESULT \u2014 the notice arm ends the run quietly instead of a failed fan-out waking anyone",
+        "Routine work rides the batch fan-out; only urgent items spend a human escalation gate"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "7 agents, 1 gates, 1 fan-out: intake -> classify -> when-guarded arms split to batch|urgent|empty",
+        "escalate is a human gate mid-arm; report joins every arm, live or pruned, from ## Inputs payloads",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "intake",
+      "id": "intake-classify",
+      "to": "classify",
+      "variant": "default"
+    },
+    {
+      "from": "classify",
+      "id": "classify-batch-prep",
+      "to": "batch-prep",
+      "variant": "security"
+    },
+    {
+      "from": "classify",
+      "id": "classify-escalate",
+      "to": "escalate",
+      "variant": "security"
+    },
+    {
+      "from": "escalate",
+      "id": "escalate-handle-urgent",
+      "to": "handle-urgent",
+      "variant": "default"
+    },
+    {
+      "from": "classify",
+      "id": "classify-empty-notice",
+      "to": "empty-notice",
+      "variant": "security"
+    },
+    {
+      "from": "batch-prep",
+      "id": "batch-prep-batch-run",
+      "to": "batch-run",
+      "variant": "default"
+    },
+    {
+      "from": "handle-urgent",
+      "id": "handle-urgent-report",
+      "to": "report",
+      "variant": "default"
+    },
+    {
+      "from": "batch-run",
+      "id": "batch-run-report",
+      "to": "report",
+      "variant": "default"
+    },
+    {
+      "from": "empty-notice",
+      "id": "empty-notice-report",
+      "to": "report",
+      "variant": "default"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "work",
+      "label": "Agents",
+      "variant": "normal"
+    },
+    {
+      "id": "gates",
+      "label": "Gates",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/triage-route.html",
+    "quality_profile": "standard",
+    "subtitle": "Triage a work queue with one classifier node and the complementary `when` pair carried by the arm heads themse",
+    "title": "triage-route"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "intake",
+      "label": "Intake",
+      "lane": "work",
+      "sublabel": "enumerate the open",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "classify",
+      "label": "Classify",
+      "lane": "work",
+      "sublabel": "classify every item",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "batch-prep",
+      "label": "Batch Prep",
+      "lane": "work",
+      "sublabel": "hand the routine set",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "empty-notice",
+      "label": "Empty Notice",
+      "lane": "work",
+      "sublabel": "you are the empty",
+      "type": "backend",
+      "width": 104,
+      "yOffset": 92
+    },
+    {
+      "col": 2,
+      "id": "escalate",
+      "label": "Escalate",
+      "lane": "gates",
+      "sublabel": "urgent items need a",
+      "tag": "branch",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "batch-run",
+      "label": "Batch Run",
+      "lane": "work",
+      "sublabel": "execute the rule s",
+      "tag": "fan-out N",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "handle-urgent",
+      "label": "Handle Urgent",
+      "lane": "work",
+      "sublabel": "the human answered",
+      "type": "backend",
+      "width": 104,
+      "yOffset": 92
+    },
+    {
+      "col": 4,
+      "id": "report",
+      "label": "Report",
+      "lane": "work",
+      "sublabel": "write the triage",
+      "type": "backend",
+      "width": 104
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 3
+    },
+    {
+      "fromCol": 4,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 4
+    }
+  ],
+  "schema_version": 2
+}

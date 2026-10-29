@@ -166,9 +166,8 @@ if _FAKE_MODE == "toolcall_text_541" and "TOOLCALL541" in q:
     # est-2ek.1.541: the agent child whose FINAL REPLY is serialized tool-call markup
     # ('<invoke name=...>'-shape rendered as text, turn_exit_reason unknown, exit 1).
     # The markup is json-quoted so this file stays free of raw open-tag sequences
-    # (6st law). FAKE_RC selects the exit code (0 = the exit-0 shape, 1 = the failing
-    # case); FAKE_TERN is the turn report's turn_exit_reason (failing case: "unknown").
-    # The dead
+    # (6st law). FAKE_RC selects the exit code (0 = the exit-0 shape, 1 = the death);
+    # FAKE_TERN is the turn report's turn_exit_reason (the death: "unknown"). The dead
     # attempt registers a state.db row with api_calls/tool_calls > 0 — the shape IS a
     # turn that really called tools and rendered the call as its answer; that is also
     # the positive tool-progress evidence the #5 bounded retry gate reads.
@@ -314,37 +313,6 @@ if _FAKE_MODE == "early":          # writes stdout, then keeps cooking (mid-run 
     _t.sleep(float(os.environ.get("FAKE_EARLY_SLEEP", "3")))
 if _FAKE_MODE == "bad_schema":     # valid json fence that fails the node's schema
     print("```json\n" + json.dumps({"wrong": True}) + "\n```")
-    sys.exit(0)
-# ---- #107 enum-enforcement modes (prompt-scoped; the retry seam is visible
-# because the runner's attempt_note lands in the retry's prompt text) ----
-if _FAKE_MODE == "enum_out_then_in":  # first answer out-of-set, retry answers in-set
-    if "failed schema validation" in q:
-        print("```json\n" + json.dumps({"verdict": "ship"}) + "\n```")
-    else:
-        print("```json\n" + json.dumps({"verdict": "shipp"}) + "\n```")
-    sys.exit(0)
-if _FAKE_MODE == "enum_always_bad":   # persistent out-of-set answer
-    print("```json\n" + json.dumps({"verdict": "passedd"}) + "\n```")
-    sys.exit(0)
-if _FAKE_MODE == "enum_always_good":  # in-set on the first attempt
-    print("```json\n" + json.dumps({"verdict": "hold"}) + "\n```")
-    sys.exit(0)
-# ---- #113 numeric-type-enforcement modes (prompt-scoped like the enum ones:
-# the runner's attempt_note lands in the retry's prompt text) ----
-if _FAKE_MODE == "num_out_then_in":    # first answer fractional as integer, retry integral
-    if "failed schema validation" in q:
-        print("```json\n" + json.dumps({"count": 2}) + "\n```")
-    else:
-        print("```json\n" + json.dumps({"count": 1.5}) + "\n```")
-    sys.exit(0)
-if _FAKE_MODE == "num_always_bad":     # persistent fractional answer to an integer field
-    print("```json\n" + json.dumps({"count": 1.5}) + "\n```")
-    sys.exit(0)
-if _FAKE_MODE == "num_bool_always_bad":  # persistent bool answer to an integer field
-    print("```json\n" + json.dumps({"count": True}) + "\n```")
-    sys.exit(0)
-if _FAKE_MODE == "num_always_good":    # valid integer on the first attempt
-    print("```json\n" + json.dumps({"count": 3}) + "\n```")
     sys.exit(0)
 if _FAKE_MODE == "noisy":          # sprint101 C2 #9: prose around objects, no clean fence
     print("I finished the task. Early draft: {\"ok\": false, \"attempt\": 1}")

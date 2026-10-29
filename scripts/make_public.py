@@ -30,6 +30,9 @@ GIT = "/usr/bin/git"
 PATTERN = re.compile(r"192\.168|\bhaus\b|callindor|gaidin|rhuidean|jacob|\bnous\b", re.I)
 SCRUB_LIST_FILE = "scripts/scrub-list.txt"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_lint  # noqa: E402  (#477 — same directory, ships together)
+
 
 def load_scrub_list(repo: Path) -> re.Pattern:
     """Core-10 contract: the peer-agreed scrub-grep categories (hostnames, LAN IPs,
@@ -59,8 +62,15 @@ EXCLUDE_DIRS = {".git", "__pycache__"}
 EXCLUDE_PATTERNS = ["docs/PUBLISH-SCRUB.md",
                     "*/__pycache__/*", "__pycache__/*",
                     "tests/home*", "*.log", "*/.git", "*/.git/*"]
-# (sys-1w0hoy ask 3: the old AUDIT_SUFFIXES whitelist is gone — the audit now
-# covers every text file; see is_text_file.)
+# (sys-1w0hoy ask 3: the audit is content-decided for extensionless files;
+# a KNOWN text suffix is always audited regardless — see wf166 A1 below.)
+# Committee wf166 + wf166c A1 (P1, twice reopened): the known-text suffix set
+# must cover every text shape the repo actually ships. A NUL-prepend must not
+# buy immunity for a known suffix, and a shipped text extension missing from
+# this set is a whole-file blind spot — .yml (the shipped .github/workflows/
+# ci.yml) and .txt (mac-source.txt) both exported forbidden lines with "0 scrub
+# hits" under the old set. New text file types join here, never the skip path.
+AUDIT_SUFFIXES = {".py", ".js", ".mjs", ".md", ".json", ".yaml", ".yml", ".txt", ".sig"}
 
 
 def excluded(rel: str) -> bool:
@@ -122,9 +132,26 @@ def main() -> int:
     guard_files, guard_lines, guard_regexes = load_guards(repo)
     offences: list[str] = []
     for rel in copied:
-        if not is_text_file(repo / rel):
-            continue
-        text = (repo / rel).read_text(encoding="utf-8", errors="replace")
+        # The suffix allowlist must never create a blind spot: a shipped
+        # extensionless text file (tests/fake-b1 — observed carrying forbidden
+        # vocabulary while the audit reported 0 hits) is exactly what the audit
+        # exists to catch. Text-ness is decided by content (null-byte sniff,
+        # the git heuristic), not by file name.
+        p = repo / rel
+        raw = p.read_bytes()
+        if p.suffix:
+            if p.suffix not in AUDIT_SUFFIXES:
+                continue
+            # Committee wf166 A1 (P1): a known-text suffix must NEVER earn
+            # immunity from the null-byte sniff. Prepending one NUL to
+            # README.md used to flip the whole file to the binary skip —
+            # forbidden lines after the NUL exported green (0 hits) while the
+            # exported bytes still decoded and rendered. Known suffixes are
+            # ALWAYS audited (errors=replace makes the NUL inert); the sniff
+            # skips only the newly-admitted extensionless candidates.
+        elif b"\0" in raw[:8192]:
+            continue                                   # extensionless binary: nothing to scrub
+        text = raw.decode("utf-8", errors="replace")
         for i, line in enumerate(text.splitlines(), 1):
             if audit.search(line):
                 if rel in guard_files or (rel, i) in guard_lines:
@@ -136,6 +163,17 @@ def main() -> int:
         print("SCRUB FAILED — non-guard private-string hits in copied files:", file=sys.stderr)
         for o in offences:
             print(o, file=sys.stderr)
+        return 1
+
+    # Gate-lint (#477): a gate whose doc text (question+context) fails to quote
+    # an option verbatim strands the next releaser — refuse the publish.
+    scan = gate_lint.collect(repo)
+    if scan.violations:
+        print("GATE LINT FAILED — option strings not verbatim in gate doc text "
+              "(see scripts/gate_lint.py; fix the doc text, never the lint):",
+              file=sys.stderr)
+        for v in sorted(scan.violations, key=lambda v: (v.rel, v.line, v.node)):
+            print(f"  {v}", file=sys.stderr)
         return 1
 
     target.mkdir(parents=True, exist_ok=True)

@@ -21,7 +21,9 @@ findings the maintainer reproduced and forbids the notify()-shortcut shapes:
       - catchable crash under BOTH exception nets: exactly one wake, re-raise
         preserved (exit 1) — the double net stays catchable, never swallowed.
   * MISSING ENDPOINT: no config / no key / key-less templates resolve to None and
-    the probe row carries the typed error_class=missing_endpoint (B4).
+    the probe row carries the typed error_class=missing_endpoint (B4) with the
+    tri-state null (nowhere-ever, est-7rudf): the instance settles rather than
+    re-driving a row per respawn.
   * REDIRECT: sink A answers 301/302/307/308 with a Location on ANOTHER port and
     sink B captures BOTH GET and POST with every header; nothing may ride.
   * CONFIG FAIL-OPEN (exact adversary shapes): list at root / platforms /
@@ -231,8 +233,13 @@ try:
               msg["content"].startswith("[runner-authored/v1]"), msg["content"])
         check("graph injection marker absent from every wire byte", INJ not in content,
               content[:400])
-        check("wake points at the gate view (runner protocol text)",
-              "needs your answer" in msg["content"], msg["content"])
+        check("wake factually points at the held human gate and status",
+              "HELD at a human gate" in msg["content"]
+              and "Status contains the question" in msg["content"], msg["content"])
+        check("wake requires a human decision and grants no answer/work authority",
+              "release requires the human's decision" in msg["content"]
+              and "does not authorize choosing an answer or additional work" in msg["content"],
+              msg["content"])
     r = RUNS / rid if rid else None
     if r:
         ev = events(r, "gate.held")
@@ -407,8 +414,8 @@ try:
     w = wakes(r)
     check("missing endpoint: run survives (fail-open)",
           out.returncode == 0, str(out.returncode))
-    check("missing endpoint: typed error_class recorded, undelivered",
-          bool(w) and w[0].get("delivered") is False
+    check("missing endpoint: typed error_class recorded, tri-state null (nowhere-ever)",
+          bool(w) and w[0].get("delivered") is None
           and w[0].get("error_class") == "missing_endpoint", str(w))
     check("missing endpoint: zero wire traffic", len(A) == b, str(A[b:]))
 

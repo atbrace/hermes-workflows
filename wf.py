@@ -14,10 +14,13 @@ Staleness law (wfcommon.efp): each stored result is verified under its stamped r
 against the current graph (own def + all ancestors' defs). An amend upstream makes
 downstream result stale — downstream nodes re-run or re-hold; unchanged chains replay.
 """
-import json, os, random, re, signal, socket, subprocess, sys, threading, time
-import difflib
+import json, os, random, re, shutil, signal, socket, subprocess, sys, threading, time
+import errno
 import fcntl
 import hashlib
+import math
+from contextlib import nullcontext as _nullcontext
+import importlib.util
 import urllib.error
 import urllib.request
 import uuid
@@ -25,18 +28,112 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import wfcommon
-from wfcommon import (efp, graph_fingerprint, jload, validate_graph, node_rec, gate_answer_valid,
-                      when_true, child_metrics, prune_states, dep_satisfied, active_child,
-                      FP_RULE_VERSION, record_efp_valid, seat_forbidden_models, runs_root,
-                      hermes_root, profile_home, find_run, blocked_legibility, residue,
-                      release_law,
-                      publisher_gate_check, suite_proof_token_path,
-                      confidence_substrate, strip_engine_disclosure,
-                      substrate_disclosure_text, SUBSTRATE_DISCLOSURE_KEY,
-                      hermes_home as _wfcommon_hermes_home,
-                      kind)
+# Import hygiene (outbound review NousResearch/hermes-agent#133387 ask #1):
+# wfcommon is spec-loaded PRIVATELY under a prefixed module name, bound by path
+# from __file__ — no sys.path mutation, no generic 'wf'/'wfcommon' ever joins a
+# host sys.modules, and the module still runs as `python wf.py run <id>`.
+_COMMON_PATH = Path(__file__).resolve().parent / "wfcommon.py"
+if not _COMMON_PATH.is_file():
+    # A COPY of this runner executed from a directory without the sibling (the
+    # door's baked/patched runner copies, and tests that stage wf.py into a fake
+    # home): the old `sys.path.insert(0, parent); import wfcommon` fell through
+    # to the launch sys.path (PYTHONPATH carries the plugin dir), so the copy
+    # still resolved the plugin's wfcommon. Keep that resolution WITHOUT the
+    # path mutation or the bare-name bind: a spec LOOKUP only — it never
+    # inserts into sys.modules, so the purity contract still holds.
+    try:
+        _sib_spec = importlib.util.find_spec("wfcommon")
+    except (ImportError, ValueError):
+        _sib_spec = None
+    if _sib_spec is not None and _sib_spec.origin and Path(_sib_spec.origin).is_file():
+        _COMMON_PATH = Path(_sib_spec.origin)
+_common_spec = importlib.util.spec_from_file_location("_hermes_workflows_wfcommon_runner", _COMMON_PATH)
+assert _common_spec is not None and _common_spec.loader is not None
+wfcommon = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(wfcommon)
+# est-imp1z (WF-GRAFT-2): the pure output classifier (exit-0-is-not-success) rides
+# the same purity law as wfcommon — spec-loaded PRIVATELY under a prefixed module
+# name, bound by path from __file__; no generic 'outcome' name ever joins a host
+# sys.modules (the import-purity probe pins it).
+_OUTCOME_PATH = Path(__file__).resolve().parent / "outcome.py"
+if not _OUTCOME_PATH.is_file():
+    # A copy of this runner executed beside no sibling (door copies, fake-home
+    # stagings): resolve a sys.path-provided outcome.py the same way the wfcommon
+    # fallback above does — but ONLY one shipped beside a wfcommon.py (a bare
+    # 'outcome' is a common host-module name; the co-located wfcommon.py is the
+    # plugin-dir proof the fallback demands).
+    for _ent in list(sys.path):
+        try:
+            _cand = Path(_ent) / "outcome.py"
+            if _cand.is_file() and (Path(_ent) / "wfcommon.py").is_file():
+                _OUTCOME_PATH = _cand
+                break
+        except Exception:
+            continue
+assert _OUTCOME_PATH.is_file(), f"missing plugin sibling outcome.py (looked at {_OUTCOME_PATH})"
+_outcome_spec = importlib.util.spec_from_file_location("_hermes_workflows_outcome_runner", _OUTCOME_PATH)
+assert _outcome_spec is not None and _outcome_spec.loader is not None
+_outcome = importlib.util.module_from_spec(_outcome_spec)
+_outcome_spec.loader.exec_module(_outcome)
+# Bind every name OFF the private instance above. A `from wfcommon import ...`
+# statement is an import of the GENERIC top-level name — it re-executes the
+# sibling into sys.modules as bare 'wfcommon' (the exact leak this module's
+# purity law forbids; the probe in tests/test_import_purity_133387.py pins it).
+efp = wfcommon.efp
+graph_fingerprint = wfcommon.graph_fingerprint
+jload = wfcommon.jload
+validate_graph = wfcommon.validate_graph
+node_rec = wfcommon.node_rec
+gate_answer_valid = wfcommon.gate_answer_valid
+when_true = wfcommon.when_true
+child_metrics = wfcommon.child_metrics
+budget_tokens = wfcommon.budget_tokens
+prune_states = wfcommon.prune_states
+# (est-7m6wv horde) `dep_satisfied` re-bind deleted: the runner enforces the
+# after-edge law through release_law, never this direct handle (zero call sites).
+active_child = wfcommon.active_child
+admission_ledger_errors = wfcommon.admission_ledger_errors   # #85: artifact-admission guard at runner re-validation
+FP_RULE_VERSION = wfcommon.FP_RULE_VERSION
+record_efp_valid = wfcommon.record_efp_valid
+seat_forbidden_models = wfcommon.seat_forbidden_models
+seat_max_seats = wfcommon.seat_max_seats
+SeatCapError = wfcommon.SeatCapError
+runs_root = wfcommon.runs_root
+hermes_root = wfcommon.hermes_root
+profile_home = wfcommon.profile_home
+find_run = wfcommon.find_run
+blocked_legibility = wfcommon.blocked_legibility
+residue = wfcommon.residue
+release_law = wfcommon.release_law
+publisher_gate_check = wfcommon.publisher_gate_check
+suite_proof_token_path = wfcommon.suite_proof_token_path
+confidence_substrate = wfcommon.confidence_substrate
+strip_engine_disclosure = wfcommon.strip_engine_disclosure
+substrate_disclosure_text = wfcommon.substrate_disclosure_text
+SUBSTRATE_DISCLOSURE_KEY = wfcommon.SUBSTRATE_DISCLOSURE_KEY
+_wfcommon_hermes_home = wfcommon.hermes_home
+kind = wfcommon.kind
+# #24 knob family defaults (PR#580 take-over): bound in main's import-hygiene
+# style — the runner reads them through the private wfcommon module only.
+DEFAULT_CONCURRENCY = wfcommon.DEFAULT_CONCURRENCY
+DEFAULT_ITEM_CONCURRENCY = wfcommon.DEFAULT_ITEM_CONCURRENCY
+DEFAULT_RESUME_FLOOR_S = wfcommon.DEFAULT_RESUME_FLOOR_S
+# est-2ek.1.641 (ask #1, option A): the receipts trio lives in wfcommon (the
+# door bakes through its private copy, never through this runner module); the
+# forgiving validator moved there too (ask #2). Re-bound here so every
+# runner-side call, helper, and test that reaches wf.bake_route_receipts /
+# wf.validate keeps resolving byte-identically.
+ROUTE_RECEPTS_NAME = wfcommon.ROUTE_RECEPTS_NAME
+bake_route_receipts = wfcommon.bake_route_receipts
+_route_receipts_path = wfcommon._route_receipts_path
+_route_receipt_load = wfcommon._route_receipt_load
+validate = wfcommon.validate
+# est-libks: the #485 bare-item-token class is ONE compiled pattern, defined in
+# wfcommon (below), bound here off the private instance — the door's admission
+# refusal and the commit-edge gate's per-item check must read the identical
+# object; a second re.compile is the drift that kills a fan-out graph typed at
+# the commit edge. tests/test_single_source_bc_item_token_libks.py pins it.
+_RE_BC_ITEM_TOKEN = wfcommon._RE_BC_ITEM_TOKEN
 def _route_home(result):
     """The target owns the child's session DB; absent routing preserves legacy home."""
     return result.get("profile_home") or hermes_home()
@@ -56,44 +153,9 @@ def _route_home(result):
 # engine-decided AT SUBMIT (the receipt is written for whatever route the door
 # certified and baked), so a served rung re-pings as its own route.
 
-ROUTE_RECEPTS_NAME = "route_receipts.json"
-
-def _route_receipts_path(run):
-    return Path(run) / ROUTE_RECEPTS_NAME
-
-def _route_receipt_load(run):
-    return jload(_route_receipts_path(run), {}) or {}
-
-def bake_route_receipts(run, graph):
-    """Door-side admission write (est-2ek.1.641): every agent node the door's
-    ping PROVED alive at THIS submit (route_verified baked by
-    _route_enforcement) records its proved-alive receipt into the run dir,
-    merged over what earlier submits proved. Durable in the LANE (survives
-    runner respawn); the runner refuses any later spawn that would bill a
-    different model. No proof baked = no receipt written = legacy shape."""
-    run = Path(run)
-    wrote = False
-    p = _route_receipts_path(run)
-    try:
-        rec = _route_receipt_load(run)
-        for n in (graph or {}).get("nodes", []) or []:
-            if n.get("type") != "agent" or not n.get("id"):
-                continue
-            verified = n.get("route_verified")
-            route = f"{n.get('provider') or ''}/{n.get('model') or ''}".strip("/")
-            if not verified or not route or route == "/":
-                continue
-            if rec.get(n["id"]) != str(verified):
-                rec[n["id"]] = str(verified)
-                wrote = True
-        if wrote:
-            run.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
-            tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
-            os.replace(tmp, p)
-    except OSError:
-        pass                                   # receipt write best-effort; the HOLD is strict
-    return wrote
+# (route-receipt path/load/bake live in wfcommon — moved out of this module per
+# the outbound review ask #1; re-bound at the import block above so runner-side
+# uses and `wf.bake_route_receipts` keep resolving byte-identically.)
 
 def _route_receipt_bake(meta, node):
     """Post-spawn receipt write (the door's proof, executed by the runner): a
@@ -122,6 +184,96 @@ def _route_receipt_bake(meta, node):
     except OSError:
         pass                                   # receipt best-effort WRITE; the HOLD is strict
 
+def _budget_refusal(meta, node, byid, index, spawn_no):
+    """est-3acn: BEFORE submit — the RunBudget pre-dispatch check at the same
+    seam as _route_substitution_refusal (est-2ek.1.641's shape: a refusal that
+    never touches the seat, never bills, logs its typed event, and reads as ONE
+    committed failure). Caps are tokens-only (USD is excluded per the repo
+    cost-trust law, issue #124 scope decision 2026-10-14 — there is no usd key
+    to check and validate_graph_errors refuses anyone who writes one).
+
+    Scopes, narrowest first (the event names the one that broke):
+      node — the node's own `budget:{tokens:N}` def;
+      run  — the door-baked run.json meta.budget.tokens (submit-time truth;
+             like concurrency it does not ride amends).
+    spent   = budget_tokens summed over every metered session row of this run
+              under the scope — node scope keys on the lane prefix
+              `wf:{run}:{node}` (covers fan-out items and #attempt suffixes);
+              run scope walks EVERY agent lane of the graph through its own
+              profile home (cross-profile runs bill their own state.db).
+    needed  = est_next: the measured per-attempt mean of this node's lanes;
+              node has no history => the run-wide mean; no history at all => 0
+              (a cap NEVER blocks the first attempt — refusal is always grounded
+              in measured spend, never a post-hoc tax on work already done).
+    The law is `spent + needed >= cap` refuses: the dispatch must be expected
+    to FIT under the cap, not merely start while the cap reads non-zero.
+    An absent/unreadable state.db reads spend 0 — honest absence can never
+    fire the gate. Returns None to proceed."""
+    caps = []
+    nb = (node or {}).get("budget")
+    if isinstance(nb, dict) and type(nb.get("tokens")) is int and nb["tokens"] > 0:
+        caps.append(("node", nb["tokens"]))
+    rb = meta.get("budget")
+    if isinstance(rb, dict) and type(rb.get("tokens")) is int and rb["tokens"] > 0:
+        caps.append(("run", rb["tokens"]))
+    if not caps:
+        return None                                   # no caps: byte-identical path
+    run = meta["_run"]
+    # ONE child_metrics read per distinct profile home PER CHECK — never cached
+    # across dispatches: the whole point of a pre-dispatch meter is that it
+    # sees spend grow between two spawns in the same wave (a cached snapshot
+    # would mint headroom out of staleness).
+    rows_by_home = {}
+    for n in byid.values():
+        if kind(n).spawns is not True:
+            continue
+        route = _profile_evidence(n)
+        home = str(route.get("profile_home") or hermes_home())
+        if home not in rows_by_home:
+            try:
+                rows_by_home[home] = child_metrics(run.name, home)
+            except Exception:
+                rows_by_home[home] = {}
+    # one pass: node lanes, and every lane of the run (deduped per home — a
+    # row in another profile home is a DIFFERENT billing session, never a
+    # shadow; within one home each skey counts exactly once).
+    pref = f"wf:{run.name}:{node['id']}"
+    node_spent = node_attempts = 0
+    run_spent = run_attempts = 0
+    seen = set()
+    for home, rows in rows_by_home.items():
+        for k, m in rows.items():
+            tok = budget_tokens(m)
+            att = int(m.get("attempts") or 0)
+            if k == pref or k.startswith(pref + ":"):
+                node_spent += tok
+                node_attempts += att
+            if k.startswith(f"wf:{run.name}:") and (home, k) not in seen:
+                seen.add((home, k))
+                run_spent += tok
+                run_attempts += att
+    est = (node_spent // node_attempts if node_attempts > 0
+           else run_spent // run_attempts if run_attempts > 0
+           else 0)                                    # floor 0: no history, no refusal
+    for scope, cap in caps:
+        spent = node_spent if scope == "node" else run_spent
+        if spent + est >= cap:
+            err = (f"budget_exhausted: {scope}-scope RunBudget cap {cap} tokens has no "
+                   f"headroom for node {node['id']!r} (scope spent {spent}, est_next {est}; "
+                   f"spent+est >= cap refuses BEFORE submit). RunBudget is tokens-only — "
+                   f"USD is excluded per the repo cost-trust law (issue #124); this spawn "
+                   f"never touched the seat (zero attempts). The run finalizes a graceful "
+                   f"partial; budget_ledger.json names what never launched.")
+            ev = {"node": node["id"], "scope": scope, "cap": cap, "spent": spent,
+                  "needed": est, "error_class": "budget_exhausted"}
+            if index is not None:
+                ev["index"] = index                   # {node,index?,scope,cap,spent,needed,...}
+            log(run, "dispatch.refused", **ev)
+            return {"status": "failed", "error": err, "error_class": "budget_exhausted",
+                    "raw": "", "ms": 0, "attempts": 1, "spawn": spawn_no}
+    return None
+
+
 def _route_substitution_refusal(meta, node, spawn_no):
     """est-2ek.1.641: BEFORE submit — if this lane has a proved-alive receipt
     and this spawn would bill a different model, refuse typed. Same identity
@@ -144,10 +296,16 @@ def _route_substitution_refusal(meta, node, spawn_no):
     # a substitution must never self-certify against itself.
     candidates = {v, v_model}
     for alias, target in _seat_alias_map(hermes_home()).items():
-        if alias.lower() in (v, v_model):
+        # #318: the bake names the TARGET the ping proved, so the receipt side of
+        # the match may be the alias's TARGET as well as the alias — a same-alias
+        # respawn (retry/resume of an alias-pinned node) is the same route seen
+        # through the seat's alias map, never a substitution.
+        if alias.lower() in (v, v_model) or str(target).lower() in (v, v_model) \
+                or str(target).rsplit("/", 1)[-1].lower() in (v, v_model):
             candidates |= {alias.lower(), str(target).lower(),
                            str(target).rsplit("/", 1)[-1].lower()}
-    if a in candidates or a.rsplit("/", 1)[-1] in candidates:
+    if a in candidates or a.rsplit("/", 1)[-1] in candidates or any(
+            wfcommon.route_ids_equal(a, c, wfcommon.route_provider(node, verified)) for c in candidates):
         return None                            # same route: the receipt is not a spawn lock
     return {"status": "failed",
             "error": f"route_substitution_denied: node {node['id']!r} has a proved-alive "
@@ -160,9 +318,63 @@ def _route_substitution_refusal(meta, node, spawn_no):
             "error_class": "route_substitution_denied", "raw": "", "ms": 0,
             "attempts": 1, "spawn": spawn_no}
 
+def _stale_route_receipt_clear(meta, node, spawn_no):
+    """route-hold escalation (w56): a RE-DRIVE (spawn_no > 1) whose run already
+    died on the route family for THIS node (route_unavailable /
+    route_substitution_denied in events.jsonl) clears the node's durable receipt
+    — the proof that holds the re-drive is one reality already contradicted, and
+    the estate was deleting it by hand next to the node record. The clear is
+    loud (node.route_receipt_cleared) and scoped: only this node's row, only for
+    a re-drive, and only after route-family evidence. A first spawn NEVER clears
+    (the door re-bakes proofs at submit; the receipt guards that first spawn).
+    Returns True when a receipt row was removed."""
+    if not (meta.get("_run") and spawn_no and spawn_no > 1) or not (node or {}).get("id"):
+        return False
+    run = meta["_run"]
+    try:
+        lines = (run / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    hit = False
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        if ev.get("node") != node["id"]:
+            continue
+        if ev.get("error_class") in ("route_unavailable", "route_substitution_denied"):
+            hit = True
+            break
+    if not hit:
+        return False
+    p = _route_receipts_path(run)
+    try:
+        rec = _route_receipt_load(run)
+        if node["id"] not in rec:
+            return False
+        old = rec.pop(node["id"])
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+        os.replace(tmp, p)
+    except OSError:
+        return False
+    log(run, "node.route_receipt_cleared", node=node["id"], cleared=old,
+        reason="re-drive after a route-family death (stale receipt, w56)")
+    return True
+
 def _profile_evidence(node):
     name = node.get("profile")
     return {"profile": name, "profile_home": str(profile_home(name))} if name else {}
+
+def _quorum_death_label(explicit_quorum, quorum, n_items):
+    """est-4sx: a null-quorum fan-out dies on the runner's IMPLICIT majority
+    (len(items)//2+1, sprint101 #12) — bare 'quorum not met' reads as if the
+    graph declared a bar it never declared. Name the real death."""
+    if explicit_quorum:
+        return "quorum not met"
+    return f"fanout_timeout_majority_unmet (implicit majority {quorum}/{n_items}; quorum not declared)"
+
 
 def _lane_gate(run, node, r):
     """fb-digest-29d (64c6772b): a node that declares `repo: <path>` owns a git
@@ -214,6 +426,17 @@ def _lane_gate(run, node, r):
 
 def _stamp_served(meta, result, node=None):
     """Commit actual child seat truth, never the requested alias. No row means unknown."""
+    # est-wqml6: settle-time child telemetry join by the spawn env key,
+    # fail-open on every path (man page: node_telemetry.py). Folded FIRST so
+    # every settle outcome, including the early refusals below, consumes the
+    # sidecar; a telemetry bug never blocks a settle.
+    try:
+        _nt = _node_telemetry()
+        _td = _nt.fold_at_settle(meta["_run"], result.get("skey")) if _nt else None
+    except Exception:
+        _td = None
+    if _td:
+        result["telemetry"] = _td
     # #116: engine substitution stamp validation at the commit (verified against
     # the estate config at bake/commit time). A stamp whose `to` is NOT a declared
     # rung — a forged node_def edit through a hand-edited graph.json — fails closed
@@ -248,7 +471,10 @@ def _stamp_served(meta, result, node=None):
         return result
     forbidden = set(policy.get("forbidden_models") or []) | set(seat_floor)
     served = result["served_model"]
-    if metric and served is not None and (served in forbidden or served.rsplit("/", 1)[-1] in forbidden):
+    # Policy follows the billed provider, never the node's requested pin.
+    provider = result["served_billing_provider"]
+    if metric and served is not None and (served in forbidden or served.rsplit("/", 1)[-1] in forbidden
+            or any(wfcommon.route_ids_equal(served, banned, provider) for banned in forbidden)):
         result.update(status="failed", error=f"forbidden served model: {served}",
                       error_class="forbidden_model")
         return result
@@ -278,8 +504,11 @@ def _stamp_served(meta, result, node=None):
                         (skey, len(skey) + 2, skey + "#a")).fetchall()
             except (sqlite3.Error, OSError):
                 rows = []                 # older core / offline DB: existing law
+            if rows:   # est-2ek.1.774: the record names every main-loop model billed
+                result["billed_models"] = [str(m) for (m,) in rows if m]
             for (observed,) in rows:
-                probe = _route_hold(meta, dict(result, served_model=observed), node)
+                probe = _route_hold(meta, dict(result, served_model=observed), node,
+                                    final_served=result.get("served_model"))
                 if probe.get("error_class") == "route_unavailable":
                     result.update(status="failed", error_class="route_unavailable",
                                   error=probe["error"])
@@ -361,6 +590,62 @@ def _wake_safe(value):
         text = pat.sub("[redacted]", text)
     return text
 
+# WF-GRAFT-11 (est-x92v7, peer row atbrace:hw-s53 #6): the size clip at the persist
+# choke. Every string a node record persists goes through bearer redaction FIRST
+# (redaction stays UPSTREAM of the clip: a cut must never split a credential shape
+# and leave half of it readable), then a head/tail clip at the ceiling. Operator
+# knobs are read fresh at every use (same law as the seat cap): WORKFLOW_OUTPUT_CLIP
+# and WORKFLOW_INPUTS_BUDGET, both in chars. An invalid knob value warns on stderr
+# and the default stands: honest degradation, never a runner death over a malformed
+# ceiling, and never a silent adoption of the default either.
+OUTPUT_CLIP_DEFAULT = 100_000
+INPUTS_BUDGET_DEFAULT = 200_000
+
+def _int_knob(name, default):
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        v = int(raw)
+    except ValueError:
+        v = 0
+    if v < 1:
+        print(f"WORKFLOW_KNOB_WARN {name}={raw!r} is not a positive integer; using {default}",
+              file=sys.stderr, flush=True)
+        return default
+    return v
+
+def clip_head_tail(text, ceiling):
+    """text unchanged when within the ceiling; otherwise the first `head` chars, a
+    retention marker naming dropped/total/ceiling, and the last `tail` chars. The
+    result never exceeds the ceiling. Re-clipping a clipped value is a no-op (the
+    marker keeps the record under the ceiling), so the store is idempotent."""
+    if len(text) <= ceiling:
+        return text
+    def marker(dropped):
+        return (f"…[clipped {dropped} of {len(text)} chars; "
+                f"head+tail retained; ceiling {ceiling}]…")
+    budget = ceiling - len(marker(len(text)))   # widest marker: dropped < len(text)
+    if budget < 1:
+        return marker(len(text))[:ceiling]
+    head = (budget + 1) // 2
+    tail = budget - head
+    return text[:head] + marker(len(text) - (head + tail)) + (text[-tail:] if tail else "")
+
+def _clip_record(rec):
+    """save_node's redact-then-clip walk: every string leaf redacted, then clipped
+    to WORKFLOW_OUTPUT_CLIP. Non-string leaves pass through untouched."""
+    ceiling = _int_knob("WORKFLOW_OUTPUT_CLIP", OUTPUT_CLIP_DEFAULT)
+    def walk(v):
+        if isinstance(v, str):
+            return clip_head_tail(_wake_safe(v), ceiling)
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return v
+    return {k: walk(v) for k, v in dict(rec).items()}
+
 # AUTHORITY LAW (owner ruling, PR#97 review, r5): notify() accepts NO caller-authored
 # owner text at all. The role:user content is built HERE from a finite map of events,
 # so no call site — present or future — can interpolate graph question/options/context,
@@ -371,26 +656,209 @@ def _wake_safe(value):
 # JSON-encoded protocol fields (quoted via json.dumps, so a hostile run name can never
 # break out of the field or read as instruction prose) — exactly what makes a wake
 # actionable: inspect status/gates once, act, stop, never poll.
+# #501 (est-qcyfi): run.failed/run.done additionally carry runner-COMPUTED
+# pointer fields in that same inert JSON-quoted position — run_dir always,
+# failed_node_logs (the efp-valid committed records' log_path set) when
+# resolvable. The bodies above stay verbatim; the table stays the ONLY author
+# of owner prose. Absent pointer = unresolvable, never a fabricated value.
 _WAKE_TEMPLATES = {
-    "gate.held": "Your workflow run is HELD at a human gate and needs your answer. "
-                 "Inspect its status or gates view once, then answer with ONE workflow "
-                 "release action and stop. The run resumes on its own.",
-    "run.failed": "Your workflow run FAILED. Inspect its status once (failed nodes, "
-                  "exit records and error details are there), apply ONE corrective "
-                  "amend/repair/resume action, then stop. Do not poll or wait: the "
-                  "next transition — including completion — wakes this session.",
-    "run.done": "Your workflow run is DONE. summary.md is written; status shows the "
-                "node outputs. Read it once; no further action is required.",
+    "gate.held": "The workflow is HELD at a human gate. Status contains the question "
+                 "and options; release requires the human's decision. This notification "
+                 "does not authorize choosing an answer or additional work.",
+    "run.failed": "The workflow execution FAILED. Status contains failed nodes, exit "
+                  "records and original error details. This notification does not authorize "
+                  "repair, resume or a new launch. Push delivery is optional; wait is the "
+                  "blocking path and may resume an interrupted run.",
+    # est-fanout-straggler (sys-nxrhxo): mid-flight observation, NOT a node state.
+    # The fan-out wave loop's cohort watchdog fires this once per driven wave when
+    # the census floor trips (see STRAGGLER_GRACE_S); the counts/indices ride in the
+    # fanout.stragglers events.jsonl line (authority law: this template stays fixed).
+    "fanout.stragglers": "Your workflow run has FAN-OUT STRAGGLERS: items are still "
+                         "running long after their cohort finished (the fanout.stragglers "
+                         "line in events.jsonl names indices and cohort timing; a celled "
+                         "fan-out has already consolidated the finished members). Take "
+                         "ONE action now: steer the open items, accept the partial (an "
+                         "explicit quorum commits at majority on its own), or stop the "
+                         "run — then stop. Do not poll: completion and failure still "
+                         "wake this session.",
+    "run.done": "The workflow execution is DONE. Status contains node outputs; summary.md "
+                "contains the run summary. Execution completion is not verification of the "
+                "user's task and does not authorize additional work. Research-only work "
+                "can end with its report; no dispatch, publication or curation is required.",
+    "run.partial": "The workflow execution ended PARTIAL — a graceful RunBudget cap: the "
+                   "ledger names what never launched, banked verdicts are committed. This "
+                   "notification does not authorize additional work; re-launch under a "
+                   "larger budget or amend if the capped work must finish.",
 }
 
-def _wake_owner_text(run_id, event):
-    """The runner-authored owner turn, or None when the event has no template (an
-    unmapped event gets NO wake — fail-silent beats an ad-hoc owner sentence)."""
+# CLOSED registry of lifecycle events a call site may pass to notify()
+# (est-jbcrw wake-router class-coverage law, from the dead-landing census
+# run 20261016-172339-iron-gravity). Drift — a call site waking an event not
+# listed here — is a CLASS GAP: it still wakes on the fixed catch-all body
+# below and prints WORKFLOW_WAKE_UNMAPPED_EVENT; it never goes silent again.
+_WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done", "run.partial",
+                          # runner-emitted mid-flight class (est-fanout-straggler
+                          # sys-nxrhxo; registered at rebase onto the est-jbcrw
+                          # registry so the mapped template carries no alarm)
+                          "fanout.stragglers"})
+
+# Fixed catch-all body — runner-authored like every template: the text table is
+# the only author, so AUTHORITY LAW r5 holds unchanged. The old fail-silent
+# rule for unmapped events let a scripted wake for an unmapped class cost
+# nobody anything and the linked row rotted (wake-scripted-class-that-skipped,
+# 5 dead rows in the census); a fixed alarm beats ad-hoc silence.
+_WAKE_CATCHALL_BODY = (
+    "The workflow recorded a lifecycle event outside the runner's emitted-event "
+    "registry — a wake-router class gap. Status contains the run state; inspect it "
+    "once. This notification is a drift alarm and does not authorize repair, "
+    "dispatch or new work.")
+
+def _wake_owner_text(run_id, event, run_dir=None, failed_node_logs=None):
+    """The runner-authored owner turn. Known events use their template; an
+    event with no template uses the fixed catch-all body (est-jbcrw: never
+    None — silence on an unmapped class was the gravity hole the dead-landing
+    census measured; caller/graph prose is still impossible by construction).
+
+    #501 (est-qcyfi): the caller may additionally pass the run directory and,
+    for run.failed, the resolved failed-node log paths. They ride BEFORE the
+    separator as inert JSON-quoted protocol fields in the same position as
+    run_id/event — runner-computed at the notify point, redacted like every
+    persisted field, never caller-authored: the template body after the
+    separator stays verbatim, so AUTHORITY LAW r5 is untouched and the
+    template table remains the only author of owner prose. An empty or
+    unresolvable failed_node_logs emits nothing — absent is honest, the
+    renderer never fabricates a list (AGENTS rule 8)."""
     body = _WAKE_TEMPLATES.get(event)
     if body is None:
-        return None
+        body = _WAKE_CATCHALL_BODY
+    pointers = ""
+    if run_dir is not None:
+        pointers += f" run_dir={json.dumps(str(run_dir))}"
+    if failed_node_logs:
+        pointers += f" failed_node_logs={json.dumps(list(failed_node_logs))}"
     return (f"[runner-authored/v1] run_id={json.dumps(str(run_id))} "
-            f"event={json.dumps(event)} \u2014 {body}")
+            f"event={json.dumps(event)}{pointers} \u2014 {body}")
+
+# ---------- wake-noise control: [SILENT] verdict + per-node wake tiers (WF-GRAFT-1) ----------
+# Adapted from itechmeat/hermes-workflows (notifications.py:29-45, engine.py:934-936):
+# a settled result that says "nothing to report" costs the owner ZERO turns, and a
+# scheduled graph can say so per node without changing the graph-wide default.
+#
+# The Hermes `[SILENT]` convention is honored at exactly ONE seam — the run-result
+# wake — and only against the output the graph itself declares as its verdict
+# (top-level `result:`, est-2ek.1.158). Binding the marker to that one committed
+# record is what keeps it safe: any node's prose could otherwise swallow a
+# transition, whereas `result` names the single channel the AUTHOR designated as the
+# run's answer. Case-sensitive, matching the host convention.
+SILENT_MARKER = "[SILENT]"
+
+# The node-subject notices a wake tier may govern. Run-terminal wakes (run.done /
+# run.failed / run.partial) are deliberately NOT tier-governable: the run boundary is
+# the contract that makes `wait` unnecessary, and the only thing that may suppress a
+# run.done wake is the run's own declared verdict carrying SILENT_MARKER. A malformed
+# or optimistic tier can therefore never leave a run unreported at its boundary.
+_TIERED_WAKE_EVENTS = frozenset({"gate.held", "fanout.stragglers"})
+WAKE_TIER_DEFAULT = "full"
+
+
+def _wake_graph(run, graph):
+    """The graph facts the wake-noise read uses: the caller's when it carries nodes,
+    else the run's COMMITTED graph.json (the same on-disk fact the wake identity's
+    fingerprint read rides). Unreadable/garbage degrades to {} — the default
+    behavior, never a crash and never a suppression."""
+    if isinstance(graph, dict) and isinstance(graph.get("nodes"), list) and graph["nodes"]:
+        return graph
+    try:
+        g = jload(run / "graph.json", {}) or {}
+    except Exception:
+        return {}
+    return g if isinstance(g, dict) else {}
+
+
+def _run_result_output(run, graph=None):
+    """The run's COMMITTED verdict output as text — the output of the node the graph
+    names as top-level `result` — or None when there is nothing grounded to read.
+    The `result` id is read from the run's COMMITTED graph.json (the notify call site
+    for run.done passes a run_state-derived graph carrying only `nodes`, so a
+    suppression must never depend on what the caller happened to hand over); the node
+    set comes from the caller's graph when it carries one, else the same file.
+    None — i.e. WAKE NORMALLY — for: no `result` declaration, no committed record, a
+    record the efp law says is stale (node_rec returning `pending`: the same validity
+    law the wake identity and the #501 pointers use), or a commit whose status is not
+    a real commit. Fail-open by construction: a suppression never rests on an
+    unreadable or amended-away fact. A structured (schema-committed) verdict is read
+    whole via JSON so the marker counts anywhere in the author's own answer, not only
+    in a bare-string one."""
+    try:
+        committed = jload(run / "graph.json", {}) or {}
+        committed = committed if isinstance(committed, dict) else {}
+        rid = committed.get("result")
+        if not isinstance(rid, str) or not rid:
+            return None
+        g = _wake_graph(run, graph)
+        byid = {n["id"]: n for n in (g.get("nodes") or [])
+                if isinstance(n, dict) and n.get("id")}
+        if rid not in byid:                       # the caller handed a nodes-only
+            byid = {n["id"]: n for n in (committed.get("nodes") or [])   # projection
+                    if isinstance(n, dict) and n.get("id")}
+        node = byid.get(rid)
+        if not isinstance(node, dict):
+            return None
+        status, rec = node_rec(run, node, byid)
+        if status not in ("done", "partial"):
+            return None                      # stale/amended-away/absent: not a fact
+        if not isinstance(rec, dict) or rec.get("output") is None:
+            return None
+        out = rec["output"]
+        return out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def _wake_tier(run, graph, node_id):
+    """The effective wake tier for one node: the NODE's `wake_tier` over the GRAPH's
+    top-level `wake_tier` default, else `full`. Anything the door would have refused
+    — a non-string, a value outside wfcommon.WAKE_TIERS, an unreadable graph, an
+    unknown node — reads as `full`: the fail-open direction for a wake is always the
+    loud one, so a malformed tier can over-wake and can never swallow a transition."""
+    try:
+        g = _wake_graph(run, graph)
+        tier = None
+        for n in g.get("nodes") or []:
+            if isinstance(n, dict) and n.get("id") == node_id and "wake_tier" in n:
+                tier = n["wake_tier"]
+                break
+        if tier is None:
+            tier = g.get("wake_tier")
+        return tier if tier in wfcommon.WAKE_TIERS else WAKE_TIER_DEFAULT
+    except Exception:
+        return WAKE_TIER_DEFAULT
+
+
+def _wake_suppression(run, event, node, graph):
+    """Why this wake instance must NOT reach the owner session, or None to deliver.
+    Checked BEFORE any POST and before the row would record a delivery attempt: a
+    suppression is a decision, not a transport failure, and it never re-arms.
+      * `silent_marker` — a `run.done` whose declared verdict output carries
+        [SILENT]: the worker said nothing to report. Lifecycle notices
+        (run.failed / run.partial / gate.held / fanout.stragglers) never consult it.
+      * `wake_tier:quiet` — a mid-flight `fanout.stragglers` observation for a node
+        at tier quiet or silent (an observation, not a state the owner must act on).
+      * `wake_tier:silent` — any node-subject notice, including this gate's own hold:
+        the author explicitly took over polling it (status still answers
+        `next: [release]`, and the desktop card still shows the question)."""
+    if event == "run.done":
+        verdict = _run_result_output(run, graph)
+        if verdict is not None and SILENT_MARKER in verdict:
+            return "silent_marker"
+    if node is not None and event in _TIERED_WAKE_EVENTS:
+        tier = _wake_tier(run, graph, node)
+        if tier == "silent":
+            return "wake_tier:silent"
+        if tier == "quiet" and event == "fanout.stragglers":
+            return "wake_tier:quiet"
+    return None
+
 
 _CRASH_GEN: list = [None, None]  # [run_path, generation] for this runner process
 
@@ -420,7 +888,6 @@ _CRASH_GEN: list = [None, None]  # [run_path, generation] for this runner proces
 EFFECTS_NAME = "side_effects.jsonl"
 EFFECTS_FILE_ENV = "HERMES_WF_EFFECTS_FILE"
 EFFECTS_EFP_ENV = "HERMES_WF_NODE_EFP"
-EFFECTS_PREAMBLE_TOKEN = "Already committed side effects"
 
 def _effects_path(run):
     return Path(run) / EFFECTS_NAME
@@ -667,10 +1134,14 @@ def _wake_opener():
     return urllib.request.build_opener(_NoRedirect)
 
 def _wake_ledger_read(run):
-    """(rows, delivered_ids) from wake.jsonl, fail-open on every shape the file
+    """(rows, settled_ids) from wake.jsonl, fail-open on every shape the file
     can be in (F3): unreadable (a directory), corrupt lines, non-dict records.
-    A probe read must never cost a decided run its exit."""
-    rows, delivered = [], set()
+    A probe read must never cost a decided run its exit. An instance SETTLES
+    (is never re-driven) only on an explicit ``delivered`` that is True-or-None:
+    delivered, or nowhere-ever. A false row is try-later and stays open — the
+    retry path must exist — and a row without the key (a legacy shape) settles
+    nothing."""
+    rows, settled = [], set()
     try:
         for l in (run / "wake.jsonl").read_text().splitlines():
             if not l.strip():
@@ -682,11 +1153,12 @@ def _wake_ledger_read(run):
             if not isinstance(rec, dict):
                 continue
             rows.append(rec)
-            if rec.get("delivered") and rec.get("id"):
-                delivered.add(rec["id"])
+            if (rec.get("id") and "delivered" in rec
+                    and rec["delivered"] is not False):
+                settled.add(rec["id"])
     except Exception:
         pass
-    return rows, delivered
+    return rows, settled
 
 def _wake_append(run, rec):
     """Append one ledger row; a failure is loud on stderr (runner.log) and NEVER
@@ -747,6 +1219,39 @@ def _wake_resolved_failed(run, graph):
     except Exception:
         return None
 
+def _wake_failed_node_logs(run, graph):
+    """The recorded `log_path` fields of the run's efp-valid COMMITTED FAILED
+    nodes (#501): the pointers a woken session would otherwise dig for. Same
+    validity law the wake identity already uses (node_rec): a stale or absent
+    record is not a fact. A graph the caller did not pass falls back to the
+    run's own graph.json — the same on-disk fact the identity's fingerprint
+    read rides. Returns None when the node set cannot be resolved at all (no
+    graph anywhere, no nodes); otherwise the sorted, de-duplicated list of
+    recorded paths — a failed node whose committed record carries no log_path
+    (a pre-spawn refusal like inputs/budget/forbidden_model, or a fan-out
+    aggregate record) contributes nothing, and an empty resolution surfaces as
+    field ABSENCE at the renderer, never a fabricated list (AGENTS rule 8).
+    Never raises: an unreadable anything is unresolvable, not a crash."""
+    try:
+        nodes = (graph or {}).get("nodes")
+        if not isinstance(nodes, list):
+            nodes = (jload(run / "graph.json", {}) or {}).get("nodes")
+        if not isinstance(nodes, list):
+            return None
+        byid = {n["id"]: n for n in nodes if isinstance(n, dict) and n.get("id")}
+        if not byid:
+            return None
+        logs = []
+        for n in byid.values():
+            status, rec = node_rec(run, n, byid)
+            if status == "failed" and isinstance(rec, dict):
+                lp = rec.get("log_path")
+                if isinstance(lp, str) and lp.strip():
+                    logs.append(lp)
+        return sorted(set(logs))
+    except Exception:
+        return None
+
 def _wake_identity(run, event, key, graph=None):
     """THE transition-instance discriminant (B3 law): a string that is IDENTICAL
     across retries/respawns of one lifecycle decision and DIFFERENT for every
@@ -767,18 +1272,231 @@ def _wake_identity(run, event, key, graph=None):
         gfp = graph_fingerprint(jload(run / "graph.json", {}) or {})
     except Exception:
         pass
-    if gfp is None:
-        return None
+    if gfp is None and event in _WAKE_EVENTS:
+        return None                    # known-event facts unreadable: silent, never a duplicate
     if event == "run.done":
         return f"{event}|done:{gfp}|r{rev}"
     if event == "run.failed":
         failed = _wake_resolved_failed(run, graph)
-        if failed is None:
+        if failed is None or gfp is None:
             return None
         return f"{event}|failed:{','.join(failed)}@{gfp}|r{rev}"
-    return None
+    if event in _WAKE_EVENTS:
+        return None                    # keyed transitions returned above; unkeyed = silent law
+    # Unmapped class (est-jbcrw catch-all): deterministic off the durable rev
+    # alone — no graph facts needed and never None, so a class gap cannot go
+    # silent and retries of one decision still dedupe.
+    return f"{event}|unmapped:r{rev}"
 
-def notify(run, event, key=None, graph=None):
+# ---------- P1: the outbound bridge (default OFF; hooks_outbound.py) ----------
+# ONE seam drives both halves of a lifecycle transition: notify() owns the
+# owner-session wake; the bridge mirrors the SAME instance to the operator's
+# configured endpoint when — and only when — the owner setting enables it.
+# Private spec-load under a prefixed module name (the wfcommon/card_enforcement
+# hygiene: no sys.path mutation, no generic name joining sys.modules). A missing
+# or broken hooks_outbound.py means NO bridge: the run loop is byte-identical.
+_OUTBOUND = None
+_OUTBOUND_TRIED = False
+
+def _outbound_bridge():
+    """Load + bind hooks_outbound once, lazily; None = no bridge (feature off by
+    absence or by a broken file — both the same byte-identical degradation)."""
+    global _OUTBOUND, _OUTBOUND_TRIED
+    if _OUTBOUND_TRIED:
+        return _OUTBOUND
+    _OUTBOUND_TRIED = True
+    try:
+        _p = Path(__file__).resolve().parent / "hooks_outbound.py"
+        if not _p.is_file():
+            return None
+        _spec = importlib.util.spec_from_file_location("_hermes_workflows_hooks_outbound", _p)
+        if _spec is None or _spec.loader is None:
+            return None
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.bind(wfcommon, _wake_identity, log)   # ONE discriminant fn, the runner's own log voice
+        _OUTBOUND = _mod
+    except Exception:
+        _OUTBOUND = None
+    return _OUTBOUND
+
+_NODE_TELEMETRY = None
+_NODE_TELEMETRY_TRIED = False
+
+def _node_telemetry():
+    """est-wqml6: spec-load node_telemetry.py once, lazily, for the runner-side
+    half of the child telemetry channel (the child-side half registers inside
+    the child's own plugin load). None = channel absent: the byte-identical
+    degradation, same law as _outbound_bridge."""
+    global _NODE_TELEMETRY, _NODE_TELEMETRY_TRIED
+    if _NODE_TELEMETRY_TRIED:
+        return _NODE_TELEMETRY
+    _NODE_TELEMETRY_TRIED = True
+    try:
+        _p = Path(__file__).resolve().parent / "node_telemetry.py"
+        if not _p.is_file():
+            return None
+        _spec = importlib.util.spec_from_file_location("_hermes_workflows_node_telemetry", _p)
+        if _spec is None or _spec.loader is None:
+            return None
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _NODE_TELEMETRY = _mod
+    except Exception:
+        _NODE_TELEMETRY = None
+    return _NODE_TELEMETRY
+
+def _wake_tid(run_name, event, disc):
+    """The wake/outbound instance id — ONE recipe (sha256(run|event|discriminant)
+    [:32], the B3 identity). With the bridge present the recipe lives in
+    hooks_outbound and is called there; without it the identical formula runs
+    inline, so wake identity never moves whether or not the feature is shipped."""
+    _ob = _outbound_bridge()
+    if _ob is not None:
+        return _ob.instance_id(run_name, event, disc)
+    return hashlib.sha256(f"{run_name}\0{event}\0{disc}".encode()).hexdigest()[:32]
+
+def _wake_deliver(rec, sid, text, tid):
+    """Attempt ONE wake POST; return the tri-state outcome: True = delivered
+    (2xx), False = try-later (the endpoint answered wrongly, redirected, timed
+    out, or the transport raised — the retry re-drives under the SAME instance
+    id), None = nowhere-ever (the host configures no reachable API server, so
+    no retry can ever land and the marker settles). Typed failure detail lands
+    on rec (error / error_class) for the probe row; never raises."""
+    ep = _wake_endpoint()
+    if ep is None:
+        rec["error"] = ("no reachable api_server (enable platforms.api_server"
+                        " + API_SERVER_KEY)")
+        rec["error_class"] = "missing_endpoint"     # B4: stable typed field
+        return None
+    url, secret, hdr = ep
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"model": "hermes-agent", "stream": False,
+                             "messages": [{"role": "user", "content": text}]}).encode(),
+            headers={"Content-Type": "application/json", hdr: str(sid),
+                     "Idempotency-Key": tid,
+                     **({"Authorization": f"Bearer {secret}"} if secret else {})})
+        with _wake_opener().open(req, timeout=WAKE_TIMEOUT_S) as resp:
+            status = getattr(resp, "status", None) or resp.getcode()
+            if 300 <= status < 400:
+                # A redirect is NOT a delivery: nothing followed, nothing
+                # forwarded; probe undelivered so the retry re-drives under
+                # the SAME identity (same Idempotency-Key).
+                rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
+                return False
+            if 200 <= status < 300:
+                return True
+            rec["error"] = f"HTTP {status}"
+            return False
+    except urllib.error.HTTPError as e:
+        rec["error"] = f"HTTP {e.code}"
+        return False
+    except (socket.timeout, TimeoutError):
+        # F5: a read timeout is NOT a delivery — we never saw a status line,
+        # so we cannot claim the turn was queued. Recording delivered=True
+        # here let the guard suppress the retry FOREVER: a transient gateway
+        # stall permanently lost the transition. Probe it as try-later; the
+        # next pass retries under the SAME instance id. At the pinned-core
+        # route, the measured in-window retry replays one started/completed
+        # turn under that Idempotency-Key; no claim is made after cache expiry
+        # or a core restart.
+        rec["error"] = "timeout: read window closed before a response (retryable)"
+        return False
+    except Exception as e:
+        # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
+        # http.client raises ValueError("Invalid header value b'Bearer
+        # <secret>'") for a key with a newline. Record the TYPE plus the
+        # redacted message; never a raw repr, and the ledger redaction runs
+        # again at append time as a second net.
+        rec["error"] = _wake_safe(f"{type(e).__name__}: {e}")
+        return False
+
+# ---------- wake-burst coalescer with trailing re-check (est-zmizd) ----------
+# Ported shape: atbrace:hjs-epl / iw-recon hermes_workflows/hooks.py:50-179
+# (SYNTHESIS.md #12): a cross-process mtime-style debounce so a fan-out /
+# straggler wake burst costs the owner a bounded number of turns. The audited
+# shape DROPS every suppressed event; a dropped tail is a lost transition, so
+# this port never drops: a suppressed wake records a PENDING TRAILING RE-CHECK
+# due one window after the burst's leading wake, and the re-check re-enters
+# notify(); ledger dedupe then makes it cost zero POSTs when the leading wake
+# already delivered. Due re-checks drain at the wave boundary, and finalize()
+# flushes them before the terminal wake, so the final event of any burst
+# always lands. Fail-open law (theirs, adopted): any marker-store error fires
+# the wake: a double wake is harmless, a lost transition is not.
+WAKE_DEBOUNCE_WINDOW_S = 2.0
+# Only the repeat-prone mid-flight observation class coalesces; terminal and
+# gate wakes are single-instance-per-decision and unchanged.
+_WAKE_COALESCE = frozenset({"fanout.stragglers"})
+
+def _wake_debounce_dir(run):
+    return run / "wake-debounce"
+
+def _wake_marker_path(run, event):
+    return _wake_debounce_dir(run) / (re.sub(r"[^A-Za-z0-9_.-]", "_", str(event)) + ".json")
+
+def _wake_marker_write(p, st):
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(st))
+    os.replace(tmp, p)
+
+def _wake_coalesce_check(run, event, key, now=None, window=None, refire=False):
+    """True = fire the wake now; False = suppressed inside the open window, a
+    trailing re-check of the LATEST (event, key) pair is scheduled. refire=True
+    is the re-check path: it always fires and re-arms the window fresh."""
+    try:
+        window = WAKE_DEBOUNCE_WINDOW_S if window is None else float(window)
+        now = time.time() if now is None else float(now)
+        d = _wake_debounce_dir(run)
+        d.mkdir(parents=True, exist_ok=True)
+        p = _wake_marker_path(run, event)
+        st = None if refire else jload(p, None)
+        if isinstance(st, dict) and (now - float(st.get("fire_ts", 0.0))) < window:
+            st.update({"event": event, "key": key, "pending": True,
+                       "due": float(st.get("fire_ts", now)) + window})
+            _wake_marker_write(p, st)
+            return False
+        _wake_marker_write(p, {"event": event, "key": key, "fire_ts": now,
+                               "due": now + window, "pending": False})
+        return True
+    except Exception:
+        return True   # fall-through law: the coalescer never eats a transition
+
+def _wake_drain_rechecks(run, now=None, force=False):
+    """Due pending trailing re-checks as (event, key) pairs. READ-ONLY: the
+    re-check stays armed until the refire's notify() re-arms the marker, so a
+    crash between drain and POST re-drains at the next boundary (at-least-once;
+    ledger dedupe bounds the duplicate cost at zero POSTs). force=True ignores
+    the due clock: the terminal flush uses it so no pending tail survives the
+    runner's last word."""
+    out = []
+    try:
+        d = _wake_debounce_dir(run)
+        if not d.is_dir():
+            return out
+        now = time.time() if now is None else float(now)
+        for p in sorted(d.glob("*.json")):
+            st = jload(p, None)
+            if (not isinstance(st, dict) or not st.get("pending")
+                    or (not force and now < float(st.get("due", 0.0)))):
+                continue
+            out.append((st.get("event"), st.get("key")))
+    except Exception:
+        return out   # fail-open; a missed drain re-lands on the next boundary
+    return out
+
+def _wake_refire_pending(run, graph=None, now=None, force=False):
+    """Drain due trailing re-checks and re-notify each (refire path)."""
+    for event, key in _wake_drain_rechecks(run, now=now, force=force):
+        if event is None:
+            continue
+        try:
+            notify(run, event, key=key, graph=graph, refire=True)
+        except Exception:
+            pass   # the marker stays pending: the next boundary tries again
+
+def notify(run, event, key=None, graph=None, node=None, refire=False):
     """Push ONE lifecycle transition instance to the owner session stamp. Owner-null
     (tests, CLI, tool hosts without a session env) writes NOTHING — the door's
     silent degradation, unchanged. The transition instance (B3 law) is a
@@ -789,12 +1507,16 @@ def notify(run, event, key=None, graph=None):
     carries that identity as Idempotency-Key. At the pinned-core route, the measured
     in-window retry replays one started/completed owner turn; this is not a timeless
     dedupe claim across cache eviction, core restart, or an unmeasured delay.
-    Each ATTEMPT records in <run>/wake.jsonl (the probe); a duplicate of a
-    DELIVERED instance writes nothing. AUTHORITY LAW (r5): this function takes no
-    text parameter at all. The owner-facing content is generated here from
+    Each ATTEMPT records in <run>/wake.jsonl (the probe; its ``delivered``
+    row is TRI-STATE: true/false/null = delivered/try-later/nowhere-ever);
+    a duplicate of a SETTLED instance — delivered or nowhere-ever — writes
+    nothing, while a false row keeps the retry path open. AUTHORITY LAW (r5):
+    this function takes no text parameter at all. The owner-facing content is
+    generated here from
     _WAKE_TEMPLATES via _wake_owner_text(run.name, event) — an event outside the
-    finite map gets NO wake (silent return), so no call site can route ad-hoc or
-    graph-authored prose into the owner's instruction channel. The wake.jsonl row
+    finite map wakes ONLY on the fixed catch-all body (est-jbcrw class-coverage
+    law: never silent), so no call site can route ad-hoc or graph-authored
+    prose into the owner's instruction channel. The wake.jsonl row
     and the wire body carry that same safe runner-authored string, bearer-redacted
     as a second net; the full failure detail stays in events.jsonl,
     runner_exit.json and the probe's typed error fields. Delivery failure is loud
@@ -802,90 +1524,113 @@ def notify(run, event, key=None, graph=None):
     already decided; a dead endpoint must not cost the run its exit. Nothing
     caller-computed is interpolated into the probe before the generic fail-open
     net; a crash in preparation records a typed line. Every persisted field is
-    bearer-redacted (F4) — a stdlib error can embed the raw header value."""
+    bearer-redacted (F4) — a stdlib error can embed the raw header value.
+
+    `node` names the node a NODE-SUBJECT notice is about (the fan-out carrying
+    stragglers, the gate that is holding) so the wake-noise law can read THAT
+    node's effective tier; it never carries text and is never interpolated into
+    owner prose. Suppression law (WF-GRAFT-1, after itechmeat's notifications
+    layer): when _wake_suppression finds a reason — a [SILENT] declared verdict
+    on run.done, or a node-subject notice under a tier that quiets it — NOTHING
+    is POSTed and exactly ONE typed row (`suppressed=<reason>`, delivered=False)
+    lands in the probe; a re-drive of the same instance sees that row and writes
+    nothing further, so a suppression is recorded once and never retried. The
+    operator mirror still fires (it is the operator's endpoint, not an owner
+    turn), and a notice with no suppression reason is byte-identical to before
+    this law. Returns the attempt's verdict ("delivered" | "undelivered" | "skipped") for the park watchdog's strike feed (an undelivered wake is one dispatcher strike). The never-raises law is unchanged."""
+
     try:
         if not run.is_dir():
             return
+        # est-zmizd: the coalescer gates the WHOLE transition (mirror, ledger,
+        # POST fire, fail, or none): a suppressed wake writes nothing anywhere
+        # and a trailing re-check re-drives it once the window closes.
+        if event in _WAKE_COALESCE and not _wake_coalesce_check(
+                run, event, key, refire=refire):
+            return "coalesced"
+
+        # P1: the operator mirror fires at notify()'s OWN point and fail-opens inside
+        # mirror(). Owner-null runs still mirror — the endpoint is the operator's, not
+        # the session's, and events.jsonl carries the transition either way.
+        _ob = _outbound_bridge()
+        if _ob is not None:
+            _ob.mirror(run, event, key, graph)
         meta = jload(run / "run.json", {}) or {}
         owner = meta.get("owner")
         # Defensive on shape (R10): the wake needs the door's dict stamp
         # {session_id, ...}; any other truthy value (legacy strings in older/fixed-up
         # run.json files) is not a delivery target — degrade silently, never crash.
         if not isinstance(owner, dict):
-            return
+            return "skipped"
         sid = owner.get("session_id")
         if not sid:
-            return
+            return "skipped"
         disc = _wake_identity(run, event, key, graph)
         if disc is None:
-            return                       # unresolvable identity: silent, never a duplicate
-        text = _wake_owner_text(run.name, event)   # AUTHORITY LAW: runner-generated only
-        if text is None:
-            return                       # event outside the finite map: NO wake, fail-silent
+            return "skipped"                   # unresolvable identity: silent, never a duplicate
+        if event not in _WAKE_EVENTS:
+            # CLASS GAP (est-jbcrw): a call site woke an event outside the
+            # registry — wake on the fixed catch-all body anyway and shout on
+            # the field-loud stdout channel (same idiom as
+            # WORKFLOW_WAKE_RECORD_FAILED). Silence here was the gravity hole.
+            print(f"WORKFLOW_WAKE_UNMAPPED_EVENT {run.name} {_wake_safe(event)}")
+        # AUTHORITY LAW unchanged + #501 (est-qcyfi): the text is runner-generated
+        # only. For run.failed/run.done the runner additionally computes INERT
+        # POINTER FIELDS at this point — the run dir (notify's own argument) and,
+        # for run.failed, the efp-valid committed failed-node log paths — which
+        # _wake_owner_text rides as JSON-quoted protocol fields BEFORE the
+        # separator; the template bodies stay verbatim and the redactor below
+        # runs over them like every persisted field. Delivery/identity/dedupe
+        # are untouched: the discriminant never reads these fields.
+        run_dir = str(run) if event in ("run.failed", "run.done") else None
+        failed_logs = (_wake_failed_node_logs(run, graph)
+                       if event == "run.failed" else None)
+        text = _wake_owner_text(run.name, event, run_dir=run_dir,
+                                failed_node_logs=failed_logs)
+        # never None since est-jbcrw: unmapped classes take the fixed catch-all
+        # body — the template table remains the ONLY author of owner text.
         text = _wake_safe(text)          # second net: the fixed templates carry no secret,
         # but the run name is caller-supplied and every persisted field runs the redactor.
-        tid = hashlib.sha256(f"{run.name}\0{event}\0{disc}".encode()).hexdigest()[:32]
-        _rows, delivered = _wake_ledger_read(run)
-        if tid in delivered:
-            return                       # delivered instance: zero rows, zero POSTs
+        tid = _wake_tid(run.name, event, disc)
+        _rows, settled = _wake_ledger_read(run)
+        if tid in settled:
+            return "delivered"           # settled (delivered or nowhere-ever): zero rows, zero POSTs
+        reason = _wake_suppression(run, event, node, graph)
+        if reason is not None:
+            # RECORDED ONCE, NEVER RETRIED. The row is the receipt of a decision, not
+            # a failed delivery: `delivered: False` keeps it out of the delivered-set
+            # above (a delivery retry must never treat it as an undelivered attempt),
+            # and this scan makes every later re-drive of the SAME instance write
+            # nothing. A genuinely new instance (rev bump, new hold) mints a new tid
+            # and records its own one row — legible forever in the probe, which is
+            # the difference between a suppression and a hole.
+            if any(r.get("id") == tid and r.get("suppressed") for r in _rows):
+                return "skipped"
+            _wake_append(run, {"ts": now(), "event": event, "run_id": run.name,
+                               "owner": owner, "id": tid, "suppressed": reason,
+                               "delivered": False, "text": text})
+            print(f"WORKFLOW_WAKE_SUPPRESSED {run.name} {event} {reason}")
+            return "skipped"   # park-watch: a suppressed wake IS a dispatcher strike (the void is not a hold)
+
         try:                             # the door's authority-law stamp, for the trail
             proto = (run / "wake_protocol").read_text().strip()
         except OSError:
             proto = "unstamped"          # run dir made outside the door (recorded as such)
         rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
                "id": tid, "wake_protocol": proto, "text": text}
-        ep = _wake_endpoint()
-        if ep is None:
-            rec["delivered"] = False
-            rec["error"] = ("no reachable api_server (enable platforms.api_server"
-                            " + API_SERVER_KEY)")
-            rec["error_class"] = "missing_endpoint"     # B4: stable typed field
-            _wake_append(run, rec)
-            return
-        url, secret, hdr = ep
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps({"model": "hermes-agent", "stream": False,
-                                 "messages": [{"role": "user", "content": text}]}).encode(),
-                headers={"Content-Type": "application/json", hdr: str(sid),
-                         "Idempotency-Key": tid,
-                         **({"Authorization": f"Bearer {secret}"} if secret else {})})
-            with _wake_opener().open(req, timeout=WAKE_TIMEOUT_S) as resp:
-                status = getattr(resp, "status", None) or resp.getcode()
-                if 300 <= status < 400:
-                    # A redirect is NOT a delivery: nothing followed, nothing
-                    # forwarded; probe undelivered so the retry re-drives under
-                    # the SAME identity (same Idempotency-Key).
-                    rec["delivered"] = False
-                    rec["error"] = f"HTTP {status} redirect not followed (undelivered)"
-                else:
-                    rec["delivered"] = 200 <= status < 300
-                    if not rec["delivered"]:
-                        rec["error"] = f"HTTP {status}"
-        except urllib.error.HTTPError as e:
-            rec["delivered"] = False
-            rec["error"] = f"HTTP {e.code}"
-        except (socket.timeout, TimeoutError):
-            # F5: a read timeout is NOT a delivery — we never saw a status line,
-            # so we cannot claim the turn was queued. Recording delivered=True
-            # here let the guard suppress the retry FOREVER: a transient gateway
-            # stall permanently lost the transition. Probe it as undelivered; the
-            # next pass retries under the SAME instance id. At the pinned-core
-            # route, the measured in-window retry replays one started/completed
-            # turn under that Idempotency-Key; no claim is made after cache expiry
-            # or a core restart.
-            rec["delivered"] = False
-            rec["error"] = "timeout: read window closed before a response (retryable)"
-        except Exception as e:
-            # F4: a generic stdlib error can carry the bearer IN ITS MESSAGE —
-            # http.client raises ValueError("Invalid header value b'Bearer
-            # <secret>'") for a key with a newline. Record the TYPE plus the
-            # redacted message; never a raw repr, and the ledger redaction runs
-            # again at append time as a second net.
-            rec["delivered"] = False
-            rec["error"] = _wake_safe(f"{type(e).__name__}: {e}")
+        if event not in _WAKE_TEMPLATES:
+            rec["catchall"] = True      # probe row is typed: template vs catch-all distinguishable
+        rec["delivered"] = _wake_deliver(rec, sid, text, tid)   # tri-state row mirrors the outcome
         _wake_append(run, rec)
+        # park-watch verdict feed on the est-7rudf tri-state: delivered -> nothing
+        # to see; False -> the ONE strike class; None (nowhere-ever) -> bare — a
+        # host that can never receive owner turns is by-design strike-free.
+        _d = rec.get("delivered")
+        if _d is True:
+            return "delivered"
+        if _d is False:
+            return "undelivered"
+        return
     except Exception as e:                       # fail-open encompasses PREPARATION (F3)
         try:
             _wake_append(run, {"ts": now(), "event": event, "run_id": run.name,
@@ -894,7 +1639,7 @@ def notify(run, event, key=None, graph=None):
                                "error_class": "notify_prep"})
         except Exception:
             pass
-        return
+        return "undelivered"
 
 _LOCK_FD = None  # kept open for process lifetime except a terminal handoff fence
 
@@ -937,32 +1682,130 @@ def _reacquire_terminal_lock(run):
     return True
 
 
+def _proc_boottime_of(pid):
+    """Kernel boottime (field 22) of a pid — the lease identity that survives pid
+    reuse. Reuses _proc_boottime (defined below the seat law); None on any read
+    failure — the lease then degrades to pid-only, never to a fake number."""
+    try:
+        return _proc_boottime(pid)
+    except Exception:
+        return None
+
+def _lease_heartbeat(run):
+    """#44: the admitted holder re-stamps runner.lease['at'] (atomic replace).
+    A live holder MUST heartbeat; the read model only ever calls a lease DEAD
+    when the stamp is older than LEASE_STALE_S and the pid identity fails — so
+    a cross-mount sibling (whose /proc/locks row may be invisible to us) stays
+    LIVE through its own bytes, exactly as the 91b9a3de law demands."""
+    try:
+        rec = jload(run / wfcommon.RUNNER_LEASE, {}) or {}
+        if rec.get("pid") != os.getpid():
+            return                                   # someone else owns the lease now
+        rec["at"] = time.time()
+        tmp = run / f"{wfcommon.RUNNER_LEASE}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(rec))
+        os.replace(tmp, run / wfcommon.RUNNER_LEASE)  # atomic publish
+    except OSError:
+        pass                                          # legibility, never fatal
+
+def _write_lease(run):
+    """Admission-side lease stamp: pid + kernel boottime + heartbeat clock."""
+    try:
+        rec = {"pid": os.getpid(), "boottime": _proc_boottime_of(os.getpid()),
+               "at": time.time()}
+        tmp = run / f"{wfcommon.RUNNER_LEASE}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(rec))
+        os.replace(tmp, run / wfcommon.RUNNER_LEASE)  # atomic publish
+    except OSError:
+        pass
+
 def acquire_lock(run):
     """Single-runner admission. An advisory flock held for the process lifetime IS
     the ownership proof: the kernel drops it on ANY exit (clean, SIGKILL, crash),
     so there is no stale-file window, no read-empty-pid-then-unlink race, no
-    retry fall-through without proof. Lockfile content is informational only."""
+    retry fall-through without proof. Lockfile content is informational only.
+
+    #44 — admission vs an operator heal, closed WITHOUT taxing the A1 µs budget:
+      * The heal-barrier (runner.lock.heal) is honored when it EXISTS (a heal in
+        progress serializes us out) but never CREATED here — creating a new inode
+        costs ~10ms on the overlayfs and would push admission past the transient
+        probe window the A1 bounded-retry pins (measured: 10.7ms barrier-open ate
+        the 12ms window; only the first create pays, existing opens are ~0.2ms).
+      * The stranded-replace race (a heal renames the path between our open and
+        our flock) closes ATOMICALLY instead of by pre-locking: after winning the
+        flock we compare os.fstat(fd) against os.stat(lock path) — a rename under
+        us shows a different inode at the path, the flock we hold is on the
+        stranded corpse, and we release and RETRY the whole admission (bounded
+        3 rounds). A holder is never displaced: the orphan keeps the old inode,
+        the fresh path is lockable — the field itself proves a new file locks.
+      * Lease: the winner stamps pid + kernel boottime + heartbeat; a heartbeat
+        thread keeps 'at' fresh while the process lives. The read model calls a
+        lease dead ONLY when both proofs fail (pid invisible AND heartbeat stale,
+        or boottime mismatch = kernel-proven pid reuse)."""
     global _LOCK_FD
     lk = run / "runner.lock"
-    fd = os.open(lk, os.O_CREAT | os.O_RDWR, 0o644)
-    # A1 (91b9a3de review, 09-29): the read-only liveness probe fleet-wide takes
-    # LOCK_EX for ~8µs and releases; an admission landing inside that window is
-    # microsecond collision with a PROBE, not contention with a real runner.
-    # Bounded LOCK_NB retry (3 × 10ms) before declaring WORKFLOW_BUSY — a genuine
-    # holder never releases, so the honest exit still comes after ~30ms.
-    for _ in range(3):
+    for _stranded_retry in range(3):
+        # #44 barrier (honor-if-present, never create — see docstring). EACCES or
+        # any failure of the barrier itself is fail-OPEN: admission proceeds
+        # exactly as the base law (a weird barrier file must not lose a lane it
+        # used to win; the atomic same-inode check below is the safety net).
+        barrier_fd = None
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
+            barrier_fd = os.open(str(run / "runner.lock.heal"), os.O_RDWR)
+            fcntl.flock(barrier_fd, fcntl.LOCK_EX)
         except OSError:
-            time.sleep(0.01)
-    else:
-        os.close(fd)
-        emit(f"WORKFLOW_BUSY {run.name} (another runner holds the flock)")
-        sys.exit(0)
-    os.ftruncate(fd, 0)
-    os.write(fd, str(os.getpid()).encode())
-    _LOCK_FD = fd  # never closed; exit releases
+            if barrier_fd is not None:
+                try: os.close(barrier_fd)
+                except OSError: pass
+                barrier_fd = None
+        try:
+            fd = os.open(lk, os.O_CREAT | os.O_RDWR, 0o644)
+            # A1 (91b9a3de review, 09-29): the read-only liveness probe fleet-wide
+            # takes LOCK_EX for ~8µs and releases; an admission landing inside that
+            # window is microsecond collision with a PROBE, not contention with a
+            # real runner. Bounded LOCK_NB retry (3 × 10ms) before declaring
+            # WORKFLOW_BUSY — a genuine holder never releases, so the honest exit
+            # still comes after ~30ms.
+            for _ in range(3):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    time.sleep(0.01)
+            else:
+                os.close(fd)
+                emit(f"WORKFLOW_BUSY {run.name} (another runner holds the flock)")
+                sys.exit(0)
+            # #44 B2 atomic re-verification under our OWN fd: the flock above is
+            # only ownership of the inode it names. If the path now resolves to a
+            # different inode, a heal replaced the lane between our open and our
+            # win — our fd is a corpse. Release, re-loop; bounded 3 rounds, then
+            # the honest exit (a churn-loop is a bug elsewhere, not a lock win).
+            try:
+                path_ino = os.stat(lk)
+                ours = os.fstat(fd)
+                same = (path_ino.st_dev, path_ino.st_ino) == (ours.st_dev, ours.st_ino)
+            except OSError:
+                same = False
+            if same:
+                os.ftruncate(fd, 0)
+                os.write(fd, str(os.getpid()).encode())
+                _LOCK_FD = fd  # never closed; exit releases
+                _write_lease(run)   # #44: identity the read model can verify
+                return
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+        finally:
+            if barrier_fd is not None:
+                try: fcntl.flock(barrier_fd, fcntl.LOCK_UN)
+                except OSError: pass
+                try: os.close(barrier_fd)
+                except OSError: pass
+    emit(f"WORKFLOW_BUSY {run.name} (lock path churning under admission)")
+    sys.exit(0)
 
 _READY_FD_ENV = "HERMES_WF_READY_FD"  # #8: inheritable announce pipe fd, door -> runner
 
@@ -997,7 +1840,7 @@ def ready_stamp(run):
             pass
 
 def save_node(run, node, byid, rec):
-    rec = dict(rec)
+    rec = _clip_record(dict(rec))   # persist choke: redact-then-clip (est-x92v7)
     rec["efp"] = efp(byid, node)
     rec["fp_rule_version"] = FP_RULE_VERSION
     p = run / "nodes" / f"{node['id']}.json"
@@ -1006,6 +1849,296 @@ def save_node(run, node, byid, rec):
     tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
     os.replace(tmp, p)  # atomic: a completed node file is a committed fact
     _mint_suite_proof(run, node, rec, byid)   # est-2ek.1.603 (no-op unless declared)
+
+# ---------- effect-receipt gate (est-pygyy, issue #56) ----------
+# A node whose stated purpose is EXTERNAL publication declares the postconditions
+# the run must be able to PROVE before its `done` stands: `effects: [{file,
+# sha256?, min_bytes?}, ...]`. The runner verifies each row against bytes under
+# the RUN DIR at the commit edge — the artifact exists, is big enough, and (when
+# declared) carries the exact digest — and records the measured facts as
+# `effect_receipts` rows {file, exists, bytes, sha256, ok} on the node record
+# (what a publication-only recovery re-reads; NEVER re-authorizes the artifact).
+# Honest degradation: no `effects` key = this function returns the record
+# untouched, every existing graph is byte-identical (golden EMPTY). A declared
+# receipt that cannot be PROVEN demotes done/partial to failed
+# error_class "effect_receipt" — a proven-fail, deliberately absent from both
+# retry ladders. The runner NEVER fabricates a proven row: ok=True is written
+# only from bytes it read itself this instant.
+
+def _effect_gate(run, node, rec):
+    rows = node.get("effects")
+    if not rows or rec.get("status") not in ("done", "partial"):
+        return rec                        # undeclared / non-committing: untouched
+    proven, failures = [], []
+    for row in rows:
+        if "target" in row:
+            continue  # external evidence is a finalize barrier, not an author retry
+        f = str(row.get("file", ""))
+        entry = {"file": f, "exists": False, "bytes": 0, "sha256": None, "ok": False}
+        p = Path(run) / f
+        inside = bool(f) and not f.startswith("/") and "\\" not in f \
+            and ".." not in f.split("/")
+        if inside:                        # never read outside the run dir
+            try:
+                data = p.read_bytes()
+                entry["exists"], entry["bytes"] = True, len(data)
+                entry["sha256"] = hashlib.sha256(data).hexdigest()
+                if entry["bytes"] == 0:
+                    failures.append(f"{f}: empty")
+                elif row.get("min_bytes") and entry["bytes"] < row["min_bytes"]:
+                    failures.append(f"{f}: {entry['bytes']}B < min_bytes {row['min_bytes']}")
+                elif row.get("sha256") and entry["sha256"] != row["sha256"]:
+                    failures.append(f"{f}: sha256 mismatch (got {entry['sha256']})")
+                else:
+                    entry["ok"] = True
+            except OSError:
+                failures.append(f"{f}: missing under the run dir")
+        else:
+            failures.append(f"{f}: path escapes the run dir")
+        proven.append(entry)
+    if proven:
+        rec = dict(rec, effect_receipts=proven)
+    external = wfcommon.external_effect_receipts(node, rec)
+    if external:
+        rec = dict(rec, metrics={**rec.get("metrics", {}), "effect_receipts": external})
+    if failures:
+        rec = {"status": "failed",
+               "error": "effect_receipt_unproven: " + "; ".join(failures),
+               "error_class": "effect_receipt",
+               "effect_receipts": proven,
+               **({"metrics": rec["metrics"]} if external else {}),
+               "output": rec.get("output"), "ms": rec.get("ms")}
+    return rec
+
+# ---------- bead-close read-back gate (est-13z1) ----------
+# The incident (run 20261008-013428-ra-pr-deep-283, node reconcile): the child's
+# answer claimed "est-o90l closed"; the node committed done, run.done fired, and
+# the bd read-back right after said the bead was still in_progress — an open
+# tracker nobody owns, exactly the false-locator class est-ym08 AC-3 refuses for
+# artifacts. Prompt law cannot fix this (the assignee guard makes an honest-
+# looking false claim easy to emit), so the RUNNER owns the check, same law as
+# the effect-receipt gate above and the lane gate: when a node whose purpose is
+# closing a bead CLAIMS closure, the runner reads the estate store ITSELF
+# (`bd -C <store> show <id> --json`, fixed argv through _aux_run) and records the
+# measured row as `bead_close_receipt`. Anything but an observed
+# status == "closed" demotes done/partial to failed error_class "bead_close" —
+# a proven-fail, deliberately absent from both retry ladders. The runner NEVER
+# fabricates an ok row and NEVER anchors to the child's prose: a reply carrying
+# `close-pending` is the honest non-claim (the lane-child law: return
+# 'close-pending: <reason>' and never claim closure), so no claim, no read, and
+# the record is untouched. Honest degradation: no `bead_close` key = every
+# existing graph byte-identical (golden EMPTY).
+
+_BEAD_PENDING_RE = re.compile(r"close[-_ ]?pending", re.I)
+
+def _declares_close_pending(out):
+    """True when the committed output carries the honest non-claim token —
+    `close-pending` (in any key, in prose, anywhere in the serialized reply).
+    The BEAD LAW tells a blocked child to return 'close-pending: <reason>'
+    and NEVER claim closure: nothing was asserted, so there is nothing to
+    read back — the record stays pristine and the store is never probed."""
+    if out is None:
+        return False
+    try:
+        blob = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
+    except Exception:
+        blob = str(out)
+    return bool(_BEAD_PENDING_RE.search(blob))
+
+# #485: a bare item token ({FIELD}) in a bead_close id/actor template. Same
+# token class fmt_goal interpolates for fan-out goals; the door refuses these
+# on non-fan-out nodes (nothing to resolve them against), and the gate below
+# evaluates them PER ITEM on the fan-out aggregate. The pattern itself is
+# bound off the private wfcommon instance at the module header (est-libks:
+# single source — the copies this line once carried are the drift hazard).
+
+def _bc_decl_interpolated(decl):
+    """True when a bead_close declaration's id OR actor carries a bare item
+    token — the per-fan-out-item shape of issue #485."""
+    for k in ("id", "actor"):
+        v = decl.get(k)
+        if isinstance(v, str) and _RE_BC_ITEM_TOKEN.search(v):
+            return True
+    return False
+
+def _bc_row(store, bid, actor):
+    """A pristine (never-probed) measured row — closed key set, insertion
+    order fixed; ok=True is written ONLY by a read-back that saw status closed."""
+    return {"store": store, "id": bid, "actor": actor,
+            "observed_status": None, "assignee": None, "probe_rc": None, "ok": False}
+
+def _bead_close_readback(store, bid, actor):
+    """Run the fixed store read-back for ONE bead id and return
+    (row, reason). The row is the measured fact, never a fabrication; reason
+    is the failure sentence ('' when ok). Shared verbatim-identical core for
+    the node-scoped and the per-item (#485) paths."""
+    row = _bc_row(store, bid, actor)
+    try:
+        # #80 R3 / #61c: the runner's OWN probe goes through _aux_run (registered
+        # pid, bounded, own process group) with the fixed bd read-back argv.
+        p = _aux_run(["bd", "-C", store, "show", bid, "--json"], timeout=10)
+        row["probe_rc"] = p.returncode
+        if p.returncode == 0:
+            found = None
+            try:
+                parsed = json.loads(p.stdout)
+            except Exception:
+                parsed = None
+            rows = parsed if isinstance(parsed, list) else [parsed] if isinstance(parsed, dict) else []
+            for cand in rows:
+                if isinstance(cand, dict) and cand.get("id") == bid:
+                    found = cand
+                    break
+            if found is not None:
+                row["observed_status"] = found.get("status")
+                row["assignee"] = found.get("assignee")
+        if row["observed_status"] == "closed":
+            row["ok"] = True
+            reason = ""
+        elif row["observed_status"] is not None:
+            reason = f"observed status {row['observed_status']!r} in the store"
+        elif row["probe_rc"] == 1:
+            reason = "bead not found in the store (bd exit 1)"
+        elif row["probe_rc"] is None:
+            reason = "store read-back could not run"
+        else:
+            reason = f"store read-back unparseable (bd exit {row['probe_rc']})"
+    except Exception as e:
+        reason = f"store read-back could not run: {type(e).__name__}"
+    return row, reason
+
+def _bead_close_gate_items(decl, rec):
+    """#485: per-item close proof on a fan-out aggregate. The declaration's
+    id/actor are ITEM TEMPLATES — rendered per item with fmt_goal (the exact
+    bare-{FIELD} law fan-out goals pay, so {item} and {index} resolve too) —
+    and EACH committing item is read back from the store at its own rendered
+    id. The measured row rides the item's record inside all_results as
+    `bead_close_receipt` (the same closed row shape the node-scoped path
+    writes), and the node record carries under the PLURAL
+    `bead_close_receipts` a SPARSE, SELF-INDEXED enumeration of the probed
+    rows: only done/partial non-pending items appear, honest-pending rows are
+    absent, and every row carries its own `index` (est-fxh6v). The key is
+    minted ONLY when at least one item was probed — an all-pending aggregate
+    commits key-free, the same pristine shape the token-free node-scoped
+    escape takes. Fail-closed law is item-for-item identical
+    to the node-scoped gate: an item whose honest answer carried
+    `close-pending` is a NON-claim (no probe, no row, record pristine); any
+    other done/partial item that cannot be observed `closed` demotes the whole
+    aggregate to failed error_class "bead_close", naming each offender. A
+    template that renders empty, whitespace-laden, or with braces still
+    standing fails THAT item typed and is never probed — argv law is checked
+    after interpolation, never assumed."""
+    out = rec["output"]
+    store = str(decl.get("store", "")).strip()
+    tmpl_id = str(decl.get("id", "")).strip()
+    new_rows, receipts, failures = [], [], []
+    for i, r in enumerate(out["all_results"]):
+        if not isinstance(r, dict) or r.get("status") not in ("done", "partial") \
+                or _declares_close_pending(r.get("output")):
+            new_rows.append(r)            # non-committing / honest non-claim: untouched
+            continue
+        item = r.get("item")
+        bid = fmt_goal(tmpl_id, item, i).strip()
+        actor = (fmt_goal(str(decl["actor"]), item, i).strip()
+                 if isinstance(decl.get("actor"), str) else None)
+        if not bid:
+            row, reason = _bc_row(store, bid, actor), "rendered bead_close.id is empty"
+        elif _RE_PLACEHOLDER.search(bid):
+            row, reason = _bc_row(store, bid, actor), \
+                "unresolved item token in bead_close.id (the item carries no such field)"
+        elif any(c.isspace() for c in bid):
+            row, reason = _bc_row(store, bid, actor), \
+                "rendered bead_close.id carries whitespace (it rides the store read-back argv)"
+        else:
+            row, reason = _bead_close_readback(store, bid, actor)
+        new_rows.append(dict(r, bead_close_receipt=row))
+        receipts.append(dict(index=i, **row))
+        if not row["ok"]:
+            failures.append(f"[{i}] {bid}: {reason}")
+    merged_out = dict(out, all_results=new_rows)
+    if failures:
+        return {"status": "failed",
+                "error": "bead_close_unproven: " + "; ".join(failures)[:900]
+                         + " — the item's output claims the bead was closed; the runner "
+                           "read the estate store itself per item and it is not closed. "
+                           "Close with --actor matching the assignee, or return "
+                           "'close-pending: <reason>' and never claim closure.",
+                "error_class": "bead_close",
+                "bead_close_receipts": receipts,
+                "output": merged_out, "ms": rec.get("ms")}
+    if not receipts:
+        # est-fxh6v (a): nothing probed — no plural key, matching the
+        # token-free node-scoped escape (which mints no plural key either).
+        # An empty array would mint a "probed: none" claim the gate never
+        # made; the failure path above always carries >= 1 receipt.
+        return dict(rec, output=merged_out)
+    return dict(rec, output=merged_out, bead_close_receipts=receipts)
+
+def _bead_close_gate(run, node, rec):
+    decl = node.get("bead_close")
+    if not isinstance(decl, dict) or rec.get("status") not in ("done", "partial"):
+        return rec                        # undeclared / non-committing: untouched
+    # Declared node committing without the honest escape: the runner verifies
+    # the store ITSELF — whether or not the output claims closure (test_d:
+    # closed-without-claim still PASSes from the read-back; the check anchors
+    # to the store, never to the prose).
+    out = rec.get("output")
+    # #491 adversary guard: the aggregate shape is only meaningful on a
+    # FAN-OUT node. An agent/echo node whose committed dict happens to carry
+    # an all_results list must NOT reach the item-walk (an empty/list-of-
+    # non-dict rows list returned the record PRISTINE — the 13z1 false-green
+    # class on the two non-fan-out commit edges). Mirrors the grammar.md
+    # sentence, which scopes the per-item escape to a FAN-OUT declaration.
+    _aggregate = bool(node.get("fanout")) and isinstance(out, dict) and isinstance(out.get("all_results"), list)
+    if _aggregate and _bc_decl_interpolated(decl):
+        # #485 fan-out: the pending law is PER ITEM (one lane's honest
+        # close-pending never excuses the aggregate from reading back the
+        # beads the OTHER items claimed closed), so this branch runs ahead of
+        # the node-scoped non-claim check.
+        return _bead_close_gate_items(decl, rec)
+    _fo_pending = 0
+    _committing = []
+    if _aggregate:
+        # est-nbe2y fold: a TOKEN-FREE fan-out decl keeps the node-scoped
+        # single-probe shape, but the honest escape is PER ITEM too — the
+        # whole-blob search let ONE lane's `close-pending` (or the token
+        # appearing in any non-committing row) exempt the whole aggregate
+        # from read-back while sibling done/partial lanes served the very
+        # claim the gate exists to verify: the 13z1 false-green shape at
+        # fan-out scale. A committing (done/partial) item WITHOUT its own
+        # pending token is a claim on the declared id and forces the probe;
+        # only an all-pending aggregate commits pristine with zero probes.
+        _committing = []
+        for r in out["all_results"]:
+            if isinstance(r, dict) and r.get("status") in ("done", "partial"):
+                if _declares_close_pending(r.get("output")):
+                    _fo_pending += 1
+                else:
+                    _committing.append(r)
+        if not _committing:
+            return rec            # all lanes honestly pending: no claim, no read
+    elif _declares_close_pending(rec.get("output")):
+        return rec                # honest non-claim: no read, record pristine
+    bid = str(decl.get("id", "")).strip()
+    store = str(decl.get("store", "")).strip()
+    row, reason = _bead_close_readback(store, bid, decl.get("actor"))
+    rec = dict(rec, bead_close_receipt=row)
+    if not row["ok"]:
+        _fo_note = (f" — {_fo_pending} close-pending lane(s) never excuse the "
+                    f"{len(_committing)} committing lane(s) that served {bid}; "
+                    "the escape is per item (est-nbe2y)."
+                    if _aggregate and _fo_pending else "")
+        rec = {"status": "failed",
+               "error": f"bead_close_unproven: {bid}: {reason} — the node's output "
+                        "claims the bead was closed; the runner read the estate "
+                        "store itself and it is not closed (assignee "
+                        f"{row['assignee']!r}). Close it with --actor matching the "
+                        "assignee, or return 'close-pending: <reason>' and never "
+                        f"claim closure.{_fo_note}",
+               "error_class": "bead_close",
+               "bead_close_receipt": row,
+               "output": rec.get("output"), "ms": rec.get("ms")}
+    return rec
 
 # ---------- child execution ----------
 
@@ -1022,6 +2155,10 @@ CONTRACT = ("Finish your answer with ONE fenced ```json block holding your resul
 # items, and this line carries a per-item absolute path (test_inputs_0923).
 # When a safe root is in force (HERMES_WRITE_SAFE_ROOT non-empty), run_child makes
 # this dir writable: it appends the child's OWN work dir, nothing wider (fb 625a3241).
+# Upstream catalog review (NousResearch/hermes-agent#133387, ask 2): no standing
+# instruction to repackage a payload the single-query approval refused — the
+# refusal is core's guard (approvals.single_query_mode: deny); loosening it is
+# the operator's documented choice, never the plugin's workaround.
 WORK_DIR_NOTE = ("Your working directory {WORK_DIR} is durable; write your artifact "
                  "there first and append as you go.")
 
@@ -1081,16 +2218,35 @@ def extract_json(text):
         try:
             return json.loads(text.strip()), None
         except Exception:
+            if _scan_skipped(text):   # est-gg96: oversized + no decodable fence
+                return {"result": text.strip()}, None  # honest unstructured fallback
             obj = last_balanced_object(text)   # sprint101 #9: tolerate prose around the object
             if obj is not None:
                 return obj, None
             return {"result": text.strip()}, None  # unstructured but usable
+    if text and text.strip():
+        if _scan_skipped(text):
+            return None, (f"{err}; fallback scan skipped: {len(text.encode('utf-8', 'replace'))} "
+                          f"bytes > WF_HARVEST_SCAN_MAX_BYTES={HARVEST_SCAN_MAX_BYTES}")
     obj = last_balanced_object(text) if text and text.strip() else None
     if obj is not None:   # #9: a fence that won't parse must not hide a valid trailing object
         return obj, None
     return None, err
 
 _DECODER = json.JSONDecoder()   # #111: stdlib decoder replaces the hand-written scanner
+
+# est-gg96: the fallback scan is O(bytes × candidates); #111's removal of the
+# [-200:] cap was correct (the cap dropped parents, #111) but it left scan cost
+# unbounded — 906 KB of pseudo-JSON with no object measured ~14 s, 400 KB of
+# braces ~53 s, and node timeout wraps communicate() not parse. Guard: above
+# this byte size the scan is skipped when no fence can be parsed, and the
+# caller gets the honest fallback / honest error naming the limit. Tune per
+# seat with WF_HARVEST_SCAN_MAX_BYTES. NEVER reintroduce a candidate-count cap.
+HARVEST_SCAN_MAX_BYTES = int(os.environ.get("WF_HARVEST_SCAN_MAX_BYTES") or (256 * 1024))
+
+def _scan_skipped(text):
+    """True when the fallback scan must not run on `text` (est-gg96)."""
+    return len((text or "").encode("utf-8", "replace")) > HARVEST_SCAN_MAX_BYTES
 
 def last_balanced_object(text):
     """Sprint101 #9: the LAST top-level balanced {...} in stdout that json
@@ -1128,108 +2284,9 @@ def last_balanced_object(text):
             i = text.find("{", i + 1)
     return last
 
-def _value_type_ok(val, prop):
-    """est-2ek.1.62: does `val` satisfy the declared type in schema fragment
-    `prop` ({} when nothing is declared — an undeclared type leaves nothing
-    left to contradict)? Same predicates as chk() below; bool is never a
-    number (#113), and 'integer' means an integral value. The suggestion
-    gate uses this to REFUSE a rename that would pass `required` and then die
-    on the type check."""
-    if not prop:
-        return True
-    t = prop.get("type")
-    if t == "object":  return isinstance(val, dict)
-    if t == "array":   return isinstance(val, list)
-    if t == "string":  return isinstance(val, str)
-    if t == "boolean": return isinstance(val, bool)
-    if t in ("number", "integer"):
-        if isinstance(val, bool) or not isinstance(val, (int, float)):
-            return False
-        return not (t == "integer" and isinstance(val, float) and not val.is_integer())
-    return True                       # untyped fragment: nothing to contradict
-
-def _rename_hint(r, v, s):
-    """est-2ek.1.62: when a required key is MISSING but the object carries an
-    extra key the schema doesn't name that is CLOSE to it and type-consistent
-    with it, the child most likely RE-USED A SIBLING KEY NAME (mean_ranking
-    for mean_rank, proposal for id) — a complete, correct answer that died
-    error_class=schema because the bare "missing required" gave the retry
-    nothing to correct. Name the rename explicitly so the typed-correction
-    retry converges instead of re-emitting the same shape. The enriched
-    string flows verbatim into the existing retry prompt (validate's callers
-    pass errors through unchanged). Closeness is difflib.get_close_matches
-    (n=1, cutoff 0.6) PLUS a short-name rule: the worked example from the report
-    id/proposal has difflib ratio 0.0 (no shared characters), so similarity
-    is meaningless at that length — when the required name is <=2 chars and
-    EXACTLY ONE unnamed sibling carries a type-consistent value, that single
-    candidate is named. A required name >=3 chars that is a substring of an
-    extra key also counts. Non-suggestion paths return "" so every other
-    error stays byte-identical (the #107 law)."""
-    named = set((s.get("properties") or {}).keys())
-    extra = [k for k in v if k not in named]
-    if not extra:
-        return ""
-    prop = (s.get("properties") or {}).get(r) or {}
-    cand = difflib.get_close_matches(r, extra, n=1, cutoff=0.6)
-    hit = cand[0] if cand else None
-    if hit is None and len(r) <= 2:
-        # 'id'-class names are too short for any similarity signal to fire
-        # (ratio 0.0 against 'proposal'); guess ONLY when exactly one extra
-        # key is type-consistent, so the suggestion is never ambiguous.
-        typed = [k for k in extra if _value_type_ok(v[k], prop)]
-        if len(typed) == 1:
-            hit = typed[0]
-    if hit is None and len(r) >= 3:
-        contained = [k for k in extra if r in k]
-        if contained:
-            hit = min(contained, key=lambda k: (len(k), extra.index(k)))
-    if hit is None:
-        return ""
-    if not _value_type_ok(v[hit], prop):
-        return ""                     # never recommend a rename that still fails
-    return f" (you wrote '{hit}'? the schema needs '{r}')"
-
-def validate(out, schema):
-    """Tiny forgiving validator: type / required / properties / items / enum.
-    #107: `enum` membership is ENFORCED here — a str value against a
-    string-membered enum (exactly what the door's schema_check admits: a
-    non-empty list of non-empty strings on type:'string'), so a misspelled
-    verdict takes the same typed-correction-retry path as a `type` violation
-    and the error string names the allowed set for the retry prompt."""
-    errs = []
-    if not schema:
-        return errs
-    def chk(v, s, path):
-        t = s.get("type")
-        if t == "object" and not isinstance(v, dict): errs.append(f"{path}: expected object")
-        elif t == "array" and not isinstance(v, list): errs.append(f"{path}: expected array")
-        elif t == "string" and not isinstance(v, str): errs.append(f"{path}: expected string")
-        elif t == "boolean" and not isinstance(v, bool): errs.append(f"{path}: expected boolean")
-        elif t in ("number", "integer") and (
-                isinstance(v, bool)
-                or not isinstance(v, (int, float))
-                or (t == "integer" and isinstance(v, float) and not v.is_integer())):
-            # #113: the two admitted numeric types are DISTINCT contracts.
-            # bool is never a number (Python bool subclasses int — the old
-            # isinstance(v, (int, float)) let True/False through both).
-            # integer accepts integral-valued floats (1.0 is an integer, the
-            # modern JSON Schema contract) but rejects fractional ones.
-            errs.append(f"{path}: expected number")
-        en = s.get("enum")
-        if (isinstance(v, str) and isinstance(en, list) and en
-                and all(isinstance(x, str) for x in en) and v not in en):
-            errs.append(f"{path}: not an allowed value (allowed: "
-                        + ", ".join(repr(x) for x in en) + ")")
-        if isinstance(v, dict):
-            for r in s.get("required", []):
-                if r not in v:
-                    errs.append(f"{path}: missing required '{r}'" + _rename_hint(r, v, s))
-            for k, sub in (s.get("properties") or {}).items():
-                if k in v: chk(v[k], sub, f"{path}.{k}")
-        if isinstance(v, list) and s.get("items"):
-            for i, it in enumerate(v): chk(it, s["items"], f"{path}[{i}]")
-    chk(out, schema, "$")
-    return errs
+# (_value_type_ok / _rename_hint / validate live in wfcommon — moved out of
+# this module per the outbound review ask #2; re-bound at the import block
+# above so `wf.validate` and the rename-hint path keep resolving identically.)
 
 def fmt_goal(text, item, idx):
     class D(dict):
@@ -1339,6 +2396,17 @@ def spawn_log_path(run, node, index, spawn_no):
     d.mkdir(parents=True, exist_ok=True)
     return d / _spawn_log_name(node, index, spawn_no)
 
+def _open_spawn_log(lp):
+    """est-hls8y: the ONE place a spawn log's open mode is decided — append, so a
+    re-driven attempt's log survives verbatim and the next spawn's capture is
+    appended after it, never truncating the attempt it resumes from."""
+    if str(os.environ.get("WF_TEST_FAIL_SPAWN_LOG_OPEN", "")) == "1":
+        # Test-only deterministic capture-failure hook (same discipline as
+        # WF_TEST_KILL_ITEM_AT_FINALIZE): a real ENOSPC race is undeterministic,
+        # the seam under test is the typed settlement. Never set outside tests.
+        raise OSError(errno.ENOSPC, "simulated full filesystem", str(lp))
+    return open(lp, "a", encoding="utf-8", errors="replace")
+
 def spawn_prompt_path(run, node, index, spawn_no):
     """A1: the prompt AS SENT is a durable run-dir artifact, named by the same
     rule as its sibling log (`_spawn_stem`), never an ephemeral temp file."""
@@ -1359,8 +2427,10 @@ def _node_file(node, index):
 
 def write_spawn_record(run, node, byid, index, spawn_no, argv, lp, pid, skey, started=None,
                        prompt_path=None):
-    """Q1 spawn-time record: written right after Popen succeeds, BEFORE the child
-    is awaited, so a babysitter sees the live child (pid, log, argv) mid-run.
+    """Q1 spawn-time record, written at TWO instants of every spawn (est-w95h7):
+    BEFORE the exec with pid=None (the started marker: a crash anywhere after it
+    settles from this file's own name) and again after the exec with the proven
+    pid, so a babysitter sees the live child (pid, log, argv) mid-run.
     status="running" is SAFE BY CONSTRUCTION: node_rec() returns pending for any
     status outside done/failed, so this can never be mistaken for a commit and
     replay-skip law is untouched (the merged node record remains the commit)."""
@@ -1378,26 +2448,204 @@ def write_spawn_record(run, node, byid, index, spawn_no, argv, lp, pid, skey, st
     tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
     os.replace(tmp, p)  # atomic: a reader never sees a half-written spawn record
 
+# ---------- est-2ek.1.765: the canonical per-item COMMIT (single writer) ----------
+# Defect (evidence run 20261006-191154-zap-priority-peer-queue): the fan-out
+# aggregate committed done with COMPLETE all_results while every canonical
+# per-item record `nodes/<node>.<i>.json` still carried the SPAWN-TIME record
+# (status=running, no output) — the happy path wrote that file exactly once
+# (write_spawn_record, before Popen) and never finalized it, so a downstream
+# reducer that (correctly) refuses to certify while an individual record says
+# `running` held eligibility unknown despite finished witnesses. Aggregate
+# completion and individual completion were decoupled by construction.
+# The law now: ONE writer per canonical record (the item's own worker thread),
+# the commit lands BEFORE the item.finished event, and the aggregate's done is
+# validated against the committed records re-read from disk at commit time
+# (item_records_certified). Nothing here fabricates an individual completion:
+# the record only ever carries the runner's real harvest result.
+
+_ITEM_COMMITTED_FACTS = ("done", "partial", "failed", "skipped")
+# 790c6ad no-re-adoption window: an ADOPTED item retires its canonical record to
+# status=adopted (matching the item.adopted event path), never to done — the
+# spawn-verification law keys on status=running, and a respawned runner must
+# never find a finished adopted child re-adoptable. `adopted` is not in
+# node_rec's committed vocabulary and not in active_child's `running`, so it
+# reads pending everywhere and fails the adoption verification. The harvested
+# output still travels in the record (result carried it), so the aggregate gate
+# (item_records_certified) still byte-checks the claimed completion.
+_ITEM_ADOPTED_RETIRE = "adopted"
+
+def commit_item_record(run, node, byid, index, result):
+    """Finalize the canonical per-item record with the item's real outcome,
+    MERGED over the spawn-time record (spawn evidence retained: spawn_cmd, pid,
+    log/prompt paths, skey, attempt). Atomic tmp+replace like every other
+    committed fact; efp-stamped like save_node so record_efp_valid certifies it.
+    Status vocabulary is node_rec's committed set; a cancelled straggler stays
+    failed+error_class=cancelled (node_rec reads that as pending — a resume
+    re-drives it, #7 law preserved). A precheck-skipped item (est-37d74 #453)
+    commits status=skipped and KEEPS its error/error_class/reason: the reason is
+    the committed fact of why the roster row never spawned. An ADOPTED item
+    (result.adopted — the live-orphan path) retires to status=adopted instead,
+    carrying the harvested output: no re-adoption window, and spawn-path items
+    commit done exactly as the 765 law pins."""
+    st = result.get("status")
+    adopted = bool(result.get("adopted"))
+    rec_status = (_ITEM_ADOPTED_RETIRE if adopted
+                  else (st if st in ("done", "partial", "skipped") else "failed"))
+    np = run / "nodes" / f"{_node_file(node, index)}.json"
+    try:
+        rec = jload(np) or {}
+        if not isinstance(rec, dict):
+            rec = {}
+    except Exception:
+        rec = {}
+    rec = dict(rec)
+    rec["status"] = rec_status
+    rec["committed_at"] = now()
+    for k in ("output", "error", "error_class", "reason", "ms", "attempts", "attempts_log",
+              "skey", "log_path", "prompt_path", "pid", "started", "spawn",
+              "served_model", "served_billing_provider", "billed_models", "adopted", "harvested",
+              "tree_descendants", "final", "banked", "telemetry"):   # est-wqml6: child telemetry rides the commit
+        v = result.get(k)
+        if v is not None:
+            rec[k] = v
+    if rec_status not in ("failed", "skipped"):
+        rec.pop("error", None)
+        rec.pop("error_class", None)
+    # est-rucmf (residual wf#568): the SAME capture-boundary choke save_node
+    # applies at its persist edge — redact-then-clip every string leaf at
+    # WORKFLOW_OUTPUT_CLIP before the atomic swap, so a fan-out item's
+    # committed fact can never persist an uncut oversized output. Re-persist
+    # is idempotent; pairs with the certify-side normalization in
+    # item_records_certified (a >clip claim is compared on identically
+    # normalized bytes, never refused for the clip itself).
+    rec = _clip_record(rec)
+    rec["efp"] = efp(byid, node)
+    rec["fp_rule_version"] = FP_RULE_VERSION
+    # Test-only deterministic crash hook (same discipline as WF_HARVEST_SCAN_MAX_BYTES):
+    # SIGKILL the runner at the finalize instant of item <i> — the exact window a
+    # crash-resume must survive (child answer harvested, canonical record NOT yet
+    # swapped in). Never set outside tests.
+    if index is not None and str(os.environ.get("WF_TEST_KILL_ITEM_AT_FINALIZE", "")) == str(index):
+        os.kill(os.getpid(), signal.SIGKILL)
+    np.parent.mkdir(parents=True, exist_ok=True)
+    tmp = np.with_name(f"{np.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
+    os.replace(tmp, np)   # atomic: the committed fact, or the prior record
+    return rec
+
+def item_records_certified(run, node, byid, results):
+    """Validate an aggregate candidate against the CANONICAL per-item records on
+    disk, re-read now (never trusted from memory). Returns (ok, problems): every
+    item must have an efp-valid committed fact, and for every done/partial row
+    the record's committed status must match the claim AND its committed output
+    must equal the aggregate's claimed output — byte-for-byte after stable
+    serialization. A missing/uncommitted/diverging record — including a
+    committed failure (failed+crashed, failed+cancelled) under a done claim —
+    means the aggregate may NOT commit done with claimed-complete results."""
+    problems = []
+    for i, r in enumerate(results):
+        rec = jload(run / "nodes" / f"{_node_file(node, i)}.json")
+        if not isinstance(rec, dict):
+            problems.append({"index": i, "problem": "no per-item record on disk"})
+            continue
+        # 790c6ad: an adopted item's retired record carries status=adopted with
+        # its harvested output — a committed fact ONLY when the aggregate row
+        # itself claims an adopted harvest; an adopted-stamped record backing a
+        # NON-adopted claim is divergence, same as an unfinalized spawn record.
+        _committed = (rec.get("status") in _ITEM_COMMITTED_FACTS
+                      or (rec.get("status") == _ITEM_ADOPTED_RETIRE
+                          and isinstance(r, dict) and r.get("adopted")))
+        if not _committed:
+            problems.append({"index": i,
+                             "problem": f"record status={rec.get('status')!r} is not a committed fact "
+                                        "(spawn-time record never finalized)"})
+            continue
+        if not record_efp_valid(rec, byid, node):
+            problems.append({"index": i, "problem": "committed record is not efp-valid"})
+            continue
+        if r is not None and r.get("status") in ("done", "partial"):
+            # PR #258 zap r4: a committed FAILURE (failed+crashed, failed+
+            # cancelled, skipped) can never back a done/partial claim, even
+            # when its output bytes match the claim — matching outputs under a
+            # failed record ARE the divergence. Status compatibility is
+            # required row by row; the ONLY blessed exception is the
+            # 790c6ad adopted-retirement pairing (record status=adopted + a
+            # row that itself claims an adopted harvest).
+            rec_st = rec.get("status")
+            compatible = (rec_st == r["status"]
+                          or (rec_st == _ITEM_ADOPTED_RETIRE and r.get("adopted")))
+            if not compatible:
+                problems.append({"index": i,
+                                 "problem": f"aggregate claims a {r['status']} item whose committed "
+                                            f"record is status={rec_st!r} (incompatible status)"})
+                continue
+            want, have = r.get("output"), rec.get("output")
+            # est-rucmf parity: the committed record is redact-then-clipped at
+            # the persist choke, so the raw in-memory claim is normalized with
+            # the IDENTICAL transform before the byte-for-byte compare.
+            # _clip_record is the identity on under-clip output and idempotent
+            # on already-clipped output, so this cannot launder a divergence:
+            # a genuine mismatch still differs after normalization, and a
+            # >clip claim matches its clipped record exactly because both
+            # sides went through the same redact-then-clip at the same ceiling.
+            n_want = _clip_record({"output": want})["output"] if want is not None else None
+            n_have = _clip_record({"output": have})["output"] if have is not None else None
+            if n_want is None or n_have is None or \
+                    json.dumps(n_want, sort_keys=True, default=str) != \
+                    json.dumps(n_have, sort_keys=True, default=str):
+                problems.append({"index": i,
+                                 "problem": "aggregate claims a done item whose committed "
+                                            "output is missing or diverges from the record"})
+    return (not problems), problems
+
 # ---------- typed failure classification (facts the RUNNER knows only) ----------
 
 _RETRYABLE_CLASSES = ("transport", "unknown")
-DEFAULT_RETRY_BACKOFF = (5.0, 20.0)
+# est-9ceqc (graft of atbrace:hw-r0a): the default transient schedule is
+# exponential — first re-spawn waits `base` seconds, doubling, clamped at
+# `ceiling`. An explicit two-element run.json meta.retry_backoff keeps the
+# fixed-schedule semantics (hw-23c door knob, tests, legacy runs).
+DEFAULT_RETRY_BACKOFF = {"base": 2.0, "ceiling": 30.0}
 DEFAULT_RETRY_BUDGET = 6
 
-# #5 bounded auto-retry (sprint101w2): ONE machine-resume re-drive — never a
-# loop — for classes where the dead attempt made TOOL PROGRESS (state.db join):
+# #5 bounded auto-retry (sprint101w2): machine-resume re-drive for classes
+# where the dead attempt made TOOL PROGRESS (state.db join), capped per node at
+# retry.bounded — default ONE (hw-23c raised this to an author tunable 0..8;
+# the default stays today's single-re-drive law):
 # transport / early_death / cap_exhausted / timeout (the latter two land with
 # B1's renames; plain strings, the integrator reconciles). The never-retry list
 # below is documentary law — membership in _BOUNDED_RETRY_CLASSES is the gate:
-# provider_400, unresolved_model, graph_invalid, schema/no_json, cancelled,
+# provider_400, unresolved_model, schema/no_json, cancelled,
 # spawn (3 real runs retried a permfail byte-identically 3x).
+def _retry_caps(node):
+    """hw-23c: author caps per ladder half for a node def. Absent key ==
+    today's hardcoded law (transient 2 re-spawns, bounded 1 re-drive)."""
+    rb = (node or {}).get("retry")
+    if not isinstance(rb, dict):
+        return wfcommon.RETRY_DEFAULTS["transient"], wfcommon.RETRY_DEFAULTS["bounded"]
+    # est-jzi8a nit: `type is int`, not isinstance — bool must fall to the default
+    # law, never silently act as 0/1.
+    return (rb.get("transient") if type(rb.get("transient")) is int
+            else wfcommon.RETRY_DEFAULTS["transient"],
+            rb.get("bounded") if type(rb.get("bounded")) is int
+            else wfcommon.RETRY_DEFAULTS["bounded"])
+
+
 _BOUNDED_RETRY_CLASSES = ("transport", "early_death", "cap_exhausted", "timeout",
                           # est-2ek.1.541: a malformed turn (final reply IS serialized
                           # tool-call markup, turn_exit_reason unknown) by definition made
                           # real tool calls — the bounded (tool-progress) ladder is the
                           # right re-drive channel; never Q4 (zero-calls evidence is the
-                          # wrong proof here) and never beyond the ONE bounded re-drive.
-                          "malformed_turn")
+                          # wrong proof here) and never beyond the node's bounded cap
+                          # (retry.bounded, default ONE — hw-23c tunable 0..8).
+                          "malformed_turn",
+                          # lease-busy (2026-10-03 field evidence): the child lost the
+                          # session-lease race — the CLI waited it out, refused to process
+                          # the message, and exited 130. A transient collision, not a
+                          # verdict on the work: a bounded re-drive as a FRESH session,
+                          # default exactly ONE (hw-23c: retry.bounded tunable 0..8;
+                          # see _is_lease_busy for the two-fact pin).
+                          "lease_busy")
 _BOUNDED_RETRY_BACKOFF = 5.0
 RESUME_LINE = "Do not redo finished work; continue from the state above."
 
@@ -1431,6 +2679,32 @@ LANE_HYGIENE_LINES = (
 )
 LANE_HYGIENE_TOKEN = LANE_HYGIENE_LINES[0]   # the gate token tests grep for
 
+# est-13z1: the BEAD LAW for drain-wave children — prompt-side ONLY (the runner
+# never trusts it: a claimed closure is read back from the store at the commit
+# edge by _bead_close_gate). Rendered as a GOAL SUFFIX (the goal keeps line 1;
+# nothing from '## Inputs' onward changes), so the fan-out identity law holds.
+# Only nodes carrying a `bead_close` declaration pay the bytes.
+BEAD_LAW_LINES = (
+    "## Bead-close law (machine preamble)",
+    "- A bead is CLOSED only when `bd -C <store> show <id> --json` reads back "
+    "`status: closed` — your prose, the wave summary, or a `bd close` tool result "
+    "are not proof. Read the bead back after closing and paste the read-back.",
+    "- Close with `--actor` matching the bead's current assignee (the dispatching "
+    "bot); a close attempt whose actor differs from the assignee is refused by the "
+    "store's assignee guard. Check `assignee` from `bd show` BEFORE choosing the actor.",
+    "- If you cannot close (guard refused, owner decision, another bot's seat): "
+    "return `close-pending: <reason>` in your answer and NEVER claim the bead was "
+    "closed. The runner reads the store itself at commit — a `closed` claim the "
+    "store contradicts fails the node with error_class `bead_close`.",
+)
+BEAD_LAW_TOKEN = BEAD_LAW_LINES[0]   # the gate token tests grep for
+
+def _bead_law_preamble(node):
+    """BEAD LAW preamble for nodes declaring a `bead_close` (\"\" otherwise).
+    Prompt-side only — never written to graph.json or a node record, so def-hash
+    is neutral; the enforcement is the commit-edge read-back, not these bytes."""
+    return "\n".join(BEAD_LAW_LINES) if isinstance(node.get("bead_close"), dict) else ""
+
 def _is_build_lane(node):
     """The build shape: `shape: "build"` declared, or a `repo:` lane declared (the
     64c6772b lane-gate surface). DEFAULT_SHAPE fills budgets, never this law:
@@ -1444,6 +2718,34 @@ def _lane_hygiene_preamble(node):
     retry, bounded resume, fan-out item — carries it; def-hash-neutral by
     construction (nothing here is ever written to graph.json or a node record)."""
     return "\n".join(LANE_HYGIENE_LINES) if _is_build_lane(node) else ""
+
+# est-imp1z (WF-GRAFT-2): the NODE-OUTCOME TOKEN contract — prompt-side, grammar
+# mirrored from the peer reference (iw-recon executor/outcome.py) so both estates
+# speak one token: `{"node_outcome": "success"|"failure"}` as the tail of the final
+# reply. It rides the SAME build-shape gate as lane hygiene (golden-solo prompt
+# bytes stay frozen); the PARSE side is universal — a token from any child is
+# honored at every CLI-backed settle by wf._outcome.classify (token > transient
+# sentinels > exit code).
+OUTCOME_TOKEN_LINES = (
+    "## Node-outcome token (machine preamble)",
+    "- Your final reply MUST end with exactly one tail token on its own line, byte-exact: "
+    '`{"node_outcome": "success"}` or `{"node_outcome": "failure"}`.',
+    "- The token is your verdict on the NODE, not on your prose: declare failure whenever the "
+    "work did not land (tools died, the provider retried out, acceptance unmet) — the runner "
+    "does NOT trust a clean exit code alone, and a transient provider-error line anywhere in "
+    "your output otherwise re-drives this node.",
+    "- Declare success only when the work is genuinely banked: a declared success outranks "
+    "any transient sentinel, so the token is how finished work is protected from a spurious "
+    "retry. A missing or malformed token is ignored — the sentinels and the exit code decide.",
+)
+OUTCOME_TOKEN_PREAMBLE_TOKEN = OUTCOME_TOKEN_LINES[0]   # the gate token tests grep for
+
+def _outcome_token_preamble(node):
+    """The node-outcome token contract for build-shape nodes ("" otherwise).
+    Prompt-side only (same def-hash/record law as LANE_HYGIENE_LINES): composed in
+    run_child so every spawn of a build node carries it. The classifier that READS
+    the token is universal; the instruction rides the build shape."""
+    return "\n".join(OUTCOME_TOKEN_LINES) if _is_build_lane(node) else ""
 # jam-h22/h30 (hackathon): the rate-limit/429 SUBCLASS of transport gets
 # exponential-with-full-jitter sleeps instead of the fixed ladder — many
 # sibling children dying on the same 429 window must not retry in lockstep.
@@ -1453,7 +2755,7 @@ def _lane_hygiene_preamble(node):
 # rate-limit tokens); consequence of a false positive is only WHICH bounded
 # sleep is drawn, never whether a retry happens (class + api_calls gates hold).
 _RATE_LIMIT_TOKENS = ("rate limit", "too many requests")
-_RL_JITTER_CAPS = (5.0, 20.0, 80.0)      # cap doubles-ish per retry attempt
+_RL_JITTER_CAPS = (5.0, 20.0, 80.0)      # cap quadruples per retry attempt (5 -> 20 -> 80)
 _RL_JITTER_CEIL = 120.0                  # hard ceiling: a lane never sleeps past 2 min
 
 def _is_rate_limited(raw):
@@ -1465,12 +2767,150 @@ def _is_rate_limited(raw):
 
 def _retry_sleep(backoff, i, raw):
     """jam-h22: the retry delay for attempt i (0-based). Rate-limited deaths draw
-    full jitter random.uniform(0, cap) over the cap ladder (capped 120 s); every
-    other transport death keeps today's fixed backoff ladder, byte-for-behaviour."""
+    full jitter random.uniform(0, cap) over the cap ladder (capped 120 s); the
+    default schedule is the exponential policy (est-9ceqc: base * 2**i clamped
+    at ceiling); an explicit fixed schedule keeps today's indexed ladder,
+    byte-for-behaviour."""
     if _is_rate_limited(raw):
         cap = min(_RL_JITTER_CAPS[min(i, len(_RL_JITTER_CAPS) - 1)], _RL_JITTER_CEIL)
         return random.uniform(0, cap)
+    if isinstance(backoff, dict):
+        return min(backoff["base"] * (2 ** i), backoff["ceiling"])
     return backoff[min(i, len(backoff) - 1)]
+
+# est-9ceqc (graft of atbrace:hw-r0a): the persisted per-node transient-retry
+# window. A backoff decision is written to run/retry-window.json BEFORE the
+# sleep and cleared once the node settles anything but the transient death, so
+# a runner killed mid-backoff resumes by (1) waiting the deadline out before
+# its first spawn for that node instead of re-driving into the provider blip
+# that motivated the backoff, and (2) seeding the ladder's attempt counter from
+# the persisted count so restarts cannot amplify attempts past the node's cap.
+# The wait is polled and stop-aware, lives in the owning node's own wave
+# thread, and never serializes a sibling — the deadline is checked, never
+# slept past a shutdown.
+RETRY_WINDOW_FILE = "retry-window.json"
+_WINDOW_LOCK = threading.Lock()      # the runner's own threads share one file
+
+def _retry_window_key(ev, ev_kw):
+    """Window key for a transient-ladder site: solo node -> <id>, fan-out item
+    -> <id>#<index>. The consolidate.batch site (partner-keyed, batch-varying)
+    has no key and keeps the pre-graft restart behavior."""
+    if "partner" in ev_kw:
+        return None
+    idx = ev_kw.get("index")
+    return str(ev_kw.get("node")) + (f"#{idx}" if idx is not None else "")
+
+def _retry_window_load(run):
+    if run is None:
+        return {}
+    v = jload(run / RETRY_WINDOW_FILE, {})
+    return v if isinstance(v, dict) else {}
+
+def _retry_window_save(run, key, deadline, attempts, entries=None):
+    if key is None or run is None:
+        return
+    with _WINDOW_LOCK:
+        w = _retry_window_load(run)
+        # est-9qhpf (B1): the ledger rides the clock — the entries persisted
+        # here are what a refusal boot commits as attempts_log, so the
+        # record-vs-ledger agreement (est-ja41) survives the restart seam.
+        w[key] = {"deadline": float(deadline), "attempts": int(attempts),
+                  "log": list(entries or [])}
+        tmp = run / (RETRY_WINDOW_FILE + ".tmp")
+        tmp.write_text(json.dumps(w))
+        os.replace(tmp, run / RETRY_WINDOW_FILE)
+
+def _retry_window_clear(run, key):
+    if key is None or run is None:
+        return
+    with _WINDOW_LOCK:
+        w = _retry_window_load(run)
+        if key not in w:
+            return
+        w.pop(key)
+        if w:
+            tmp = run / (RETRY_WINDOW_FILE + ".tmp")
+            tmp.write_text(json.dumps(w))
+            os.replace(tmp, run / RETRY_WINDOW_FILE)
+        else:
+            try:
+                (run / RETRY_WINDOW_FILE).unlink()
+            except OSError:
+                pass
+
+def _retry_window_keep(meta, wkey, r):
+    """est-9ceqc: the window survives iff the node settled on the same
+    transient death the ladder was retrying (or its exhausted verdict) — a
+    restart must not re-grant a spent cap. done / partial / cancelled / a
+    typed terminal clears it."""
+    keep = (r.get("status") == "failed" and not r.get("harvest")
+            and r.get("error_class") in _RETRYABLE_CLASSES + ("transport_exhausted",))
+    if not keep:
+        _retry_window_clear(meta["_run"], wkey)
+
+def _honor_retry_window(meta, node_id, index=None, cancel=None, node=None):
+    """Wait out the node's persisted backoff BEFORE this boot's first spawn for
+    it (est-9ceqc). Past deadline: no wait. Polled at 0.1 s and abandoned on
+    stop/cancel, so the wait is never a wall on the shutdown path.
+
+    est-9qhpf (B1): the same read of persisted state also carries the LIFETIME
+    attempt bound. A caller that passes `node` gets a spawn gate, not just a
+    clock: if the persisted attempts already meet the node's transient cap,
+    the cap is spent and this boot must NEVER spawn — the function returns the
+    spent window entry (the caller commits the exhausted verdict via
+    _window_spent_record) instead of waiting. The refusal is evaluated once
+    per boot per window key: a later call for the same key is an in-boot
+    ladder re-spawn, already governed by the ladder's own seeded loop, and
+    refusing there would under-grant the single-boot full ladder (the save
+    written right before the final sleep legitimately reads attempts == cap).
+    Callers without a node def (no cap to consult) keep the clock-only law."""
+    wkey = str(node_id) + (f"#{index}" if index is not None else "")
+    seen = meta.setdefault("_window_gate_seen", set())
+    first_sighting = wkey not in seen
+    seen.add(wkey)
+    d = _retry_window_load(meta["_run"]).get(wkey)
+    if not isinstance(d, dict):
+        return None
+    if first_sighting and node is not None:
+        seed = d.get("attempts")
+        cap = _retry_caps(node)[0]
+        if type(seed) is int and seed >= cap:
+            return d          # spent lifetime cap: the caller must not spawn
+    deadline = d.get("deadline")
+    if not isinstance(deadline, (int, float)) or isinstance(deadline, bool) \
+            or deadline <= time.time():
+        return None
+    while time.time() < deadline:
+        if meta["_stop"].is_set() or (cancel is not None and cancel.is_set()):
+            return None
+        time.sleep(min(0.1, max(0.0, deadline - time.time())))
+    return None
+
+def _window_spent_record(meta, node, node_id, index, spent):
+    """est-9qhpf (B1): the committed shape of a refused spawn — the exhausted
+    verdict carrying the SEEDED lifetime count and the persisted attempt
+    ledger (est-ja41 record-vs-ledger agreement across the restart seam).
+    `spawn` is stamped with the persisted count so the ladder's attempts
+    arithmetic (spawn + 1) reproduces the lifetime total, and the
+    transport_exhausted class is final: the seeded ladder never respawns over
+    a spent cap and never re-demotes this record. A legacy window entry
+    without a persisted `log` still carries the true count — attempts_log is
+    honestly empty there, the class and count are not. A stamped record is a
+    REFUSAL, not an executed ladder: the #164 fallback ladder bypasses on the
+    `refusal` key rather than respawning over the spent cap (est-mqp1f)."""
+    seed = spent.get("attempts")
+    seed = seed if type(seed) is int and seed > 0 else 0
+    return {"status": "failed",
+            "error": (f"transient-retry lifetime bound spent before this boot: "
+                      f"{seed} persisted re-spawn grant(s) against the node "
+                      f"transient cap ({_retry_caps(node)[0]}) — spawn refused"),
+            "error_class": "transport_exhausted", "ms": 0,
+            "attempts": seed + 1, "spawn": seed,
+            # est-mqp1f: machine-readable refusal stamp — every later seam
+            # (the #164 fallback ladder below) reads the class of verdict
+            # without grepping the message. Refusal is final (est-ja41).
+            "refusal": "lifetime_cap_spent",
+            "attempts_log": list(spent.get("log") or [])}
 
 # The machine-readable lines the child CLI actually emits (verified against
 # /opt/hermes/hermes_cli/oneshot.py: an escaping provider error reaches the
@@ -1501,7 +2941,7 @@ _QUOTA_PHRASE_TOKENS = ("usage limit", "quota exceeded", "quota exceeded for",
 _QUOTA_HORIZON_RE = re.compile(r"reset(?:s|ting)?\D{0,10}?(\d+)\s*(hour|hr|h|day|d|min|minute)")
 # est-t0vz (issue #54): the credential-window 429 — its OWN class, never transport.
 # The banner is the hermes CLI's own AuthError text, raised verbatim at
-# /opt/hermes/hermes_cli/runtime_provider.py:358
+# /opt/hermes/hermes_cli/runtime_provider.py:370
 #   `AuthError(f"Anthropic credentials are rate-limited for {model}; other Claude
 #    models remain available (see `hermes auth list`).")`  (the f-string interpolates
 #    the sent model id; the static shape is what the runner matches).
@@ -1530,12 +2970,41 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
                            "fatal_quota", "ratelimit", "route_unavailable",
                            "incomplete_work", "early_death", "cancelled",
-                           "schema", "spawn", "graph_invalid", "inputs",
+                           "schema", "spawn", "inputs", "killed",
                            "quorum", "fanout_empty", "crashed", "unknown",
+                           # est-13z1: the node's output claims an estate bead was
+                           # closed; the runner read the store itself (`bd show`)
+                           # and it is NOT closed. A proven-fail like
+                           # effect_receipt/lane_wreckage — never retried, since
+                           # the store says what it says.
+                           "bead_close",
+                           # est-byft8: a queued spawn refused at the Popen instant
+                           # because an amend/delete moved its effective fingerprint
+                           # while it waited for a seat; the wave reloads and re-drives.
+                           "stale_graph",
+                           # est-3acn: a spawn refused at the run_child seam BEFORE
+                           # submit because the run/node RunBudget (tokens-only cap;
+                           # USD excluded per the cost-trust law, issue #124) had no
+                           # headroom left. Terminal: outside every retry/fallback
+                           # whitelist; the runner finalizes a graceful `partial`
+                           # and budget_ledger.json names what never launched.
+                           "budget_exhausted",
                            # est-2ek.1.660: a (re-)drive refused at startup because a
                            # declared lane still carries the dead attempt's
                            # uncommitted TRACKED wreckage — bank it, then re-drive.
                            "lane_wreckage",
+                           # est-imp1z (WF-GRAFT-2): the child's self-reported
+                           # node_outcome token declares failure — the node's own
+                           # verdict outranks the exit code. Deterministic by
+                           # definition: outside BOTH retry ladders.
+                           "declared_failure",
+                           # est-2ek.1.856 (B3): the seat-cap knob (WORKFLOW_MAX_SEATS
+                           # env / config workflows.max_seats) named a non-integer or
+                           # a value outside [4, 16]. The door refuses the whole launch
+                           # with it; a runner that sees it flip invalid mid-run fails
+                           # the node with it. Operator input error: never retried,
+                           # never silently defaulted.
+                           "seat_cap",
                            # committed by the seat floor / policy gate
                            # (wf forbidden_model sites) and by unmet input deps
                            # (_fail_precondition). AGENTS.md cites this set as
@@ -1545,9 +3014,22 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            # out of it (the B1-class pin only sees OBSERVED
                            # classes, so an unwalked path slipped through).
                            "forbidden_model", "precondition",
+                           # est-2ek.1.765: a fan-out aggregate REFUSED done
+                           # because the canonical per-item records on disk do
+                           # not back its claimed completion (missing, frozen at
+                           # the spawn-time running record, efp-invalid, or the
+                           # committed output diverges from all_results).
+                           "item_record",
                            # est-2ek.1.541: rc!=0 death whose reply IS serialized
                            # tool-call markup rendered as text — typed, not generic unknown.
                            "malformed_turn",
+                           # est-g2xx: the global agent-seat semaphore stayed full
+                           # past the node wall — typed, never a blind spawn.
+                           "seat_wait",
+                           # est-g255 P255-5: semaphore full and no process-
+                           # ancestry channel (/proc or ps) to prove nested
+                           # lending — refused typed, never a silent deadlock.
+                           "seat_unsupported",
                            # #61: an attempt that exited while its own process group
                            # still held live backgrounded work — terminal, in BOTH ladders.
                            "left_live_descendants",
@@ -1558,17 +3040,29 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            # lane carries a proved-alive receipt for another model —
                            # post-admission route substitution is a denial, never a
                            # silent re-billing (runs 20261004-070649-zap-night-*).
-                           "route_substitution_denied"))
+                           "route_substitution_denied",
+                           # lease-busy: rc=130 death on the CLI's session-lease wait
+                           # (see _is_lease_busy) — bounded transient, one FRESH-session
+                           # re-drive, never terminal on a lease collision.
+                           "lease_busy",
+                           # est-pygyy (#56): a node declaring `effects` effect-receipt
+                           # postconditions committed failed because the runner could
+                           # not PROVE them at the commit edge (artifact missing/empty/
+                           # digest-mismatch under the run dir). A proven-fail: never
+                           # retryable — the same graph dies identically until the
+                           # artifact actually lands; the run never reaches run.done
+                           # over a false publication.
+                           "effect_receipt"))
 _AGENT_FAIL_PREFIX = "hermes -z: agent failed:"
 # turn_failure_copy.py ends every non-retryable failure with a fixed-format trailer
-# `Provider said: <summary>`; api_error_summary.py:49 formats the summary as
+# `Provider said: <summary>`; api_error_summary.py:73 formats the summary as
 # `HTTP <status>: <body>` — a real marker line, verified live 2026-09-23 (dead model id).
 _PROVIDER_SAID = "provider said:"
 
 def _typed_error_class(report_path):
     """Typed termination from the child's quiet turn report (core PR pending; the
     HERMES_QUIET_TURN_REPORT_FILE contract), never from prose. Returns
-    ("max_turns", reason) only when the report exists and its turn_exit_reason is
+    ("cap_exhausted", reason) only when the report exists and its turn_exit_reason is
     the loop's own budget-exhaustion stamp; any absence/unparsability is honest
     nothing, and the caller keeps the prose-free `unknown`."""
     try:
@@ -1606,8 +3100,6 @@ def _note_turn_tier(run, node_id, report_path):
         os.replace(tmp, tier_path)
     except Exception:
         pass
-
-
 
 # ---------- est-bbfy: pre-cap persist/finish budget cue ----------
 # A capped lane that dies at EXACT max_turns leaves useful work unpersisted and
@@ -1686,19 +3178,18 @@ def _budget_cue_inject(run, node, index, skey, home, max_turns, margin, steer_fi
     return True
 
 def _quota_cache_path():
-    """#24 (b): seat-local memory of models known to be subscription-exhausted."""
-    import os
-    from pathlib import Path
-    override = os.environ.get("WF_QUOTA_CACHE")
-    if override:
-        return Path(override)
-    return (Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-            / "cache" / "workflow-quota-cache.json")
+    """#24 (b): seat-local memory of models known to be subscription-exhausted.
+    ONE resolver lives in wfcommon (shared with the door's refusal gate)."""
+    return wfcommon.quota_cache_path()
 
-def _quota_note(model, marker):
+def _quota_note(model, marker, provider=None):
     """#24 (b): record model -> reset horizon from a fatal_quota marker.
     Advisory only: the cache NEVER deletes or blocks on its own; the door pings
-    once before refusing, so a stale stamp can't wedge a run forever."""
+    once before refusing, so a stale stamp can't wedge a run forever. A death on
+    an EXPLICIT provider rides the key as 'provider/model' (the est-699 identity
+    law, at the stamp seam): the mark names the subscription that died, not the
+    bare model name shared across providers — a door-side refusal against a
+    different subscription is a false refusal."""
     import os, re, time, json, tempfile
     m = _QUOTA_HORIZON_RE.search((marker or "").lower())
     if m and m.group(2).startswith(("h",)):
@@ -1715,9 +3206,13 @@ def _quota_note(model, marker):
         if not isinstance(data, dict): data = {}
     except Exception:
         data = {}
-    data[str(model or "unknown")] = {"resets_epoch": time.time() + hours * 3600,
-                                     "at": time.time(),
-                                     "marker": (marker or "")[:200]}
+    key = str(model or "unknown")
+    prov = str(provider or "").strip()
+    if prov and "/" not in key and key not in ("unknown", "seat default") and key != prov:
+        key = f"{prov}/{key}"
+    data[key] = {"resets_epoch": time.time() + hours * 3600,
+                 "at": time.time(),
+                 "marker": (marker or "")[:200]}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(p.parent))
@@ -1897,12 +3392,42 @@ def _filter_child_toolsets(run, meta, node):
     the child would keep, drop only the unknown residue; when NOTHING is
     known, pass the flag through VERBATIM (the child's warn-and-continue is
     its documented semantics; its honest typed death beats our silent
-    broadening). Core not importable => pass through, never hard-fail here."""
+    broadening). Core not importable => pass through, never hard-fail here.
+    est-2ek.1.166 toolsets slice (spool c258f0730346b426): a hostile shape
+    (dict/int/nested element) is refused at the DOOR and at graph load, but
+    this seam still fails CLOSED to None on any non-List[str]/comma-string —
+    a spawn-time AttributeError/TypeError is never the author's experience.
+    issue #427 amends the contract's tail: a DECLARED-EMPTY selection (`[]` /
+    empty comma-string) is REFUSED at graph load by validate_graph_errors —
+    -t cannot express zero toolsets and omission BROADENS, so silently
+    returning None there contradicted the opening sentence. None here still
+    means no selection to pass: undeclared, hostile shape, or an empty
+    selection persisted before the #427 gate (warned via node.clamped, never
+    silent)."""
     ts = node.get("toolsets")
     if ts is None:
         return None
+    if not (isinstance(ts, str)
+            or (isinstance(ts, list)
+                and all(isinstance(x, str) for x in ts))):
+        return None                                  # hostile shape: fail closed
     names = [s.strip() for s in (ts if isinstance(ts, list) else str(ts).split(",")) if str(s).strip()]
     if not names:
+        # issue #427: DECLARED-but-empty (`[]` / empty/whitespace/comma-only
+        # string) is a real minimisation that -t cannot express: an empty flag
+        # value collapses in the core to "use config defaults" and an OMITTED
+        # flag broadens — both spellings fail the author's ask OPEN. The door
+        # (wfcommon.validate_graph_errors) now refuses this shape at graph
+        # load, so it reaches here only via a graph persisted before the gate
+        # (old-run resume): record one node.clamped warning — the broadening
+        # becomes visible in the event log instead of silent — then fail
+        # closed to None like every other un-honorable shape.
+        if run and ts is not None:
+            _clamp_warn(run, meta, node, "toolsets", repr(ts),
+                        "(omitted — empty selection; refused at graph load "
+                        "since #427, this graph predates the gate; the child "
+                        "BROADENS to the seat's default toolsets)",
+                        _lane_label(node), [])
         return None
     if any(n.lower() in ("all", "*") for n in names):
         return names                                   # the child's own all-semantics
@@ -2010,7 +3535,7 @@ def _classify_rc_output(out):
 #   1. the child died rc!=0 within _CONFIG_INPUT_WINDOW_MS of spawn (wall,
 #      runner-known; the report measures ~0.1s, the window is 1s with slack);
 #   2. its capture carries the config-error marker line (core emits these to
-#      stdout — hermes_cli/main.py:2074, providers.py, tools_config_providers.py).
+#      stdout — hermes_cli/main.py:2036, providers.py, tools_config_providers.py).
 # The window is the precision guard: a provider-registry failure at session START
 # dies inside it, while a child that died much later had already established a
 # working provider, so its death is not this deterministic config shape and keeps
@@ -2020,6 +3545,38 @@ def _classify_rc_output(out):
 _CONFIG_INPUT_WINDOW_MS = 1000
 _CONFIG_INPUT_TOKENS = ("unknown provider", "not a known provider",
                         "provider not found", "no provider named")
+
+# ---------- lease-busy: a session-lease collision is transient, never terminal ----------
+# Field evidence (Oct-3, two runs): a freshly spawned review child printed
+#   `Session <id> found but has no messages. Starting fresh.`
+#   `Stopped waiting for another Hermes process on this session. Your message was not processed.`
+# and exited rc=130 after ~1800 s — the CLI's own turn-lease wait timed out against a
+# Hermes process already holding that session (agent/turn_facade_lease.py emits this
+# verbatim fail-closed notice; the 130 is the CLI's lease-timeout exit). Nothing of the
+# child's work ever started, so `unknown` made the node terminal on a pure collision.
+# Two facts must BOTH hold — neither alone is sufficient (mirrors the est-tmuu law):
+#   1. the child exited with the CLI's lease-wait code, rc == 130 (runner-known);
+#   2. its merged capture carries the CLI's verbatim lease-refusal notice (the child
+#      never processed the message — a fact the CLI itself asserts, not prose we grep
+#      for sentiment).
+# The consequence is the #5 BOUNDED channel: ONE re-drive as a FRESH session (next
+# attempt key, never --continue of the busy one — the prior session is someone else's
+# lease). A harvestable fenced answer outranks this class (the #4 harvest law runs
+# first), so a lease death that somehow printed a real answer still commits partial.
+LEASE_BUSY_RC = 130
+LEASE_BUSY_TOKEN = "stopped waiting for another hermes process on this session"
+
+def _is_lease_busy(rc, out):
+    """(bool, marker-line) — True only when BOTH lease-busy facts hold: the child
+    exited rc == LEASE_BUSY_RC (130) AND its capture carries the CLI's verbatim
+    lease-refusal notice. Returns (False, None) otherwise; the caller keeps the
+    existing classification exactly."""
+    if rc != LEASE_BUSY_RC:
+        return False, None
+    for l in (out or "").splitlines():
+        if LEASE_BUSY_TOKEN in l.strip().lower():
+            return True, l.strip()
+    return False, None
 
 def _classify_config_input(out, ms):
     """(bool, marker) — True only when BOTH est-tmuu facts hold: the child died
@@ -2036,6 +3593,35 @@ def _classify_config_input(out, ms):
 
 # ---------- #4 harvest-on-death / #5 bounded auto-retry (sprint101w2) ----------
 
+def _remaining_steps(out):
+    """est-2ek.1.165: parse a child's declared `## Remaining` block into a
+    structured step list — the unfinished tail must never be prose the
+    scheduler re-parses. Contract: markdown heading line `## Remaining`
+    (any `#` depth, case-kept), one step per `-`/`*` bullet, the block runs
+    until the next heading or a fenced block; a bold-only `**Remaining**`
+    marker is NOT the declared form (honest []). Steps are stripped bullet
+    texts; empty bullets are dropped. Honest absence: no block -> [] (the
+    empty list is the fact, never a fabricated tail)."""
+    lines = (out or "").splitlines()
+    start = None
+    for i, raw in enumerate(lines):
+        if re.match(r"^\s*#{1,6}\s*Remaining\s*:?\s*$", raw, re.IGNORECASE):
+            start = i + 1
+            break
+    if start is None:
+        return []
+    steps = []
+    for raw in lines[start:]:
+        s = raw.strip()
+        if not s:
+            continue
+        if s.startswith("#") or s.startswith("```"):
+            break                                    # next heading/fence ends the block
+        m = re.match(r"^[-*]\s+(.*)$", s)
+        if m and m.group(1).strip():
+            steps.append(m.group(1).strip())
+    return steps
+
 def _harvest_death(out, schema):
     """#4 harvest-on-death: a child that died (rc!=0 / timeout / cap — the
     CALLER gates the death mode; never `cancelled`) whose stdout still carries
@@ -2045,7 +3631,11 @@ def _harvest_death(out, schema):
     block (bare-prose coercion is NOT harvest) that parses to a dict and
     validates; else None (the death is classified exactly as before). A
     child-declared terminal `status` field (e.g. 'BLOCKED') is honored
-    verbatim in the record."""
+    verbatim in the record.
+    est-2ek.1.165: every harvest also carries `remaining` — the child's
+    DECLARED `## Remaining` steps parsed to a list (honest [] when nothing
+    was declared), so a harvested partial's unfinished tail is structured
+    data the scheduler/read model ride, never prose."""
     fences = JSON_FENCE.findall(out or "")
     if not fences:
         return None
@@ -2057,21 +3647,19 @@ def _harvest_death(out, schema):
         return None
     declared = parsed.get("status")
     return {"output": parsed,
+            "remaining": _remaining_steps(out),
             "harvest": {"declared_status": declared if isinstance(declared, str) and declared else None}}
 
 def _cancel_evidence(run, nid, index, lp):
-    """a2d7f664: honest evidence for a quorum-straggler cancel. Snapshot of the
-    child's output state AT THE CANCEL INSTANT — spawn-log bytes (the same
-    _child_spoke primitive; bytes, not a bool, so the reason carries the
-    measurement) plus the file count in the child's durable work dir.
-    Returns (suffix, snapshot dict): suffix ' — no output on disk at quorum
-    moment' when the child had NOTHING (empty spawn log, empty work dir), else
-    ' — had output at quorum moment (log N bytes, workdir M files)'. A vanished
-    log/work dir reads as 0 bytes / 0 files (OSError is honest absence, never a
-    fabricated size)."""
+    """Snapshot after a quorum kill. Byte/file counts are raw disk evidence,
+    never proof of agent-visible output (startup banners/scaffolding count too).
+    A parsable fenced answer confirms output; a nonempty unstructured capture
+    is explicitly unknown, not absent and not confirmed agent output."""
     n_bytes = 0
+    capture = ""
     try:
         n_bytes = lp.stat().st_size
+        capture = lp.read_text(errors="replace")
     except (OSError, AttributeError):
         pass
     n_files = 0
@@ -2079,10 +3667,12 @@ def _cancel_evidence(run, nid, index, lp):
         n_files = sum(1 for f in child_work_dir(run, {"id": nid}, index).rglob("*") if f.is_file())
     except OSError:
         pass
+    visible = True if _harvest_death(capture, None) else (None if n_bytes else False)
+    snap = {"log_bytes": n_bytes, "work_files": n_files, "agent_visible_output": visible}
     if n_bytes == 0 and n_files == 0:
-        return " — no output on disk at quorum moment", {"log_bytes": 0, "work_files": 0}
-    return (f" — had output at quorum moment (log {n_bytes} bytes, workdir {n_files} files)"), \
-           {"log_bytes": n_bytes, "work_files": n_files}
+        return " — no output on disk at quorum moment", snap
+    state = "had output" if visible else "no confirmed agent-visible output"
+    return (f" — {state} at quorum moment (log {n_bytes} bytes, workdir {n_files} files)"), snap
 
 def _harvest_cancelled(out, schema, run, nid, index):
     """a2d7f664 harvest-at-cancel: the cancelled class was deliberately excluded
@@ -2179,6 +3769,118 @@ def _clean_capture(text):
     return "\n".join(l for l in (text or "").splitlines()
                      if DEAD_SESSION_NOISE not in l)
 
+def _work_files(run, node, index):
+    """(wd, files) of the child's durable work dir, newest-mtime first — the ONE
+    walk _banked_work and _bank_the_corpse share. Raises OSError.
+
+    est-1n7gx (WF-GRAFT-7): the key is a TOTAL order — mtime DESC, ties broken by
+    relative path ASC. The bare-mtime key left ties in rglob's filesystem-walk
+    order, and same-second mtime granularity is routine on coarsely-timestamped
+    filesystems: two artifacts sharing an mtime made the head of this list — the
+    banked manifest's `last_written`, the resume inventory's first artifact —
+    directory-traversal luck. The path tie-break is arbitrary BY CHOICE and total
+    BY LAW (relative paths are unique per walk, the key cannot tie): every
+    consumer of this order sees the same head on the same bytes. Mirrors the
+    peer's SQL law `ORDER BY COALESCE(started_at,-1) DESC, id DESC`
+    (iw-recon runRepository.ts:143/:413)."""
+    wd = child_work_dir(run, node, index)
+    return wd, sorted((f for f in wd.rglob("*") if f.is_file()),
+                      key=lambda f: (-f.stat().st_mtime,
+                                     f.relative_to(wd).as_posix()))
+
+CORPUS_MAX_BYTES = 16 << 20   # #131 snapshot budget; files past it are manifest-only
+
+def _bank_the_corpse(run, node, index, spawn, out):
+    """#131 bank-the-corpse: on a wall-kill (timed_out, BOTH wait paths) write
+    nodes/<_node_file>.corpus/ = work/ (snapshot of the durable work dir, newest
+    first under CORPUS_MAX_BYTES), stdout_tail.txt (out[-4000:]) and
+    manifest.json (every file + size + mtime, newest first; ties by relative path
+    ASC — the ONE total order of _work_files, est-1n7gx; last_written = rows[0],
+    i.e. the head of that total order, never traversal luck), then log ONE
+    node.banked line. Returns the corpus path for the
+    death record's `banked` pointer. Honest-empty: ANY failure logs node.banked
+    with error= and returns None — it never raises, so it can never move the
+    timeout verdict. Deterministic: the canonical pointer nodes/<_node_file>.corpus
+    always carries the LATEST wall-kill's corpus (built in a tmp dir, swapped in
+    by rename). est-hls8y: every wall-kill ALSO leaves its own verbatim attempt
+    slot nodes/<_node_file>.corpus.a<spawn>/ — a resumed run finds the bank of the
+    attempt it timed out on byte-intact beside the newer one, never zeroed."""
+    corpus = run / "nodes" / f"{_node_file(node, index)}.corpus"
+    tmp = corpus.with_name(f"{corpus.name}.{os.getpid()}.tmp")
+    try:
+        wd, files = _work_files(run, node, index)
+        shutil.rmtree(tmp, ignore_errors=True)
+        (tmp / "work").mkdir(parents=True)
+        rows, n, nbytes, truncated = [], 0, 0, False
+        for f in files:
+            rel = f.relative_to(wd).as_posix()
+            copied = 0
+            if not f.is_symlink() and nbytes < CORPUS_MAX_BYTES:
+                # D1 (est-muob) byte-bounded copy: the cap is enforced AT COPY
+                # TIME against the bytes actually read, not a pre-copy stat an
+                # external writer can outgrow mid-copy. The manifest's
+                # `bytes` is the ACTUAL bytes on disk; anything clipped by the
+                # cap sets `truncated`.
+                dst = tmp / "work" / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with open(f, "rb") as src_f, open(dst, "wb") as dst_f:
+                    while True:
+                        chunk = src_f.read(1 << 20)
+                        if not chunk:
+                            break                      # honest EOF
+                        room = CORPUS_MAX_BYTES - nbytes
+                        if len(chunk) > room:
+                            # D1: the cap clips the read — copy the remainder
+                            # of this chunk, flag it, and stop.
+                            dst_f.write(chunk[:room])
+                            nbytes += room
+                            truncated = True
+                            break
+                        dst_f.write(chunk)
+                        nbytes += len(chunk)
+                    shutil.copystat(f, dst)
+                copied = 1
+            if copied:
+                n += 1
+            # Copied rows describe the snapshot, including a cap-clipped file;
+            # manifest-only rows still describe the uncopied source.
+            st = (tmp / "work" / rel).stat() if copied else f.stat()
+            rows.append({"path": rel, "size": st.st_size, "mtime": st.st_mtime,
+                         "copied": bool(copied)})
+        (tmp / "stdout_tail.txt").write_text((out or "")[-4000:], encoding="utf-8", errors="replace")
+        (tmp / "manifest.json").write_text(json.dumps(
+            {"node": node["id"], "index": index, "spawn": spawn, "work_dir": str(wd),
+             "last_written": rows[0]["path"] if rows else None, "files": rows,
+             "bytes": nbytes, "budget": CORPUS_MAX_BYTES, "truncated": truncated}, indent=1))
+        # est-hls8y: bank the verbatim per-attempt slot FIRST (a same-spawn
+        # re-bank replaces only its OWN slot; other attempts' slots are never
+        # touched), then swap the canonical latest pointer as #131 always did.
+        slot = corpus.with_name(f"{corpus.name}.a{spawn if spawn is not None else 'na'}")
+        if slot.is_dir() and not slot.is_symlink():
+            shutil.rmtree(slot)
+        elif slot.exists() or slot.is_symlink():
+            slot.unlink()
+        shutil.copytree(tmp, slot)
+        if corpus.is_dir() and not corpus.is_symlink():
+            shutil.rmtree(corpus)
+        os.rename(tmp, corpus)
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        # D3 (est-muob): the never-raises promise (AGENTS.md) covers the LOGS
+        # too — a wedged events.jsonl must never escape into the verdict path.
+        try:
+            log(run, "node.banked", node=node["id"], index=index, spawn=spawn, files=0, bytes=0,
+                corpus=None, error=f"{type(e).__name__}: {e}")
+        except Exception:
+            pass
+        return None
+    try:
+        log(run, "node.banked", node=node["id"], index=index, spawn=spawn, files=n, bytes=nbytes,
+            corpus=str(corpus))
+    except Exception:
+        pass
+    return str(corpus)
+
 def _banked_work(run, node, index):
     """(file_names, [(name, content_excerpt), ...]) of the child's durable work
     dir — drive-1's banked output, harvested BEFORE the re-drive spawns so
@@ -2186,9 +3888,7 @@ def _banked_work(run, node, index):
     Newest-mtime first; each file excerpted, the whole section capped.
     Honest empty on any OSError."""
     try:
-        wd = child_work_dir(run, node, index)
-        files = sorted((f for f in wd.rglob("*") if f.is_file()),
-                       key=lambda f: f.stat().st_mtime, reverse=True)
+        wd, files = _work_files(run, node, index)
     except OSError:
         return [], []
     names = [f.relative_to(wd).as_posix() for f in files]
@@ -2206,7 +3906,62 @@ def _banked_work(run, node, index):
         budget -= take
     return names, excerpts
 
-def _dead_session_harvest(r, eclass, run, node, index):
+def _resume_hint_block(run, node, index, attempts_log=None):
+    """#130: the dead-attempt artifact inventory for a re-run spawn — per artifact
+    {path, size, mtime, last 10 lines} from the durable work dir (newest-mtime
+    first), the prior spawn logs of this (node, index) and runner.log, plus the
+    attempts_log classes, capped at 6000 chars and ending in RESUME_LINE.
+    Tri-state node flag: resume_hint false => "" (prompt byte-identical);
+    true => always; absent => auto, only when the durable work dir already holds
+    a prior attempt's files. Prompt-side only (#37 law): never graph.json, node
+    records or the def hash. Dead-session noise is stripped (_clean_capture)."""
+    flag = (node or {}).get("resume_hint")
+    if not (node or {}).get("id") or flag is False:
+        return ""
+    try:
+        # est-1n7gx: ride the ONE walk (total order mtime DESC, relpath ASC) —
+        # the resume inventory and the banked manifest can never disagree about
+        # the head of the same bytes.
+        wd, work = _work_files(run, node, index)
+        stem = re.sub(r"[^A-Za-z0-9_.-]", "_", str(node["id"])) + \
+            (f".{index}" if index is not None else "")
+        own = re.compile(re.escape(stem) + r"\.a\d+\.log")   # node-exact: x never takes x.audit.a0.log
+        # est-1n7gx: TOTAL order — mtime DESC with the spawn/attempt index as the
+        # in-name discriminator (attempt DESC: the bigger spawn index is the later
+        # attempt, the same time signal mtime carries; own.fullmatch guarantees a
+        # parseable number, so the key cannot tie). Peer law is id DESC for
+        # exactly this shape (iw-recon runRepository.ts:143/:413).
+        logs = sorted((f for f in (run / "logs").glob(stem + ".a*.log") if own.fullmatch(f.name)),
+                      key=lambda f: (f.stat().st_mtime,
+                                     int(re.search(r"\.a(\d+)\.log$", f.name).group(1))),
+                      reverse=True)
+    except OSError:
+        work, logs = [], []
+    if flag is not True and not work:
+        return ""
+    lines = ["## Dead-attempt artifact inventory (machine preamble)",
+             "Your prior attempt left these artifacts (newest first). Verify them; never redo them."]
+    if attempts_log:
+        lines.append("Prior attempts: " + ", ".join(
+            f"#{a.get('attempt')} {a.get('error_class')}" for a in attempts_log))
+    budget = 6000
+    for f in work[:12] + logs[:3] + [run / "runner.log"]:
+        try:
+            st = f.stat()
+            body = _clean_capture(f.read_text(errors="replace")[-4000:])
+        except OSError:
+            continue
+        tail = [l[:200] for l in body.splitlines() if l.strip()][-10:]
+        mt = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime))
+        entry = "\n".join([f"- {f} size={st.st_size} mtime={mt}"] + ["  > " + l for l in tail])
+        if len(entry) > budget:
+            continue   # skip an oversize entry; later small sources still fit
+        lines.append(entry)
+        budget -= len(entry)
+    lines.append(RESUME_LINE)
+    return "\n".join(lines)
+
+def _dead_session_harvest(r, eclass, run, node, index, inventory=""):
     """The #102 harvest preamble for a re-drive whose prior session persisted NO
     messages: the dead attempt is NOT resumable, so the re-drive is a FRESH
     session and this block is the ONLY continuity — error_class, the node's
@@ -2220,7 +3975,9 @@ def _dead_session_harvest(r, eclass, run, node, index):
              f"exclusively the harvest below. Do NOT re-run discovery it already covers.",
              f"Prior attempt died: error_class={eclass}"]
     names, excerpts = _banked_work(run, node, index)
-    if names:
+    if inventory:   # #130: the per-artifact inventory REPLACES the names+excerpts block
+        lines.append(inventory.rsplit("\n", 1)[0])
+    elif names:
         lines.append("Banked files in your durable work dir (already produced; verify, never redo):")
         lines.extend("- " + n for n in names[:40])
         for name, body in excerpts:
@@ -2284,15 +4041,87 @@ def _verdict_lines(text, limit=200):
 
 def _retry_conf_params(meta):
     """Backoff schedule / per-run budget come ONLY from run.json meta (the door's
-    channel) — no env hooks in the runner, per brief law."""
+    channel) — no env hooks in the runner, per brief law. The schedule is the
+    exponential default policy, an explicit {"base": B, "ceiling": C} dict
+    (est-9ceqc exp form; a launcher/test seam — the door bakes only the tuple
+    below), or a two-element fixed schedule [a, b] (hw-23c); anything malformed
+    falls back to the default."""
     tb = meta.get("retry_backoff")
-    tb = tuple(float(x) for x in tb) if isinstance(tb, (list, tuple)) and len(tb) == 2 \
-        and all(isinstance(x, (int, float)) and not isinstance(x, bool) and x >= 0 for x in tb) \
-        else DEFAULT_RETRY_BACKOFF
+    if isinstance(tb, dict):
+        tb = tb if all(isinstance(tb.get(k), (int, float)) and not isinstance(tb.get(k), bool)
+                       and tb.get(k) >= 0 for k in ("base", "ceiling")) \
+            else DEFAULT_RETRY_BACKOFF
+    else:
+        tb = tuple(float(x) for x in tb) if isinstance(tb, (list, tuple)) and len(tb) == 2 \
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool) and x >= 0 for x in tb) \
+            else DEFAULT_RETRY_BACKOFF
     budget = meta.get("retry_budget")
     budget = budget if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0 \
         else DEFAULT_RETRY_BUDGET
     return tb, budget
+
+def _retry_conf(meta):
+    """#24: the run-level retry block from run.json meta (same door channel as
+    retry_backoff/retry_budget). Only `mode: "work-metered"` changes behavior —
+    anything absent or malformed is the legacy wall ladder, fail-closed."""
+    rt = meta.get("retry") if isinstance(meta.get("retry"), dict) else {}
+    mode = rt.get("mode") if rt.get("mode") in ("wall", "work-metered") else "wall"
+    floor = rt.get("resume_floor_s")
+    # #580 B3 (runner seam): the door now refuses a non-finite floor at
+    # admission, but run.json can also arrive from pre-cure or hand-written
+    # bytes — 1e309 round-trips to +inf and an inf resume wall defeats the
+    # bounded-wall guarantee at the spawn. DEFENSIVE normalization, fail-closed
+    # like every other malformed knob value here: non-finite falls back to the
+    # default floor, never an infinite spawn.
+    floor = floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) \
+        and math.isfinite(floor) and floor >= 1 \
+        else DEFAULT_RESUME_FLOOR_S
+    return {"mode": mode, "resume_floor_s": floor}
+
+def _metered_remaining(r):
+    """Remaining wall a work-metered resume inherits: the dead attempt's APPLIED
+    wall minus its elapsed ms. No wall stamp (legacy record) = the wall is
+    unknown — return None and the caller falls back to today's identical fare."""
+    wall = r.get("wall")
+    if not isinstance(wall, (int, float)) or isinstance(wall, bool):
+        return None
+    ms = r.get("ms") if isinstance(r.get("ms"), (int, float)) else 0
+    return max(0.0, wall - ms / 1000.0)
+
+def _receipt_concurrency(meta):
+    """#100: at runner start, emit ONE concurrency.applied receipt diffing the
+    author's REQUEST against what THIS runner will actually APPLY, with the
+    author-vs-default provenance the door baked. A request the effective meta
+    cannot honor (stale meta from a hot-reloaded runner, hand-edited run.json)
+    is LOUD: mismatch set, so watchers diff requested-vs-applied without guess.
+    KNOB-GATED (#100 golden-solo): a run.json with NO knob keys, no provenance,
+    and no _requested emits NOTHING — the events stream of a legacy run stays
+    byte-identical to the frozen capture; there is no request to receipt."""
+    run = meta["_run"]
+    if not any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                   "knobs_provenance", "_requested")):
+        return
+    prov = meta.get("knobs_provenance") if isinstance(meta.get("knobs_provenance"), dict) else None
+    if prov is None:
+        # pre-door / hand-surgery meta: a knob key PRESENT in run.json was set by
+        # someone (that's how every wide run launched until #24) — report it as
+        # the request, author-side. No keys at all (legacy default run) => {}.
+        prov = {k: "author" for k in ("concurrency", "item_concurrency", "retry") if k in meta}
+    knobs = {k: v for k, v in sorted(prov.items()) if v == "author"
+             and k in ("concurrency", "item_concurrency", "retry")}
+    req = meta.get("_requested") if isinstance(meta.get("_requested"), dict) else None
+    if req is None:
+        req = {k: meta[k] for k in knobs}
+    else:
+        req = {k: v for k, v in req.items() if k != "knobs"}
+    applied = {"concurrency": meta.get("concurrency", DEFAULT_CONCURRENCY),
+               "item_concurrency": meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY)}
+    mismatch = {k: {"requested": req[k], "applied": applied[k]}
+                for k in ("concurrency", "item_concurrency")
+                if isinstance(req.get(k), int) and isinstance(applied.get(k), int)
+                and req[k] != applied[k]}
+    log(run, "concurrency.applied", requested=req, applied=applied, knobs=knobs,
+        **({"mismatch": mismatch} if mismatch else {}))
 
 _LOG_ACTIVITY_WINDOW_S = 120
 
@@ -2305,6 +4134,23 @@ def _log_recent(lp, created):
     except OSError:
         return False
     return st.st_mtime > created + 1e-6 and time.time() - st.st_mtime <= _LOG_ACTIVITY_WINDOW_S
+
+def _session_recent(run, title, home=None):
+    """est-2ek.1.595: the second EXTEND-NOT-KILL witness. A oneshot -Q child
+    block-buffers stdout, so its spawn log can stay frozen while it works (two
+    maintain children died at the exact wall with live inference sockets); its OWN
+    sessions row — title `<skey>#a<attempt>`, the --continue key — keeps moving in
+    state.db. True only when THAT row's last_activity_at is within the activity
+    window; no key, no db, no row, or another attempt's row proves nothing."""
+    if not title:
+        return False
+    skey = str(title).split("#a", 1)[0]
+    try:
+        row = child_metrics(Path(run).name, home).get(skey, {}).get("sessions", {}).get(title)
+    except Exception:
+        return False
+    la = (row or {}).get("last_activity")
+    return isinstance(la, (int, float)) and time.time() - la <= _LOG_ACTIVITY_WINDOW_S
 
 FIRST_MESSAGE_S = 120  # run-level default; NEVER an author key (tier law)
 
@@ -2323,12 +4169,646 @@ def _child_spoke(lp):
     except OSError:
         return False
 
+# est-g2xx (A): the hermes CLI child block-buffers stdout into its spawn log, so a
+# WORKING child can sit at 0 (or a fixed few hundred) bytes past the silence
+# window. Log bytes are one proof of life; a live tool child in the spawn's
+# subtree is another (the child is past its first call — it is executing tools).
+# The heartbeat sidecar (<spawn log>.alive) is the durable memory of an
+# OBSERVED live tool child, so a /proc sample that misses it does not undo the proof.
+def _heartbeat_path(lp):
+    return lp.with_name(lp.name + ".alive")
+
+def _stamp_heartbeat(hb, pid):
+    try:
+        tmp = hb.with_name(hb.name + ".tmp")
+        # est-g255 P255-3: the observed child's kernel start tick rides the
+        # stamp (#80 occupant identity) — a recycled pid can never prove life.
+        tmp.write_text(json.dumps({"pid": int(pid), "ts": round(time.time(), 3),
+                                   "boottime": _proc_boottime(int(pid))}))
+        os.replace(tmp, hb)
+    except OSError:
+        pass   # evidence only: a failed stamp never kills a spawn
+
+def _proof_of_life(lp, proc, hb, tree_pids):
+    """True when the spawn is PROVEN past its first call: bytes on its log, OR a
+    live tool child in its tracked subtree, OR a heartbeat naming a still-live
+    observed tool child. The child's own pid being alive proves nothing (a hung
+    first API call is alive too). A heartbeat proves only with a real stamp
+    (ts > 0) AND a pinned start tick equal to the live occupant's (est-g255
+    P255-3): an unstamped, identity-less or recycled-pid row proves nothing."""
+    if _child_spoke(lp):
+        return True
+    own = getattr(proc, "pid", None)
+    if any(p != own and _proc_alive(p) for p in (tree_pids or ())):
+        return True
+    try:
+        row = json.loads(hb.read_text())
+        pid, ts, bt = int(row["pid"]), float(row["ts"]), row.get("boottime")
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return False
+    if pid == own or ts <= 0 or type(bt) is not int:
+        return False
+    return _proc_alive(pid) and _proc_boottime(pid) == bt
+
+# est-g2xx (B): GLOBAL cross-process agent-seat semaphore. Under ~13 concurrent
+# seats the pinned model server answered some calls and hung others for 30+ min;
+# every runner sharing a seats dir now holds at most `cap` live agent children.
+# One ticket file per held seat; the count + create is serialized by an flock on
+# <seats>/.lock. A ticket whose pids are all verifiably dead is pruned at acquire.
+SEATS_DEFAULT = 4
+# est-2ek.1.856 (FIFO): a waiter that finds the semaphore full registers a
+# queue marker under <seats>/queue/ (NOT a ticket — the ticket glob above never
+# sees the subdir). Admission requires `live < cap` AND no strictly-older live
+# marker (order key (enqueued, uuid)); the blind flock poll made first-poller
+# win, so a long-waiting node starved behind a churn of short runs (field
+# report 2026-10-08 12:19Z: accept_probe sat seat.wait 17 min while short-run
+# cron re-launches re-took every freed seat). Markers gate FAIRNESS only — never
+# capacity; the bounded wait + typed seat_wait stay the outer bound.
+SEAT_QUEUE_DIR = "queue"
+SEAT_QUEUE_HB_S = 0.5      # own-marker heartbeat refresh cadence
+SEAT_QUEUE_LIVE_S = 8.0    # a marker is a live waiter while pid lives AND hb is this fresh
+SEAT_QUEUE_PRUNE_S = 20.0  # owner liveness has failed this long -> marker pruned (reconfirmed)
+
+def _seat_prune_ledger(seats, kind, name, row, reason):
+    """est-2ek.1.857: dropping someone else's ticket/marker is LOUD. Every
+    external unlink appends one line to <seats>/.pruned.jsonl (ts, pruner pid,
+    kind, ticket name, row snapshot, reason) — the 857 field report was
+    undebuggable precisely because the prune was silent. Best-effort: a ledger
+    failure never blocks admission; the file rotates once at ~1 MiB."""
+    try:
+        p = Path(seats) / ".pruned.jsonl"
+        try:
+            if p.exists() and p.stat().st_size > 1_048_576:
+                os.replace(p, Path(str(p) + ".1"))
+        except OSError:
+            pass
+        rec = {"ts": round(time.time(), 3), "pruner": os.getpid(),
+               "kind": kind, "ticket": name, "reason": reason,
+               "row": row if isinstance(row, dict) else str(row)[:400]}
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, default=str) + "\n")
+    except OSError:
+        pass
+
+def _seat_cap_from_env_files():
+    """Operator-set WORKFLOW_MAX_SEATS from the Hermes .env files (est-gxjh6).
+
+    A long-lived runner inherits the ENVIRONMENT OF THE PROCESS THAT LAUNCHED it
+    — a cap set in ~/.hermes/.env (or a profile .env) after the serve process
+    booted is INVISIBLE to os.environ.get for the runner's whole life. Read the
+    files fresh at every cap decision so the fleet knob lands without a restart.
+    The parse is a deliberate subset: plain KEY=VALUE lines, one optional
+    `export ` prefix, `#` comments, blank lines; one-layer quotes. Anything odd
+    falls through — an unreadable/absent .env is absent, never fatal."""
+    try:
+        home = wfcommon.hermes_home()
+    except Exception:
+        return None
+    cands = []
+    prof = os.environ.get("HERMES_PROFILE", "").strip()
+    if prof and re.fullmatch(r"[A-Za-z0-9._-]+", prof):
+        cands.append(home / "profiles" / prof / ".env")
+    cands.append(home / ".env")
+    for f in cands:
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            k, _, v = line.partition("=")
+            if k.strip() != "WORKFLOW_MAX_SEATS":
+                continue
+            v = v.split(" #", 1)[0].strip().strip("\"'")
+            try:
+                n = int(v)
+            except ValueError:
+                continue
+            if n < 0:
+                continue
+            return n
+    return None
+
+def _max_seats(meta):
+    # est-2ek.1.856: the operator knobs (WORKFLOW_MAX_SEATS env, config
+    # workflows.max_seats) are validated in ONE place — wfcommon.seat_max_seats
+    # (floor/ceiling + the typed SeatCapError), resolved at every call so a
+    # config change takes effect on the next node, same law as the seat model
+    # floor. An invalid value RAISES here; the spawn path fails it closed as
+    # error_class=seat_cap, it is never a silent SEATS_DEFAULT. The explicit
+    # per-run meta max_seats (the door's knob, 0 disables) still wins untouched.
+    return seat_max_seats(meta.get("max_seats")
+                          if isinstance(meta.get("max_seats"), int)
+                          and not isinstance(meta.get("max_seats"), bool) else None,
+                          dotenv_reader=_seat_cap_from_env_files)
+
+def _seat_pool_cap(seats, seed=None, ceiling=None):
+    """est-mg5o2: the POOL-RECORDED global seat cap — one truth per seats dir.
+
+    The per-process resolution (_max_seats: run.json / env / .env / config /
+    default; _seat_pool_seed: the same minus run.json) only SEEDS the pool: the first admission records its cap in <seats>/.cap
+    and every admission after it — including nested child runners whose
+    inherited env carries a stale, missing or default cap — arbitrates against
+    the RECORDED value, not the inheriting process's environment. Measured
+    defect (est-mg5o2, 2026-10-11): eight live runners under a fleet cap of 12
+    held the estate pool at 6/12 and the fleet near ONE concurrent request
+    because each spawn re-resolved the cap against its own inherited env.
+
+    seed=None => READ-ONLY: the recorded cap, or None when the pool has none
+    yet (never writes — the seat.wait event / seat_wait error use this).
+    A positive seed records once — first writer wins, cross-process: writers
+    are serialized by the <seats>/.lock flock _seat_acquire holds when it
+    calls this, and the file is replaced atomically. A corrupt/unparsable
+    file is re-seeded, never trusted, never fatal; an unwritable pool falls
+    back to arbitrating the caller's own seed (honest degradation).
+    ceiling (run.json meta max_seats — a per-RUN declaration, not env) acts as
+    a CEILING under the pool cap: the run may hold fewer seats than the pool
+    allows, never more. WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
+    and never touches pool state (_seat_acquire returns before this runs).
+    Operators change a live pool's cap by removing <seats>/.cap while idle."""
+    f = Path(seats) / ".cap"
+    cap_v = None
+    try:
+        v = int(f.read_text(encoding="utf-8").strip())
+        if v > 0:
+            cap_v = v
+    except (OSError, ValueError):
+        cap_v = None                       # absent/corrupt: re-seedable, not fatal
+    if cap_v is None and isinstance(seed, int) and 0 < seed:
+        try:
+            tmp = f.with_name(f".cap.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+            tmp.write_text(str(seed), encoding="utf-8")
+            os.replace(str(tmp), str(f))   # atomic: readers never see a partial cap
+            cap_v = seed
+        except OSError:
+            cap_v = seed                   # unrecordable pool: arbitrate locally
+    if (cap_v is not None and isinstance(ceiling, int) and not isinstance(ceiling, bool)
+            and 0 < ceiling < cap_v):
+        return ceiling                     # per-run ceiling rides UNDER the pool truth
+    return cap_v
+
+def _seat_pool_seed():
+    """est-mg5o2 x est-2ek.1.856: the process-side SEED for the pool cap — the
+    operator-named knobs resolved by the ONE validator (wfcommon.seat_max_seats:
+    WORKFLOW_MAX_SEATS env > .env files read fresh (est-gxjh6) > config
+    workflows.max_seats > SEATS_DEFAULT) MINUS the per-run declaration: run.json
+    meta max_seats is deliberately NOT a seed — a run may hold fewer seats than
+    the pool allows, but a single run's declaration never sets the pool's global
+    truth (_seat_pool_ceiling carries it UNDER the pool cap). Only the FIRST
+    admission into an unrecorded pool records this seed; every admission after it
+    arbitrates against the recorded value. An invalid operator knob RAISES
+    SeatCapError here (floor/ceiling, never a silent SEATS_DEFAULT): a typo'd cap
+    is never recorded as the pool's global truth — the spawn path fails the node
+    closed as error_class=seat_cap before any ticket is written. 0 (the explicit
+    semaphore-off sentinel) stays a LOCAL disable and never records a pool cap."""
+    return seat_max_seats(None, dotenv_reader=_seat_cap_from_env_files)
+
+def _seat_pool_ceiling(meta):
+    """run.json meta max_seats as a pool CEILING: positive int or None."""
+    v = meta.get("max_seats")
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+def _seats_dir():
+    d = os.environ.get("WF_SEATS_DIR", "")
+    return Path(d) if d else runs_root() / ".seats"
+
+def _ppid_of(pid):
+    """Parent pid: /proc first, `ps -o ppid=` where there is no procfs (macOS/
+    BSD — the same fallback shape as _proc_alive). None = unknowable."""
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        return int(subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True,
+                                  text=True, timeout=2).stdout.strip())
+    except Exception:
+        return None
+
+def _ancestors():
+    """This process's ancestor pids, or None when NO channel can read even our
+    own parent (est-g255 P255-5: unknown is never an empty set — an empty set
+    would silently count a lending ancestor's seat and deadlock the nest)."""
+    out, pid = set(), os.getpid()
+    for i in range(64):
+        pid = _ppid_of(pid)
+        if pid is None:
+            return None if i == 0 else out
+        if pid <= 1:
+            break
+        out.add(pid)
+    return out
+
+def _seat_holder_live(pid, bt):
+    """est-g255 P255-3: a ticket holder lives only while the SAME process does —
+    _proc_alive plus the #80 occupant test (_proc_boottime). A pinned start
+    tick that disagrees with the live one is a recycled pid: dead. An
+    unreadable live tick (no procfs) or a legacy unpinned row never disproves."""
+    if not _proc_alive(pid):
+        return False
+    if bt is None:
+        return True
+    live = _proc_boottime(pid)
+    return live is None or live == bt
+
+def _seat_live_tickets(seats, anc=()):
+    """Held tickets, pruning verifiably dead ones. A ticket held by an ANCESTOR
+    of this process (a nested runner launched from inside a seat) is lent, not
+    counted: the parent seat is waiting on us — counting it would deadlock the
+    nest. est-g255 P255-3: a ticket that cannot be read/parsed is UNCERTAIN
+    capacity — counted live and never pruned (never a silent undercount).
+    est-g255 r2 R2: the LENDING exemption requires the child occupant's
+    IDENTITY, not bare PID ancestry membership — the pinned child must pass the
+    same _seat_holder_live test (alive + boottime equal, #80). A contradicted
+    (recycled) child boottime is a stranger wearing the ancestor's pid: no
+    lend, the ticket counts. A live runner holder keeps the ticket occupied, so
+    a stale child pin must never buy a capacity exemption.
+    est-2ek.1.857 (over-admit): a SINGLE death verdict is never load-bearing.
+    Candidates for pruning are re-confirmed after a short settle (the same
+    liveness law, re-run); any holder that reconfirms alive keeps its ticket
+    AND counts as live (an unconfirmed verdict is unknown, and unknown is
+    never undercounted). Every external unlink is logged to .pruned.jsonl."""
+    live = 0
+    doomed = []            # (ticket_path, row|None, holders) — first-pass dead
+    for t in seats.glob("*.json"):
+        try:
+            row = json.loads(t.read_text())
+            holders = [(int(row["pid"]), row.get("boottime"))]
+            child = None if row.get("child") is None else int(row["child"])
+            child_bt = row.get("child_boottime")
+            if child is not None:
+                holders.append((child, child_bt))
+            if any(b is not None and type(b) is not int for _, b in holders):
+                raise ValueError("unpinnable boottime")
+        except FileNotFoundError:
+            continue   # released between glob and read
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            live += 1  # unreadable: uncertain capacity, kept and counted
+            continue
+        if not any(_seat_holder_live(p, b) for p, b in holders):
+            doomed.append((t, row, holders))     # est-857: not yet — reconfirm
+            continue
+        if (child is not None and anc is not None and len(holders) > 1
+                and child in anc and _seat_holder_live(child, child_bt)):
+            continue   # lent: the SAME proven-live child sits in our ancestry
+        live += 1
+    if doomed:
+        # One settle, then re-run the identical law over every candidate. A
+        # holder that flips back to alive at reconfirmation was a transient
+        # mis-sample (the 857 shape: LIVE tickets unlinked wholesale, cap void):
+        # keep the ticket and count it. Only a candidate dead on BOTH passes is
+        # pruned — loudly.
+        time.sleep(0.05)
+        for t, row, holders in doomed:
+            if any(_seat_holder_live(p, b) for p, b in holders):
+                live += 1                        # mis-sample: never drop a live seat
+                continue
+            try:
+                t.unlink()
+                _seat_prune_ledger(seats, "ticket", t.name, row, "holders-dead-2of2")
+            except OSError:
+                pass
+    return live
+
+# est-g255 P255-5: the semaphore is full and this process's ancestry cannot be
+# read at all (no /proc AND no ps) — whether a held seat is a lending ancestor
+# is unknowable, so the acquire REFUSES typed (seat_unsupported) instead of
+# silently burning the whole bounded wait as if the cap were merely busy.
+_SEAT_UNSUPPORTED = object()
+SEAT_LOCK_POLL_S = 0.02
+
+def _seat_queue_register(own, name, enq, uid):
+    """est-2ek.1.856: create (once) this waiter's queue marker under <seats>/
+    queue/. Call-site holds the .lock flock, so marker creation is linearizable
+    with the count + ticket write. `enq` is the waiter's arrival time (stable
+    across retries); (enqueued, uuid) is its queue position."""
+    try:
+        own.parent.mkdir(parents=True, exist_ok=True)
+        if own.is_file():
+            return True
+        tmp = own.with_name(own.name + ".tmp")
+        tmp.write_text(json.dumps({"pid": os.getpid(),
+                                   "boottime": _proc_boottime(os.getpid()),
+                                   "uuid": uid, "name": str(name),
+                                   "enqueued": round(enq, 3),
+                                   "ts": round(time.time(), 3),
+                                   "hb": round(time.time(), 3)}))
+        os.replace(tmp, own)
+        return True
+    except OSError:
+        return False
+
+def _seat_queue_beat(own, last_hb):
+    """Refresh the own-marker heartbeat at ~SEAT_QUEUE_HB_S cadence (best
+    effort — an owner whose marker vanished re-registers next loop)."""
+    now_s = time.time()
+    if now_s - last_hb < SEAT_QUEUE_HB_S:
+        return last_hb
+    try:
+        row = json.loads(own.read_text())
+        row["hb"] = round(now_s, 3)
+        tmp = own.with_name(own.name + ".tmp")
+        tmp.write_text(json.dumps(row))
+        os.replace(tmp, own)
+    except (OSError, ValueError):
+        pass
+    return now_s
+
+def _seat_queue_remove(own):
+    """A waiter removes its OWN marker at admit/expiry/abort — never another's
+    (that path is _seat_queue_prune, reconfirmed and ledgered)."""
+    try:
+        own.unlink()
+    except OSError:
+        pass
+
+def _seat_queue_scan(seats, own, my_key, anc, now_s):
+    """(older_live, prune_candidates) for one admission decision. `older_live`
+    is True when a LIVE marker exists whose (enqueued, uuid) is strictly older
+    than mine — the queue is the arbiter, the flock-poll race is not. An
+    unreadable marker is uncertain capacity: it blocks until its mtime ages
+    past SEAT_QUEUE_PRUNE_S (never a silently-dropped fairness claim). A dead
+    owner or a heartbeat older than SEAT_QUEUE_PRUNE_S (a wedged waiter cannot
+    wedge the queue forever) is a prune CANDIDATE — the caller reconfirms and
+    logs. A marker owned by an ANCESTOR of this process is lent, never
+    blocking (same law as _seat_live_tickets, est-g255 P255-5)."""
+    qd = seats / SEAT_QUEUE_DIR
+    older, cands = False, []
+    try:
+        markers = sorted(qd.glob("*.json"))
+    except OSError:
+        return False, []
+    for m in markers:
+        if m == own:
+            continue
+        try:
+            row = json.loads(m.read_text())
+            opid = int(row["pid"])
+            enq = float(row.get("enqueued", row.get("ts", 0)))
+            uid = str(row.get("uuid") or m.name)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            try:
+                mt = m.stat().st_mtime
+            except OSError:
+                continue
+            if now_s - mt > SEAT_QUEUE_PRUNE_S:
+                cands.append((m, None, None, "corrupt"))
+            else:
+                older = True                      # unreadable: cannot rule out older
+            continue
+        if anc is not None and opid in anc:
+            continue                              # lent: our own ancestry is waiting on us
+        try:
+            hb = row.get("hb")
+            hb = float(hb) if isinstance(hb, (int, float)) else m.stat().st_mtime
+        except OSError:
+            continue
+        alive_owner = _proc_alive(opid)
+        if alive_owner and (now_s - hb) <= SEAT_QUEUE_LIVE_S:
+            if (enq, uid) < my_key:
+                older = True
+        elif not alive_owner or (now_s - hb) > SEAT_QUEUE_PRUNE_S:
+            cands.append((m, row, opid,
+                          "dead-owner" if not alive_owner else "hb-stale"))
+        # else: alive owner with an aging heartbeat (between LIVE_S and PRUNE_S)
+        # — neither blocking nor prunable yet; it self-heals at both bounds.
+    return older, cands
+
+def _seat_queue_prune(seats, cands):
+    """est-2ek.1.857 law for markers too: a single death verdict never deletes
+    anyone's claim. Re-run the liveness check after a settle; a candidate whose
+    owner reconfirms alive (or whose heartbeat refreshed) is kept. Pruned
+    markers land in the .pruned.jsonl ledger — loud."""
+    if not cands:
+        return
+    time.sleep(0.05)
+    for m, row, opid, kind in cands:
+        try:
+            row2 = json.loads(m.read_text())
+        except Exception:
+            row2 = row
+        if kind == "dead-owner":
+            if opid is None or _proc_alive(opid):
+                continue                          # mis-sample or corrupt-row revived: keep
+        elif kind in ("hb-stale", "corrupt"):
+            try:
+                hb2 = (row2 or {}).get("hb")
+                hb2 = (float(hb2) if isinstance(hb2, (int, float))
+                       else (row2 or {}).get("ts") or m.stat().st_mtime)
+            except OSError:
+                continue                          # vanished: nothing to prune
+            if time.time() - hb2 <= SEAT_QUEUE_PRUNE_S:
+                continue                          # heartbeat refreshed: real waiter
+        try:
+            m.unlink()
+            _seat_prune_ledger(seats, "queue-marker", m.name, row2, kind)
+        except OSError:
+            pass
+
+def _seat_acquire(seats, name, cap, bounded_s, on_wait=None, abort=None,
+                  admit_lock=None, pool_seed=None, pool_ceiling=None):
+    """Wait until a seat is free (<= bounded_s), returning the ticket Path; None
+    on bounded-wait expiry / abort(); _SEAT_UNSUPPORTED when full and our
+    ancestry is unknowable. cap <= 0 disables the semaphore.
+    est-mg5o2: when pool_seed is supplied, admission arbitrates against the
+    POOL-RECORDED cap (<seats>/.cap, first writer wins) instead of the caller's
+    per-process cap — the caller's cap is only the fallback when the pool holds
+    no truth; pool_seed seeds an unrecorded pool; pool_ceiling (run.json
+    max_seats) caps THIS run under the pool truth. The arbitration runs under
+    the .lock flock, so first-writer-wins and count-then-admit are one
+    cross-process atomic step — a nested child runner whose inherited env
+    carries a stale/missing cap joins the pool's arithmetic, not its own.
+    est-g255 P255-2: the wait is bounded and cancellable THROUGH lock
+    contention — the registry lock is taken by a non-blocking poll that checks
+    deadline/abort between tries, and both are rechecked after the lock is
+    held, immediately before a ticket is written. When admit_lock is supplied
+    it is taken with a TIMEOUTED acquisition (ordering: admit_lock -> .lock
+    flock) so contention on the mutex itself stays bounded and cancellable:
+    deadline/abort are rechecked between timed tries, and abort() is RECHECKED
+    under both locks, atomically with ticket creation — a cancel that lands at
+    any earlier moment is decided against at the ticket-creation instant. A
+    wait that expires or aborts while the mutex is contended returns None
+    (no ticket), the same contract as the flock path.
+    est-g255 r3 (zap probes: parent-admit-lock-probes.json): a bare
+    `with admit_lock:` blocked on Lock.acquire() past bounded_s and past an
+    abort; the acquisition is now a poll of admit_lock.acquire(timeout=...)
+    that checks _out() between tries, mirroring the non-blocking flock poll.
+    est-2ek.1.856 (FIFO): first-poller-wins starved long waiters behind
+    short-run churn. A waiter that finds the door shut registers a queue
+    marker; admission then requires live < cap AND no strictly-older live
+    marker (order key (enqueued, uuid)). Markers gate fairness only — never
+    capacity; the own marker is removed at every exit (admit, expiry, abort,
+    unsupported) under the same under-lock recheck contract as tickets."""
+    seats = Path(seats)
+    seats.mkdir(parents=True, exist_ok=True)
+    if cap is None or cap <= 0:
+        return seats / ".uncapped"          # sentinel: release is a no-op
+    t_end = time.time() + (bounded_s if bounded_s is not None else float("inf"))
+    def _out():
+        return time.time() >= t_end or bool(abort and abort())
+    anc = _ancestors()                      # fixed for this process's life
+    waited = False
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(name))[:60]
+    uid = uuid.uuid4().hex[:8]
+    enq = time.time()                       # arrival: stable across every retry loop
+    own = seats / SEAT_QUEUE_DIR / f"{safe}.{os.getpid()}.{uid}.json"
+    my_key = (round(enq, 3), uid)
+    last_hb = 0.0
+    try:
+        while True:
+            # est-g255 r2 R1: the cancel-setter synchronizes on admit_lock BEFORE
+            # setting its Event (see the fan-out's _cancel_stragglers), so holding
+            # it here — then rechecking abort() under it AND the .lock flock —
+            # makes ticket creation atomic against a cancel landing at any earlier
+            # moment: either the setter won (abort True under our recheck -> no
+            # ticket) or the ticket exists and the setter's scan sees this holder.
+            # est-g255 r3: the acquisition itself must honor the same bounded
+            # contract — a bare `with admit_lock:` blocked on Lock.acquire() past
+            # bounded_s and past an abort (zap probes parent-admit-lock-probes-
+            # json). Poll admit_lock.acquire(timeout=...) and check _out() between
+            # tries; a bounded wait that expires or aborts while the mutex is
+            # contended returns None exactly like the flock path. When no mutex
+            # is supplied the spawn path keeps its nullcontext (unchanged).
+            if admit_lock is None:
+                al_acquired = False
+            else:
+                al_acquired = False
+                while not al_acquired:
+                    if _out():
+                        return None
+                    remaining = t_end - time.time()
+                    al_acquired = admit_lock.acquire(
+                        timeout=SEAT_LOCK_POLL_S if remaining == float("inf")
+                        else max(0.0, min(SEAT_LOCK_POLL_S, remaining)))
+                    if al_acquired:
+                        break
+                    if _out():
+                        return None
+            try:
+                fd = os.open(str(seats / ".lock"), os.O_RDWR | os.O_CREAT, 0o644)
+                try:
+                    while True:
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            if _out():
+                                return None
+                            time.sleep(SEAT_LOCK_POLL_S)
+                    try:
+                        if _out():
+                            return None
+                        # est-mg5o2 x est-2ek.1.856: the pool-recorded cap is grafted
+                        # INSIDE the FIFO admission path. We already hold admit_lock AND
+                        # the .lock flock, so first-writer-wins (<seats>/.cap) is a
+                        # cross-process fact and the cap read here is the same one the
+                        # queue-marker decision below uses: admission is `live < cap`
+                        # (pool truth, not this process's inherited env) AND no strictly-
+                        # older live marker (FIFO). Markers still gate fairness only,
+                        # never capacity; a corrupt .cap re-seeds, never fatal.
+                        if pool_seed is not None:
+                            _pc = _seat_pool_cap(seats, seed=pool_seed,
+                                                 ceiling=pool_ceiling)
+                            if _pc is not None:
+                                cap = _pc
+                        live = _seat_live_tickets(seats, anc)
+                        older, cands = _seat_queue_scan(seats, own, my_key, anc,
+                                                        time.time())
+                        _seat_queue_prune(seats, cands)
+                        if live >= cap or older:
+                            # the door is shut for someone: take our place in the
+                            # queue FIRST (under the same flock), then decide —
+                            # an admitted newcomer can never jump a live marker.
+                            _seat_queue_register(own, name, enq, uid)
+                        if live < cap and not older:
+                            if _out():          # ATOMIC cancel recheck: same lock
+                                              # the cancel-setter takes pre-set
+                                return None
+                            t = seats / f"{safe}.{os.getpid()}.{uid}.json"
+                            tmp = t.with_name(t.name + ".tmp")
+                            tmp.write_text(json.dumps({"pid": os.getpid(), "name": str(name),
+                                                       "boottime": _proc_boottime(os.getpid()),
+                                                       "ts": round(time.time(), 3)}))
+                            os.replace(tmp, t)
+                            return t
+                        if live >= cap and anc is None:
+                            return _SEAT_UNSUPPORTED
+                    finally:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
+            finally:
+                if al_acquired and admit_lock is not None:
+                    admit_lock.release()
+            if not waited and on_wait:
+                waited = True
+                on_wait()
+            if _out():
+                return None
+            last_hb = _seat_queue_beat(own, last_hb)
+            time.sleep(0.2)
+    finally:
+        # every exit frees the queue: admitted (the seat is ours — no longer a
+        # waiter), expired, aborted, or refused. A waiter never leaves a marker
+        # that would gate admissions after it is gone.
+        _seat_queue_remove(own)
+
+def _seat_bind(ticket, child_pid):
+    """Record the seat's child pid (+ its start tick): the ticket stays held
+    while EITHER the runner or its child lives (a runner crash must not free a
+    busy seat)."""
+    if not isinstance(ticket, Path) or ticket.name == ".uncapped":
+        return
+    try:
+        row = json.loads(ticket.read_text())
+        row["child"] = int(child_pid)
+        row["child_boottime"] = _proc_boottime(int(child_pid))
+        tmp = ticket.with_name(ticket.name + ".tmp")
+        tmp.write_text(json.dumps(row))
+        os.replace(tmp, ticket)
+    except (OSError, ValueError):
+        pass
+
+def _seat_release(ticket):
+    if not isinstance(ticket, Path) or ticket.name == ".uncapped":
+        return
+    try: ticket.unlink()
+    except OSError: pass
+
+def _spawn_floor_from_logs(run, node, index):
+    """est-hls8y: the highest a<N> whose logs/<node>[.<i>].a<N>.log already exists
+    in this run dir, or -1. A resumed runner is a new process, so the in-memory
+    counter starts empty; without this floor the resumed spawn reuses a0 and
+    truncates the attempt it resumes from."""
+    if run is None:
+        return -1
+    d = Path(run) / "logs"
+    if not d.is_dir():
+        return -1
+    pat = re.compile(re.escape(_spawn_stem(node, index, 0)[:-1]) + r"(\d+)\.log")
+    hi = -1
+    for p in d.iterdir():
+        m = pat.fullmatch(p.name)
+        if m:
+            hi = max(hi, int(m.group(1)))
+    return hi
+
 def _next_spawn_no(meta, node, index):
     """One counter per (node, item) — every Popen gets a fresh spawn number so
-    log names, session titles, and spawn-record `attempt` are unique per spawn."""
+    log names, session titles, and spawn-record `attempt` are unique per spawn.
+    est-hls8y: the first use of a key seeds from the logs already on disk, so a
+    resumed run never reuses a spawn number that owns a log."""
     key = f"{node['id']}:{index}"
     with meta["_procs_lock"]:
-        n = meta["_spawn_n"].get(key, -1) + 1
+        if key not in meta["_spawn_n"]:
+            meta["_spawn_n"][key] = _spawn_floor_from_logs(meta.get("_run"), node, index)
+        n = meta["_spawn_n"][key] + 1
         meta["_spawn_n"][key] = n
     return n
 
@@ -2348,7 +4828,14 @@ class _AdoptedHandle:
 def _proc_alive(pid):
     """Liveness for a child THIS process did not spawn (cannot waitpid): os.kill 0
     + /proc state, zombie = dead. Same identity law as wfcommon._verify_spawn_rec,
-    minus the argv check (identity was verified at adoption time)."""
+    minus the argv check (identity was verified at adoption time). #448 closes the
+    mid-reap false-live: when the /proc row vanishes between os.kill 0 and the
+    read, a kernel re-ask that now returns ESRCH is a REAPED-CLASS death (the
+    process exited inside the race window — the exact shape that dead-lettered a
+    banked-complete node); an empty `ps` row likewise means the pid is GONE.
+    A pid that STILL exists behind an unreadable row keeps the g255 law: unknown
+    state is not death — the ps fallback decides, fail-open only when even ps is
+    dead."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -2358,13 +4845,25 @@ def _proc_alive(pid):
     try:
         state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
         return not state.startswith("Z")
+    except FileNotFoundError:
+        # Row gone: re-ask the kernel. ESRCH → the process exited in the race
+        # window, reaped-class death (#448). Still there → the platform simply
+        # has no procfs for us to read (or an instant mid-exit); the ps
+        # fallback below decides — never a verdict on a missing row alone.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
     except (OSError, IndexError):
-        try:  # macOS/BSD: no procfs
-            row = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
-                                 capture_output=True, text=True, timeout=2).stdout
-            return not row.strip().startswith("Z")
-        except Exception:
-            return True   # os.kill 0 proved existence; unknown state is not death
+        pass                      # unreadable row: the ps fallback below decides
+    try:  # macOS/BSD: no procfs (or an unreadable row) — ps is the only channel
+        row = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=2).stdout.strip()
+        return bool(row) and not row.startswith("Z")   # #448: empty row = gone
+    except Exception:
+        return True   # os.kill 0 proved existence; unknown state is not death
 
 def _kill_adopted(pid):
     try:
@@ -2394,6 +4893,16 @@ def _kill_adopted(pid):
 # on that path, which is why it is pinned here.
 
 RUNNER_PID_ENV = "HERMES_WF_RUNNER_PID"      # spawn pin: the runner's own pid
+# est-6226: the ONE reason string for an external signal death (see
+# _install_runner_term_cleanup). wfcommon.is_external_kill is its single
+# classifier; the reaper/dispatcher must never re-derive it from prose.
+# The tag states SIGNAL + CLASS only, never the sender: a handler cannot see
+# who fired (adversary probe 2026-10-06: a plain os.kill, no gateway restart,
+# was recorded as "gateway restart" — false provenance). The ONLY evidence
+# that the death window actually matches a gateway restart is the reaper's
+# log-correlated "; gw-restart window match" suffix (__init__.py
+# _reap_silent_death) — that clause is earned from files, never asserted here.
+EXTERNAL_SIGTERM_REASON = "terminated: SIGTERM (external: source unknown)"
 CHILD_BELT_GRACE_S = 5.0   # replacement-runner (adoption) window before belt self-exit
 CHILD_BELT_POLL_S = 0.25
 
@@ -2479,6 +4988,29 @@ def child_parent_watch(interval=CHILD_BELT_POLL_S, grace_s=CHILD_BELT_GRACE_S):
                 os._exit(70)                  # EX_TEMPFAIL — never exit clean
         time.sleep(interval)
 
+def _lane_killed(run, nid):
+    """est-cl7t: a node-targeted lane kill (act_kill) marker exists for this node."""
+    return (run / "kill" / f"{nid}.json").exists()
+
+def _lane_kill_sweep(run, meta):
+    """est-cl7t: SIGKILL every in-flight child registered under a killed node.
+    Registry keys are "<node_id>:..."; sibling lanes are untouched and the run-level
+    stop Event / stop.request are never set, so the run keeps going."""
+    kd = run / "kill"
+    if not kd.is_dir():
+        return
+    for kf in kd.glob("*.json"):
+        pre = kf.stem + ":"
+        with meta["_procs_lock"]:
+            for key, p in list(meta["_procs"].items()):
+                if not str(key).startswith(pre):
+                    continue
+                try:
+                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                except Exception:
+                    try: p.kill()
+                    except Exception: pass
+
 def _kill_registered_children(meta, reason):
     """killpg EVERY registered child (each is its own group leader —
     start_new_session at spawn), SIGTERM grace then SIGKILL, /proc-proven via
@@ -2538,7 +5070,20 @@ def _install_runner_term_cleanup(meta):
         except Exception: pass
         try:
             if not _EXIT_WRITTEN[0]:
-                write_runner_exit(meta["_run"], "terminated: SIGTERM")
+                # est-6226 honest attribution: the runner NEVER SIGTERMs itself
+                # (stop rides the cooperative stop.request boundary, exits
+                # "stopped"; the timeout kill targets child groups). A SIGTERM
+                # landing HERE is external by construction — the witnessed shape
+                # is the gateway-restart wave propagating beyond the gateway
+                # (2026-10-06 10:06Z: runner + pre-b64 watcher pair killed, the
+                # death logged as if it were a lane death, feeding ALERT storms
+                # and wrong re-dispatch). Tag the record so classification can
+                # tell an external kill from a lane failure — but tag ONLY the
+                # class: "gateway restart" as sender is NOT established from in
+                # here (any os.kill lands the same), so the constant says
+                # source unknown; gateway-correlation is the reaper's separate,
+                # file-evidenced clause.
+                write_runner_exit(meta["_run"], EXTERNAL_SIGTERM_REASON)
         except Exception: pass
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         os.kill(os.getpid(), signal.SIGTERM)     # re-raise the default
@@ -2596,7 +5141,7 @@ def _left_live_record(pid, stuck, note, r=None):
     if r.get("attempts_log") is not None:
         rec["attempts_log"] = r["attempts_log"]
     for k in ("log_path", "prompt_path", "pid", "spawn", "skey", "final",
-              "tree_pids", "profile_home"):
+              "tree_pids", "profile_home", "banked"):
         if r.get(k) is not None:
             rec[k] = r[k]
     return rec
@@ -2649,6 +5194,8 @@ def _account_tree(meta, node, index, spawn_no, pid, tree_seen, has_answer):
           "index": index, "pids": sorted(known), "proof": proof}
     if proof != "dead":
         log(run, ("item." if index is not None else "node.") + "tree_kill", **ev)
+        if proof == "unknown":
+            return ("fail", _proc_unreadable_record(pid, node["id"], spawn_no))
         rec = _left_live_record(pid, stuck,
                                 f"node '{node['id']}' spawn a{spawn_no} cannot be judged.",
                                 {"attempts": 1})
@@ -2879,9 +5426,12 @@ def _aux_run(cmd, timeout=None, **kw):
     timeout + 2*kill-grace, always — an unbounded communicate() here parked
     the runner's machine-gate deadline in review (#80 finding 3)."""
     kw.pop("start_new_session", None)              # ours is non-negotiable
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         text=True, start_new_session=True, **kw)
     with _aux_lock:
+        # #283 review B1(b).3: spawn+registration ATOMIC under _aux_lock — the
+        # zombie reaper re-checks _aux_pids under the same lock before any
+        # waitpid, so it can never take this child's exit status in the gap.
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, start_new_session=True, **kw)
         _aux_pids.add(p.pid)
     try:
         try:
@@ -2912,6 +5462,11 @@ def _aux_run(cmd, timeout=None, **kw):
         for h in (p.stdout, p.stderr):
             try: h.close()
             except Exception: pass
+
+# est-37d74 (#453): the fan-out precheck probe is bound by the same per-probe cap
+# the gate wait applies to its until_argv check (min(every, 300)): a custody
+# probe costs seconds, never a wave.
+_FANOUT_PRECHECK_TIMEOUT_S = 300
 
 def _kill_aux_tree(p):
     """SIGKILL the aux child AND its group (the child is its own group leader
@@ -2990,10 +5545,127 @@ def _reap_zombie(pid):
     except (ChildProcessError, OSError):
         pass
 
+def _owned_child_pids(meta):
+    """Every pid the runner owns a wait() on: seat handles in meta['_procs']
+    and aux probes in _aux_pids. CALLER HOLDS meta['_procs_lock'] then
+    _aux_lock (the order seat spawn already uses: _procs_lock is held across
+    _sidecar_live_registered, which takes _aux_lock)."""
+    mine = {getattr(h, "pid", None) for h in meta["_procs"].values()}
+    mine |= _aux_pids
+    return {p for p in mine if isinstance(p, int)}
+
+def _adopted_zombie_pids(meta):
+    """Pids of ZOMBIES whose parent is THIS process (the subreaper's adopted
+    pool) that the runner does NOT own (seat _procs / aux _aux_pids). This is
+    a lock-free pre-filter only — _reap_adopted_zombies re-checks ownership
+    under the locks before any waitpid (#283 review B1). Receipt 2026-10-07 burn-down:
+    PR_SET_CHILD_SUBREAPER adopts every double-fork descendant of a seat, and
+    _reap_zombie ran ONLY on boot sweeps / kill paths — a healthy run never
+    reaped its pool. Eight-hour lanes accumulated thousands of adopted zombies
+    each (a box-wide census found 7,674 of them `git`), the load average
+    tripled, and each runner burned ~0.65 cores
+    spinning /proc walks that grow O(zombies) every 0.25 s tick. Excluding
+    tracked Popen pids is INTEGRITY, not hygiene: waitpid'ing a Popen child out
+    from under its polling thread makes subprocess report ChildProcessError ->
+    returncode 0, a FALSE GREEN seat verdict. After the owning thread pops its
+    handle the child is dead and already reaped: a late reap is a harmless
+    ChildProcessError."""
+    me = os.getpid()
+    with meta["_procs_lock"]:
+        with _aux_lock:
+            owned = _owned_child_pids(meta)
+    out = []
+    try:
+        for pid in os.listdir('/proc'):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f'/proc/{pid}/stat') as f:
+                    head, _, rest = f.read().rpartition(') ')
+                if rest.split()[0] != 'Z' or int(rest.split()[1]) != me:
+                    continue
+            except (OSError, IndexError, ValueError):
+                continue
+            if int(pid) in owned:
+                continue
+            out.append(int(pid))
+    except OSError:
+        return []
+    return out
+
+def _reap_adopted_zombies(meta):
+    """One drain pass. The scan is a stale snapshot by construction, so the
+    ownership check and the waitpid happen TOGETHER under meta['_procs_lock']
+    then _aux_lock (#283 review B1): seat spawn does Popen+register under
+    _procs_lock and _aux_run does Popen+register under _aux_lock, so a child
+    is either already in the live owned set here or does not exist yet — the
+    reaper can never take the exit status a seat/aux owner is waiting for.
+    Returns the number of pids reaped."""
+    cands = _adopted_zombie_pids(meta)
+    if not cands:
+        return 0
+    n = 0
+    with meta["_procs_lock"]:
+        with _aux_lock:
+            owned = _owned_child_pids(meta)
+            for z in cands:
+                if z in owned:
+                    continue        # registered since the scan: its owner reaps
+                try:
+                    if os.waitpid(z, os.WNOHANG)[0] == z:
+                        n += 1
+                except (ChildProcessError, OSError):
+                    pass
+    return n
+
+def _start_reaper(meta):
+    """Daemon reaper — drains the adopted-orphan zombie pool every second
+    while the run lives (the boot-sweep-only reaping is the leak: load average
+    39 on 20 cores with ~8.8k zombies, receipt 2026-10-07). Never touches
+    a pid the runner owns (_procs seats, _aux_pids probes: verdict
+    integrity). Only runs when this process IS the subreaper (#283 review
+    B2): without it nothing is adopted and the reaper could only ever reap
+    the runner's own direct children. Returns the thread, or None."""
+    if not meta.get("_subreaper"):
+        return None
+    def loop():
+        stop = meta["_stop"]
+        while not stop.is_set():
+            try:
+                _reap_adopted_zombies(meta)
+            except Exception:
+                pass            # hygiene is best-effort: never kill the thread
+            stop.wait(1.0)
+    t = threading.Thread(target=loop, daemon=True, name="zombie-reaper")
+    t.start()
+    return t
+
+PROCREE_SETTLE_CHECKS = 2      # #448: re-checks between the last SIGKILL and the
+PROCREE_SETTLE_GAP_S = 0.5     # fail-closed verdict — the reap window is sub-second
+
+def _reap_settle(pids):
+    """#448: a BOUNDED settle between the SIGKILL and any fail-closed verdict.
+    A pid caught mid-reap (exited between the /proc read and the parent's
+    wait(), or the row vanishing under os.kill 0) is the same race as an
+    already-dead tree — it is NOT a live descendant. Re-wait (the runner can
+    reap its own children), re-read /proc state, and only call a pid stuck
+    when it is still NON-zombie live after the settle window. Returns the
+    still-live list ([] = every pid reaped)."""
+    pids = sorted({p for p in pids if isinstance(p, int)})
+    for _ in range(PROCREE_SETTLE_CHECKS):
+        if not pids:
+            break
+        time.sleep(PROCREE_SETTLE_GAP_S)
+        for p in pids:
+            _reap_zombie(p)
+        pids = [p for p in pids if _proc_alive(p)]
+    return pids
+
 def _wait_pids_dead(pids, proof_s):
     """#61c: /proc-verify every pid is dead within the budget. (True, []) when
     PROVEN dead; (False, still_live) on timeout — never True on an unreadable
-    read (#61b B2 law)."""
+    read (#61b B2 law). #448: at the deadline the stuck verdict rides the
+    bounded reap settle first — a mid-reap race proves dead, never stuck."""
     pids = sorted({p for p in pids if isinstance(p, int)})
     if not pids:
         return True, []
@@ -3003,6 +5675,8 @@ def _wait_pids_dead(pids, proof_s):
         if not live:
             return True, []
         if time.time() >= deadline:
+            if not _reap_settle(live):          # #448: settle before fail-closed
+                return True, []
             return False, live
         time.sleep(0.05)
 
@@ -3238,27 +5912,6 @@ def _register_survivor(sidecar_path, token, pid):
     except OSError:
         return False
 
-def _register_self_if_detached():
-    """Child-side helper implementing the registration contract: a detached
-    descendant (double-fork + setsid: it forks AFTER import and execs nothing)
-    registers THIS pid against the inherited spawn token when its PPid no
-    longer carries that token (orphaned / setsid family). Bounded, never fatal.
-    Opportunistic by design — #61c never depends on child discipline."""
-    try:
-        path = os.environ.get(SIDECAR_ENV_PATH)
-        token = os.environ.get(SIDECAR_ENV_SPAWN)
-        if not path or not token:
-            return
-        try:
-            stat = Path(f"/proc/{os.getpid()}/stat").read_text()
-            my_ppid = int(stat.rsplit(")", 1)[1].split()[1])
-        except (OSError, IndexError, ValueError):
-            return
-        if my_ppid and _proc_envv(my_ppid).get(SIDECAR_ENV_SPAWN) == token:
-            return                               # still attached to our spawner
-        _register_survivor(path, token, os.getpid())
-    except Exception:
-        pass
 
 def _boot_sweep(meta):
     """#61c: before a (re)spawned runner launches anything, reap the survivors
@@ -3315,7 +5968,8 @@ def _proc_unreadable_record(pid, node_id, spawn_no, r=None):
     # failed quarantine; the unreadable record must not erase it.
     if r.get("attempts_log") is not None:
         rec["attempts_log"] = r["attempts_log"]
-    for k in ("log_path", "prompt_path", "pid", "spawn", "skey", "profile_home"):
+    for k in ("log_path", "prompt_path", "pid", "spawn", "skey", "profile_home",
+              "banked"):
         if r.get(k) is not None:
             rec[k] = r[k]
     return rec
@@ -3330,19 +5984,26 @@ def _tree_quiesce(known, pgid, hold_s, proof_s, term_grace_s=None):
     sit OUTSIDE the group (the 06f57ea9 shape). Returns (proof, still_live):
     ('', []) when there was nothing to account for — the dead-or-empty case the
     healthy retry path must not touch; ('dead', []) once PROVEN; ('stuck', pids)
-    when the proof budget ran out (fail closed upstream, never blind-respawn) —
-    or whenever the table became unreadable (#61b B2: an unreadable /proc can
-    never produce 'dead', the proof only completes on a readable re-walk)."""
+    when the proof budget ran out (fail closed upstream, never blind-respawn);
+    ('unknown', known_pids) when the table became unreadable (#61b B2). Known
+    PIDs are attribution evidence, not proof they are still live: unreadability
+    can never produce 'dead' or a readable still-live verdict."""
+    known = set(known)
     def _live():
         s = {p for p in known if _proc_alive(p)}
         members = _proc_pids_by_pgid(pgid)
         if members is None:
             return None                             # #61b B2: unreadable
+        known.update(members)
         s |= {p for p in members if _proc_alive(p)}
+        # Death proof is also the reap boundary for our adopted children.
+        # Leaving owned zombies here races the next spawn and final verdict.
+        for p in known - s:
+            _reap_zombie(p)
         return sorted(s)
     live = _live()
     if live is None:
-        return "stuck", sorted(known)               # cannot check death: NOT dead
+        return "unknown", sorted(known)               # cannot check death: NOT dead
     if not live:
         return "", []
     deadline = time.time() + hold_s
@@ -3350,7 +6011,7 @@ def _tree_quiesce(known, pgid, hold_s, proof_s, term_grace_s=None):
         time.sleep(0.1)
         live = _live()
         if live is None:
-            return "stuck", sorted(known)
+            return "unknown", sorted(known)
     if live:
         # SIGTERM first (B3 quarantine law): a polite exit gets a chance to
         # flush; the SIGKILL below is the fallback, not the opener. ESRCH fine.
@@ -3365,7 +6026,7 @@ def _tree_quiesce(known, pgid, hold_s, proof_s, term_grace_s=None):
             time.sleep(0.05)
             live = _live()
             if live is None:
-                return "stuck", sorted(known)
+                return "unknown", sorted(known)
     if live:
         try:
             os.killpg(pgid, signal.SIGKILL)         # dead group raises ESRCH — fine
@@ -3378,10 +6039,14 @@ def _tree_quiesce(known, pgid, hold_s, proof_s, term_grace_s=None):
     while True:
         live = _live()
         if live is None:
-            return "stuck", sorted(known)           # unreadable: never claim dead
+            return "unknown", sorted(known)           # unreadable: never claim dead
         if not live:
             return "dead", []
         if time.time() >= deadline:
+            # #448: the stuck verdict rides a bounded reap settle — a pid caught
+            # mid-reap (exited, wait() not yet landed) is reaped-class, not live.
+            if not _reap_settle(live):
+                return "dead", []
             return "stuck", live
         time.sleep(0.1)
 
@@ -3439,6 +6104,8 @@ def _isolate_prior(meta, r, ev, ev_kw):
         return None                              # drained naturally mid-check
     kw = dict(ev_kw); kw["pids"] = live; kw["proof"] = proof
     log(run, f"{ev}.tree_kill", **kw)
+    if proof == "unknown":
+        return _proc_unreadable_record(pid, ev_kw.get("node"), r.get("spawn"), r)
     if proof != "dead":
         return _left_live_record(pid, stuck,
                                  "attempt N+1 must never share a workdir with live "
@@ -3517,6 +6184,17 @@ def _final_quiesce(meta, r, ev, ev_kw):
                                  _proctree_hold_s(meta), _proctree_kill_proof_s(meta))
     kw = dict(ev_kw); kw["pids"] = live; kw["proof"] = proof; kw["final"] = True
     log(run, f"{ev}.tree_kill", **kw)
+    if proof == "unknown":
+        return _proc_unreadable_record(pid, ev_kw.get("node"), r.get("spawn"), r)
+    if proof == "":
+        # #448: the tree drained between this guard's liveness sample and the
+        # quiesce's first pass — REAPED, not live (the same dead-or-empty
+        # contract _account_tree and _isolate_prior already honor). The record
+        # keeps its own verdict: a banked-complete node commits through the
+        # existing harvest-on-death law instead of dead-lettering under a
+        # manufactured left_live_descendants (the #427 nightly shape, where
+        # the guard itself quoted the live tree as []).
+        return r
     if proof != "dead":
         return _left_live_record(pid, stuck,
                                  "the node may not commit over a still-running process "
@@ -3538,8 +6216,128 @@ def _final_quiesce(meta, r, ev, ev_kw):
         r["error_class"] = "left_live_descendants"
     return r
 
+def _job_path(run, node):
+    return Path(run) / "jobs" / f"{node['id']}.json"
+
+
+def register_job(run, node, byid, pid, artifact, log_path):
+    """Child-side detach contract: register an own live process before exiting.
+
+    Linux identity and ancestry are required; this is not a tree-safety exemption.
+    The runner waits for the registered family to finish BEFORE its usual tree
+    proof. Re-drive performs the same wait before the prior-generation sweep.
+    """
+    if node.get("fanout") or not re.fullmatch(r"[A-Za-z0-9_-]+", node["id"]):
+        raise ValueError("registered jobs currently require a solo agent node")
+    run = Path(run).resolve()
+    spawn = active_child(run, node, byid)
+    own = _subtree_of(spawn["pid"]) if spawn else None
+    if own is not None and spawn:
+        own.add(spawn["pid"])
+    caller, ancestry = os.getpid(), set()
+    while caller > 0 and caller not in ancestry and len(ancestry) < 100:
+        ancestry.add(caller)
+        caller = int(Path(f"/proc/{caller}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        if spawn and caller == spawn["pid"]:
+            ancestry.add(caller)
+            break
+    if not spawn or own is None or pid not in own or spawn["pid"] not in ancestry:
+        raise ValueError(f"job and registrant must belong to the verified node spawn "
+                         f"(run={run}, spawn_pid={spawn.get('pid') if spawn else None}, "
+                         f"job_pid={pid}, caller_pid={os.getpid()})")
+    tick = _proc_boottime(pid)
+    if tick is None or not _proc_alive(pid) or os.getpgid(pid) != pid:
+        raise ValueError("job must be live with a readable identity and its own process group")
+    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    artifact, log_path = Path(artifact).resolve(), Path(log_path).resolve()
+    for path in (artifact, log_path):
+        if not path.is_relative_to(run) or path == run:
+            raise ValueError("job artifact and log must stay inside the run directory")
+    if artifact.exists() or artifact == log_path or not log_path.is_file():
+        raise ValueError("artifact must be fresh and log must already exist separately")
+    p = _job_path(run, node)
+    p.parent.mkdir(exist_ok=True)
+    rec = {"status": "registered", "pid": pid, "boottime": tick, "boot_id": boot,
+           "registered_ns": time.time_ns(), "artifact": str(artifact), "log_path": str(log_path),
+           "efp": efp(byid, node), "fp_rule_version": FP_RULE_VERSION,
+           "spawn_pid": spawn["pid"], "members": {str(pid): tick}}
+    # Exclusive creation: a repeated agent cannot replace accepted live work.
+    with p.open("x") as f:
+        json.dump(rec, f); f.flush(); os.fsync(f.fileno())
+    log(run, "job.registered", node=node["id"], pid=pid, artifact=str(artifact), log_path=str(log_path))
+    return rec
+
+
+def _poll_registered_job(meta, node, byid):
+    """No Popen and no agent deadline: observe identity, then harvest a receipt.
+
+    Missing/malformed artifacts never imply success. The own-family process-tree
+    proof still runs afterwards; no kill boundary is weakened by registration.
+    """
+    run = meta["_run"]
+    p = _job_path(run, node)
+    if not p.exists():
+        return None
+    rec = jload(p) or {}
+    failure = lambda why, cls="config_input": {"status": "failed", "error_class": cls,
+                                                "error": why, "ms": 0}
+    if not wfcommon.record_efp_valid(rec, byid, node):
+        return failure("registered job fingerprint is stale or invalid; explicit owner reconciliation required")
+    if rec.get("status") == "harvested":
+        return rec.get("result") or failure("registered job has no durable harvest")
+    try:
+        if rec["boot_id"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
+            return failure("registered job boot identity changed", "crashed")
+        members = rec["members"]
+        while True:
+            if (run / "stop.request").exists() or (meta.get("_stop") and meta["_stop"].is_set()):
+                return failure("cancelled while polling registered job", "cancelled")
+            pid = rec["pid"]
+            tick = _proc_boottime(pid)
+            if _proc_alive(pid):
+                if tick != rec["boottime"]:
+                    return failure("registered job pid identity changed", "crashed")
+                family = _subtree_of(pid)
+                if family is None:
+                    return failure("registered job tree is unreadable", "left_live_descendants")
+                for member in family:
+                    mt = _proc_boottime(member)
+                    if mt is None:
+                        return failure("registered family identity unreadable", "left_live_descendants")
+                    members[str(member)] = mt
+            live = [int(member) for member, mt in members.items()
+                    if _proc_alive(int(member)) and _proc_boottime(int(member)) == mt]
+            if not live:
+                break
+            tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(rec)); os.replace(tmp, p)
+            time.sleep(.1)
+        artifact = Path(rec["artifact"])
+        if not artifact.resolve().is_relative_to(Path(run).resolve()):
+            return failure("registered artifact escaped run directory")
+        answer = jload(artifact)
+        if not isinstance(answer, dict) or type(answer.get("exit_code")) is not int:
+            result = failure("job exited without a typed artifact exit receipt", "crashed")
+        elif artifact.stat().st_mtime_ns < rec["registered_ns"]:
+            result = failure("job artifact predates registration", "effect_receipt")
+        elif answer["exit_code"] != 0:
+            result = failure(f"registered job exited rc={answer['exit_code']}", "unknown")
+        elif validate(answer.get("output"), node.get("schema")):
+            result = failure("registered job artifact output failed node schema", "schema")
+        else:
+            result = {"status": "done", "output": answer["output"], "ms": 0}
+        result["detached_job"] = {k: rec[k] for k in
+                                  ("pid", "boottime", "boot_id", "artifact", "log_path")}
+        rec.update(status="harvested", result=result)
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(rec)); os.replace(tmp, p)
+        log(run, "job.harvested", node=node["id"], pid=pid, status=result["status"])
+        return result
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return failure(f"registered job receipt unreadable: {type(e).__name__}: {e}", "crashed")
+
+
 def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
-    harvest_schema = strip_engine_disclosure(schema, (node or {}).get("substrate_substituted"))  # #116
     """790c6ad: ADOPT a verified live orphan instead of re-spawning it (the
     respawned-runner token-loss bug: waveA3 re-ran 8 live children from zero
     because the fanout branch re-spawned unconditionally). Contract mirrors
@@ -3554,6 +6352,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         (rc is unknowable — the child outlived its spawner — so death classes
         come from the capture and the core -Q turn report, never from a
         fabricated exit code)."""
+    harvest_schema = strip_engine_disclosure(schema, (node or {}).get("substrate_substituted"))  # #116
     run = meta["_run"]
     nid = node["id"]
     pid = child["pid"]
@@ -3578,7 +6377,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         started=child.get("started"), attempt=child.get("attempt"))
     try:
         while True:
-            if meta["_stop"].is_set():
+            if meta["_stop"].is_set() or _lane_killed(run, nid):
                 _kill_adopted(pid)
                 cancelled = True
                 was_alive = True
@@ -3591,9 +6390,11 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
                 _tree_watch(handle, tree_seen)
                 tree_next_watch = now_s + PROCREE_POLL_S
             if now_s >= deadline and not extended and not meta["_stop"].is_set() \
-                    and _log_recent(lp, 0):
+                    and (_log_recent(lp, 0)
+                         or _session_recent(run, child.get("skey"), _profile_evidence(node).get("profile_home"))):
                 # EXTEND-NOT-KILL (#11), adoption form: a still-writing orphan gets
-                # ONE +50% grace; a silent one dies — the cap is total wall.
+                # ONE +50% grace (its spawn log OR its own state.db session row still
+                # moving — est-2ek.1.595); a silent one dies — the cap is total wall.
                 extra_s = round(wall * 0.5) if wall else 0
                 log(run, "node.extended", node=nid, extra_s=extra_s, adopted=True)
                 deadline += extra_s or 1
@@ -3609,6 +6410,10 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
             time.sleep(0.1)
     finally:
         with meta["_procs_lock"]:
+            # The stop watcher can set+kill after our stop check but before
+            # the liveness probe observes death. Classify at the same locked
+            # boundary where this child leaves the watcher's kill registry.
+            cancelled = cancelled or meta["_stop"].is_set()
             meta["_procs"].pop(key, None)
         if tree_seen:
             # #61b B1: persist the adopted spawn's tracked subtree across the
@@ -3633,6 +6438,9 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
            "spawn": child.get("attempt"), "skey": skey_base, "adopted": True,
            "attempts": (child.get("attempt") or 0) + 1}
     if cancelled:
+        if _lane_killed(run, nid) and not meta["_stop"].is_set():
+            return {"status": "failed", "error": "killed by lane kill (action=kill)",
+                    "error_class": "killed", "raw": "", "ms": ms, **evd}
         return {"status": "failed", "error": "cancelled by stop", "error_class": "cancelled",
                 "raw": "", "ms": ms, **evd}
     try:
@@ -3650,6 +6458,9 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         _note_turn_tier(run, nid, report_path)
         try: os.unlink(report_path)
         except OSError: pass
+        bk = _bank_the_corpse(run, node, index, child.get("attempt"), out)   # #131
+        if bk:
+            evd["banked"] = bk
         hv = _harvest_death(out, harvest_schema)
         if hv:
             return {"status": "partial", "error": f"adopted child exceeded its re-armed wall "
@@ -3691,6 +6502,22 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         # retained together with (or instead of) done, BEFORE the harvest-ONCE
         # memo freezes the verdict (a memoized done must already be honest).
         return _final_quiesce(meta, rec, "item", {"node": nid, "index": index})
+    # WF-GRAFT-2 (est-imp1z): the adopted path carries the SAME classifier law
+    # (path-invariance, est-2ek.1.541 R8): rc is unobservable for an orphan, so
+    # the capture is all we have — committing `done` on a capture whose sentinel
+    # or token contradicts it is the est-jam8 laundering shape, and the honesty
+    # must land BEFORE the harvest-ONCE memo freezes the verdict (#61b B4).
+    _ov = _outcome.classify(0, out, _outcome.parse_node_outcome(out))
+    if _ov["outcome"] == "failure":
+        return {"status": "failed",
+                "error": "adopted child's capture contradicts the done commit — "
+                         + (f"transient provider-error sentinel on its exit (never launder a "
+                            f"dead child into done). Marker: {_ov['detail']}"
+                            if _ov["kind"] == "transient" else
+                            "self-reported node_outcome token declares failure "
+                            "(deterministic: never re-driven)"),
+                "error_class": "transport" if _ov["kind"] == "transient" else "declared_failure",
+                "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **evd}
     if errs is not None and not errs:
         try: os.unlink(report_path)
         except OSError: pass
@@ -3701,9 +6528,9 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
     _note_turn_tier(run, nid, report_path)   # a death happened; success leaves no trace
     try: os.unlink(report_path)
     except OSError: pass
-    if fo_cancel is not None and fo_cancel.is_set() and was_alive:
-        # quorum straggler: WE observed the live orphan die to _cancel_stragglers'
-        # group kill (a child already dead at entry is classified from its capture).
+    if (fo_cancel is not None and fo_cancel.is_set() and was_alive
+            and getattr(handle, "_wf_quorum_cancel", False)):
+        # Quorum intent belongs to this adopted handle, not merely the event.
         # a2d7f664: same evidence + harvest-at-cancel as the run_child site — the
         # capture freezes at the kill, so the snapshot is honest to the quorum
         # moment; error_class/quorum math unchanged.
@@ -3733,7 +6560,20 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
                 "error_class": "crashed", "raw": "", "ms": ms, **evd}
     eclass, marker = _classify_rc_output(out)
     if eclass == "fatal_quota":   # #24: adopted death caches the horizon too
-        _quota_note(node.get("model") or node.get("provider") or "seat default", marker)
+        _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
+    if eclass == "unknown" and _tool_call_as_text(final_reply or out or ""):
+        # est-2ek.1.541 R8 (sibling coverage): the adopted-death path must classify
+        # the malformed-turn shape exactly like the fresh-head path — same reply,
+        # same class, whatever path the runner reaches it by. The bounded ladder
+        # may not be available here (the attempt already committed its spend and
+        # the rc is unobservable); the classification law itself is path-invariant.
+        verdict = _verdict_lines(final_reply or out)
+        return {"status": "failed",
+                "error": "adopted child died with a malformed turn: reply is a "
+                        "serialized tool call rendered as text (tool-call-as-text; "
+                        f"typed malformed turn; not harvestable). Verdict: {verdict}",
+                "error_class": "malformed_turn", "raw": (out or "")[-2000:], "ms": ms,
+                "final": final_reply, **evd}
     verdict = _verdict_lines(marker if marker else out)
     rec = {"status": "failed", "error": f"adopted child died (rc unobservable — runner was "
             f"respawned): {verdict}", "error_class": eclass, "raw": (out or "")[-2000:],
@@ -3742,8 +6582,112 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         rec["ratelimit_banner"] = marker
     return rec
 
+def _stale_spawn_refusal(run, node, byid):
+    """est-byft8: the launch-instant staleness check for a QUEUED spawn.
+
+    A spawn may sit on a contended global agent seat for minutes; an amend
+    (or delete) landing during that queue window moves the node's effective
+    fingerprint after the prompt was composed. The queued definition must
+    NEVER launch. The comparison is the runner's OWN staleness law — the
+    effective fingerprint (wfcommon.efp: own def minus budgets + ancestor
+    efps), exactly what replay-skip uses to decide a committed record is
+    stale — so "would a reload re-drive this node?" and "is this queued
+    spawn stale?" can never disagree.
+
+    Returns None to proceed (unchanged def, or any unreadable/uncomputable
+    input — the guard catches DETECTED staleness and never invents a death),
+    or a record dict for the typed refusal. graph.json is only ever replaced
+    atomically (os.replace), so the read is always whole."""
+    try:
+        queued = efp(byid, node)
+    except Exception:
+        return None
+    try:
+        g2 = jload(run / "graph.json")
+    except Exception:
+        return None
+    if not (isinstance(g2, dict) and isinstance(g2.get("nodes"), list) and g2["nodes"]):
+        return None
+    cur = {}
+    for n in g2["nodes"]:
+        if isinstance(n, dict) and n.get("id"):
+            cur[n["id"]] = n
+    if not cur:
+        return None
+    nid = node.get("id")
+    if nid in cur:
+        try:
+            now_efp = efp(cur, cur[nid])
+        except Exception:
+            return None
+        if now_efp == queued:
+            return None
+        why = f"amended since this spawn was queued (efp {queued} -> {now_efp})"
+    else:
+        why = f"deleted from the graph since this spawn was queued (queued efp {queued})"
+    return {"status": "failed", "error_class": "stale_graph",
+            "error": (f"stale_graph: node {nid} was {why}; the queued spawn refuses to launch "
+                      f"old work — the wave boundary reloads the graph and re-drives the node "
+                      f"under the current definition"),
+            "ms": 0}
+
+
+# est-yq2xq frozen-route creation-override strip (marker-gated). The gateway's
+# frozen-route resume policy (hermes_cli/gateway_chat.py::check_resume_policy)
+# refuses creation overrides under `--continue <skey> --create-if-missing`: the
+# session is created WITHOUT the CLI creation flags, so every flag this spawn
+# then requests "differs from this session's launch" and the child dies rc=2
+# ("Resume retains gateway session policy; creation overrides are unsupported
+# on resume") — even on brand-new skeys; whole waves die (est-yq2xq class).
+# While this strip is ACTIVE the spawn omits every such flag pair and children
+# ride SEAT DEFAULTS: per-node model/provider pinning, reasoning effort,
+# toolsets, turn caps and run budgets are UNAVAILABLE while on (a pinned lane
+# silently runs the seat's default model). Enable with env WF_OMIT_POLICY_FLAGS=1
+# or the marker file <hermes_home>/workflows/omit-policy-flags.on. TURN OFF:
+# unset the env and delete the marker — argv returns byte-identical to stock.
+# The structural fix belongs in the gateway (session.create must freeze the
+# creation flags on the create-if-missing shape); until then this keeps waves
+# alive on affected seats instead of a per-install monkey-patch that every
+# plugin update wipes.
+_FROZEN_ROUTE_FLAGS = ("--max-turns", "--run-budget", "--reasoning",
+                       "-t", "-m", "--provider")
+
+
+def _omit_policy_flags_if_enabled(cmd, home=None, env=None):
+    """Strip frozen-route creation-override flag PAIRS from a child spawn argv
+    (est-yq2xq). Enabled when env WF_OMIT_POLICY_FLAGS=1 or the marker file
+    <hermes_home>/workflows/omit-policy-flags.on exists; otherwise returns the
+    argv byte-identical. Each flag consumes its own value token — exactly how
+    the argv builder materializes them above. `home`/`env` are test seams."""
+    env = os.environ if env is None else env
+    if env.get("WF_OMIT_POLICY_FLAGS") != "1":
+        root = Path(home) if home is not None else hermes_home()
+        if not (root / "workflows" / "omit-policy-flags.on").exists():
+            return list(cmd)
+    out, i = [], 0
+    while i < len(cmd):
+        if cmd[i] in _FROZEN_ROUTE_FLAGS:
+            i += 2
+            continue
+        out.append(cmd[i])
+        i += 1
+    return out
+
+
 def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering=None, attempt=0, skey=None,
-              inputs="", index=None, resume_preamble="", reasoning_override=None):
+              inputs="", index=None, resume_preamble="", reasoning_override=None,
+              seat_cancel=None, seat_hold=None, seat_admit_lock=None, model_override=None, wall_s=None):
+    # est-g255 P255-1: seat_cancel is the fan-out's quorum cancel Event — it
+    # aborts a seat wait and blocks the atomic spawn exactly like meta['_stop'].
+    # seat_hold (fan-out items only) is a list the caller owns: a cleanly ended
+    # spawn's seat is DEFERRED into it instead of released, so the caller frees
+    # it only AFTER the quorum cancel is visible (no straggler can see a free
+    # seat before fo_cancel). Any earlier held seat is freed before this
+    # spawn's own acquire (a retry ladder never deadlocks against itself).
+    # est-g255 r2 R1: seat_admit_lock is the fan-out's results lock — the SAME
+    # lock _cancel_stragglers holds before fo_cancel becomes visible. It rides
+    # into _seat_acquire as admit_lock so ticket creation is atomic against the
+    # cancel (abort rechecked under it, at the ticket-creation instant).
     run = meta["_run"]
     # #116: harvest validates against the same engine-stripped view as the happy
     # path — a death's fenced answer is not killed for omitting the disclosure.
@@ -3752,11 +6696,21 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # est-2ek.1.641: BEFORE submit — a lane with a proved-alive receipt may
     # never re-submit on a different model (post-admission substitution is a
     # denial, not a fallback). The seat is never touched: zero attempts.
+    # route-hold escalation (w56): a re-drive whose run already died on the
+    # route family clears the contradicted receipt at this same seam, first.
+    _stale_route_receipt_clear(meta, node, spawn_no)
     _rsd = _route_substitution_refusal(meta, node, spawn_no)
     if _rsd is not None:
         log(run, "node.route_substitution_denied", node=node["id"], index=index,
             spawn=spawn_no, error=_rsd["error"])
         return _rsd
+    # est-3acn: RunBudget BEFORE submit, the same seat-untouched shape as the
+    # route-substitution refusal beside it — spent is measured from the meters
+    # (state.db child_metrics join), NEVER estimated post-hoc; the refusal
+    # event (dispatch.refused) names scope, cap, spent and est_next.
+    _br = _budget_refusal(meta, node, byid, index, spawn_no)
+    if _br is not None:
+        return _br
     # #61c: the survivor-registry token for THIS spawn — unique per Popen (a
     # pid can be recycled, a token cannot). A detached descendant registers
     # itself against it (child-side helper reads these env pins, inherited
@@ -3772,9 +6726,17 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # then the resume preamble:
     # Both are prompt-side artifacts (logs/*.prompt.md) — never record bytes.
     preamble = "\n\n".join(p for p in (_lane_hygiene_preamble(node),
+                                        _outcome_token_preamble(node),
                                         _respawn_effects_preamble(run, meta, byid, node),
                                         resume_preamble) if p)
-    prompt = ((preamble + "\n\n" + goal) if preamble else goal) + ("\n\n" + context if context else "")
+    # est-13z1: the BEAD LAW rides as a GOAL SUFFIX, never a prefix — the goal
+    # keeps line 1 (spawn-counting/first-line tools and item identity rely on
+    # the goal's own opening), and everything from '## Inputs' onward stays
+    # byte-identical across fan-out items, same law as WORK_DIR_NOTE.
+    _bl = _bead_law_preamble(node)
+    prompt = ((preamble + "\n\n" + goal) if preamble else goal) \
+        + (("\n\n" + _bl) if _bl else "") \
+        + ("\n\n" + context if context else "")
     # A4: the runner states each child's durable work dir (replaces the old
     # write-first authoring rule). It lands in the GOAL half, before '## Inputs':
     # the fan-out identity law holds everything from '## Inputs' onward
@@ -3806,7 +6768,13 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # last_activity_at) per node+item+attempt. Proven: extract_json still parses the fence.
     if skey:
         cmd += ["--continue", f"{skey}#a{attempt}", "--create-if-missing"]
-    if node.get("model"): cmd += ["-m", node["model"]]
+    # est-2ek.1.164: the fallback ladder re-spawns THIS node on a declared
+    # alternate model — the ask reaches the CLI as -m, the node DEF is never
+    # mutated (author-form provenance law: a ladder rung is a spawn choice,
+    # not an amend).
+    if model_override:
+        cmd += ["-m", str(model_override)]
+    elif node.get("model"): cmd += ["-m", node["model"]]
     if node.get("provider"): cmd += ["--provider", node["provider"]]
     # est-flah + deep review #163 B2: nothing reaches the CLI verbatim that the
     # runner can already see will die — unknown effort clamps to
@@ -3825,6 +6793,14 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     if _ts is not None: cmd += ["-t", ",".join(_ts)]
     if node.get("max_turns"): cmd += ["--max-turns", str(node["max_turns"])]
     if node.get("run_budget"): cmd += ["--run-budget", str(node["run_budget"])]
+    # est-yq2xq: on seats whose gateway freezes the route at session create, the
+    # creation-override pairs above make every child die rc=2 (see
+    # _omit_policy_flags_if_enabled). While env WF_OMIT_POLICY_FLAGS=1 or
+    # <hermes_home>/workflows/omit-policy-flags.on is on, they are stripped and
+    # children ride seat defaults — per-node model pinning is UNAVAILABLE while
+    # on. Turn off: unset the env, delete the marker (byte-identical stock argv
+    # returns). Absent both, this line changes nothing.
+    cmd = _omit_policy_flags_if_enabled(cmd)
     lp = spawn_log_path(run, node, index, spawn_no)   # Q1: per-spawn stdout capture
     report_path = lp.with_name(lp.name.replace(".log", ".turn.json"))  # core -Q turn report
     # B1 cooperative steer (feedback #13/#40): bake this node's addressed inbox
@@ -3835,6 +6811,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     except OSError as e:   # B1 is an add-on: a bake failure must never kill the spawn
         log(run, "steer.bake.error", node=node["id"], error=f"{type(e).__name__}: {e}")
         steer_file, steer_cur, steer_hwm = "", "", 0
+    wall = wall_s if wall_s is not None else node.get("timeout", meta.get("node_timeout", 900))
     env = dict(os.environ, HERMES_HOME=str(hermes_home()),
                HERMES_QUIET_TURN_REPORT_FILE=str(report_path),
                HERMES_WF_STEER_FILE=steer_file,
@@ -3867,107 +6844,140 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     sr = os.environ.get("HERMES_WRITE_SAFE_ROOT")
     if sr:
         env["HERMES_WRITE_SAFE_ROOT"] = sr + os.pathsep + wd
+        # est-2mhl: core's served-profile resolver REPLACES HERMES_WRITE_SAFE_ROOT with
+        # the profile's own value, dropping the append above. The launcher's grant
+        # channel is the companion HERMES_WRITE_SAFE_ROOT_EXTRA: the child's OWN dir,
+        # replaced (never accumulated) per child. Inert until core unions it.
+        env["HERMES_WRITE_SAFE_ROOT_EXTRA"] = wd
+    else:
+        # No jail in force: never hand a child a grant inherited from the host.
+        env.pop("HERMES_WRITE_SAFE_ROOT_EXTRA", None)
+    # est-2ek.1.772: Popen cwd=wd is not enough — the Hermes terminal tool takes its
+    # default cwd from $TERMINAL_CWD, which dict(os.environ, ...) inherits from the
+    # host. Pin it so a terminal call with no workdir lands in the node's workspace.
+    env["TERMINAL_CWD"] = wd
+    # est-wqml6: the child-side telemetry pin. The value IS the join key: the
+    # session-key prefix (skey minus its per-spawn efp8.nonce tail, stable
+    # across retries so one sidecar per node reflects the latest attempt, the
+    # same law as output). The child's plugin load registers observer hooks
+    # only where this key and HERMES_WF_RUN_DIR both exist; the settle join
+    # (wf._stamp_served) and the sidecar law live in node_telemetry.py.
+    if skey:
+        env["HERMES_WF_TELEMETRY"] = str(skey).rsplit(":", 1)[0]
+    # est-mg5o2 (spawn half of the launch-path fix): the seat cap is AUTHORITATIVE
+    # AT SPAWN. A long-lived runner inherits its launcher's WORKFLOW_MAX_SEATS —
+    # a gateway booted before the operator set the .env knob hands every nested
+    # child a stale cap, and seat_max_seats precedence (env > .env) then makes
+    # that child arbitrate against the STALE inheritance instead of the fresh
+    # env-file read est-gxjh6 added (measured: estate pool held 6/12 at an
+    # 8-squad launch under WORKFLOW_MAX_SEATS=12 in .env, "zero to ONE requests
+    # at once"). So a child's env never rides the parent's inherited key: an
+    # env-file value OVERWRITES it, and with no env-file value the key is
+    # STRIPPED so the child resolves fresh (config workflows.max_seats / default)
+    # — inheritance can never shadow the pool knob in a nested runner. The
+    # documented local-disable sentinel "0" deliberately keeps riding: it only
+    # disables the semaphore locally and never arbitrates (est-2ek.1.856 law);
+    # stripping it would silently flip nested runners from disabled to capped.
+    # The routed branch below already forwards neither (keep-set excludes the
+    # key), so delegated children always resolved from their own env files.
+    _cap_fresh = _seat_cap_from_env_files()
+    if _cap_fresh is not None:
+        env["WORKFLOW_MAX_SEATS"] = str(_cap_fresh)
+    elif env.get("WORKFLOW_MAX_SEATS") != "0":
+        env.pop("WORKFLOW_MAX_SEATS", None)
     if route:
         # Delegation is not isolation. The target's -p resolves against the common
         # root, never the launcher's named-profile home. Do not forward launcher
         # secrets (provider keys and unrelated environment variables).
         keep = {"PATH", "HOME", "LANG", "TERM", "TZ", "TMPDIR",
-                "HERMES_QUIET_TURN_REPORT_FILE", "WF_RUNS_ROOT", "HERMES_WRITE_SAFE_ROOT"}
+                "HERMES_QUIET_TURN_REPORT_FILE", "WF_RUNS_ROOT", "HERMES_WRITE_SAFE_ROOT",
+                "HERMES_WRITE_SAFE_ROOT_EXTRA", "TERMINAL_CWD"}
         env = {k: v for k, v in env.items()
                if k in keep or k.startswith("LC_") or k.startswith("HERMES_WF_")}
         env["HERMES_HOME"] = str(hermes_root())
+    # est-g2xx (B): take a GLOBAL agent seat BEFORE the spawn clock starts (a seat
+    # wait must never eat the silence window or the wall). Full = BLOCK, bounded
+    # by the node wall; expiry is a typed seat_wait failure, never a blind spawn.
+    _seat_wall = node.get("timeout", meta.get("node_timeout", 900))
+    _seat_w0 = time.time()
+    _cancelled = (lambda: meta["_stop"].is_set() or _lane_killed(run, node["id"])
+                  or (seat_cancel is not None and seat_cancel.is_set()))
+    while seat_hold:                       # a prior attempt's deferred seat
+        _seat_release(seat_hold.pop())
+    try:
+        _seat_cap = _max_seats(meta)
+        # est-mg5o2 x est-2ek.1.856: the pool SEED rides the same validator. It is
+        # resolved HERE (before any ticket/marker) so an invalid operator knob can
+        # never be recorded as the pool's global cap; cap<=0 is the local disable
+        # and carries no seed (nothing is ever recorded for it).
+        _pool_seed = _seat_pool_seed() if _seat_cap > 0 else None
+    except SeatCapError as e:
+        # est-2ek.1.856 (B3) runner half: the door refuses this launch before any
+        # write/spawn; a runner that launched while the knob was valid and finds
+        # it invalid at the acquire instant (operator edited config mid-run)
+        # fails the NODE closed with the typed class — never a silent default,
+        # never a blind spawn.
+        return {"status": "failed",
+                "error": f"seat_cap: invalid seat cap — {e} "
+                        "(WORKFLOW_MAX_SEATS env or config workflows.max_seats; an integer "
+                        f"in [{wfcommon.SEAT_CAP_FLOOR}, {wfcommon.SEAT_CAP_CEILING}] "
+                        "or unset; the per-run opt-out is run.json max_seats: 0)",
+                "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
+                "spawn": spawn_no, "attempts": 1, **route}
+    seat = _seat_acquire(
+        _seats_dir(), f"{run.name}.{node['id']}", _seat_cap,
+        _seat_wall if isinstance(_seat_wall, (int, float)) else None,
+        on_wait=lambda: log(run, "seat.wait", node=node["id"], index=index,
+                            spawn=spawn_no,
+                            # est-mg5o2: the event carries the POOL truth (read-only);
+                            # _seat_cap is the already-validated fallback (no re-resolve
+                            # inside the callback: it must never raise SeatCapError).
+                            cap=_seat_pool_cap(_seats_dir()) or _seat_cap),
+        abort=_cancelled, admit_lock=seat_admit_lock,
+        pool_seed=_pool_seed, pool_ceiling=_seat_pool_ceiling(meta))
+    if seat is _SEAT_UNSUPPORTED:
+        return {"status": "failed",
+                "error": "seat_unsupported: the global agent-seat semaphore is full and this "
+                         "platform exposes no process-ancestry channel (/proc or ps), so a "
+                         "nested runner cannot prove which held seat is its own lending "
+                         "ancestor — refusing instead of deadlocking; set WORKFLOW_MAX_SEATS=0 "
+                         "to disable the semaphore on this host",
+                "error_class": "seat_unsupported", "ms": int((time.time() - _seat_w0) * 1000),
+                "spawn": spawn_no, "attempts": 1, **route}
+    if seat is None:
+        if _cancelled():
+            return {"status": "failed", "error": "cancelled while waiting for an agent seat"
+                    + ("" if meta["_stop"].is_set() else " (quorum already met)"),
+                    "error_class": "cancelled", "ms": 0, **route}
+        # est-2ek.1.856 deep review D1: the cap printed in the seat_wait row is
+        # RE-RESOLVED here — the wait can outlive a valid-knob instant, and an
+        # operator edit landing mid-wait must not raise SeatCapError out of
+        # run_child (the caller's harvest would swallow it as `crashed`, an
+        # untyped death). Same law as the acquire-instant catch above: the
+        # broken knob fails the NODE typed seat_cap, naming itself.
+        try:
+            _seat_cap_now = _max_seats(meta)
+        except SeatCapError as e:
+            return {"status": "failed",
+                    "error": f"seat_cap: invalid seat cap — {e} "
+                            "(WORKFLOW_MAX_SEATS env or config workflows.max_seats; an integer "
+                            f"in [{wfcommon.SEAT_CAP_FLOOR}, {wfcommon.SEAT_CAP_CEILING}] "
+                            "or unset; the per-run opt-out is run.json max_seats: 0)",
+                    "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
+                    "spawn": spawn_no, "attempts": 1, **route}
+        _capv = _seat_pool_cap(_seats_dir())   # est-mg5o2: report the pool truth
+        return {"status": "failed",
+                "error": f"seat_wait: no global agent seat freed within {_seat_wall}s "
+                         f"(cap={_capv if _capv is not None else _seat_cap_now}; "
+                         f"pool .cap / WORKFLOW_MAX_SEATS / run.json max_seats ceiling)",
+                "error_class": "seat_wait", "ms": int((time.time() - _seat_w0) * 1000),
+                "spawn": spawn_no, "attempts": 1, **route}
     t0 = time.time()
-    logf = open(lp, "w", encoding="utf-8", errors="replace")
-    log_created = time.time()   # the file's own creation stamp: never counts as activity
-    try:
-        proc = None
-        with meta["_procs_lock"]:
-            # ATOMIC SPAWN: check→Popen→register hold the SAME lock the stop
-            # watcher takes to set _stop and scan. Either the watcher wins (pre-
-            # check cancels, nothing launches) or we win (child is registered and
-            # the watcher's scan WILL see it) — no window for a post-stop launch.
-            if meta["_stop"].is_set():
-                logf.close()
-                return {"status": "failed", "error": "cancelled before spawn",
-                        "error_class": "cancelled", "ms": 0, **route}
-            if route and not (Path(route["profile_home"]) / "config.yaml").is_file():
-                logf.close()
-                return {"status": "failed", "error": f"profile gone: {node['profile']}",
-                        "error_class": "spawn", "ms": 0, "spawn": spawn_no,
-                        "attempts": 1, **route}
-            # #61c spawn guard: attempt N+1 may NOT start while ANY earlier
-            # generation of this (node,index) still has a live registered
-            # survivor — quarantine-reap them (SIGTERM grace -> SIGKILL ->
-            # /proc proof) and RECORD the reap before this Popen; an
-            # unprovable slate fails closed typed, never a blind spawn
-            # (reviewer B3: prior_alive must be [] at every attempt start).
-            pre = _sidecar_live_registered(run, tokens)
-            if pre is None:
-                logf.close()
-                return {**_proc_unreadable_record(0, node["id"], spawn_no),
-                        "ms": 0, "spawn": spawn_no, "attempts": 1, **route}
-            if pre:
-                for tp in sorted(pre):
-                    try: os.kill(tp, signal.SIGTERM)
-                    except OSError: pass
-                gdead = time.time() + PROCREE_TERM_GRACE_S
-                while any(_proc_alive(p) for p in pre) and time.time() < gdead:
-                    time.sleep(0.05)
-                for tp in sorted(pre):
-                    try: os.kill(tp, signal.SIGKILL)
-                    except OSError: pass
-                pdead, stuck = _wait_pids_dead(pre, _proctree_kill_proof_s(meta))
-                if not pdead:
-                    logf.close()
-                    rec = _left_live_record(0, stuck,
-                        "a respawn of this node may not start while prior-generation "
-                        "survivors of an earlier attempt are still live: ", {})
-                    rec["ms"] = 0
-                    rec["spawn"] = spawn_no
-                    log(run, ("item." if index is not None else "node.") + "tree_kill",
-                        node=node["id"], index=index, pids=sorted(pre), proof="stuck")
-                    return rec
-                log(run, ("item." if index is not None else "node.") + "respawn_reap",
-                    node=node["id"], index=index, pids=sorted(pre), proof="dead",
-                    prior_alive=[], spawn=spawn_no)
-            tokens.append(token)     # registered BEFORE Popen — a spawn that
-                                     # dies mid-launch still owns its survivors
-            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL, env=env, text=True,
-                                    cwd=wd,
-                                    start_new_session=True)  # own pgid: a timeout kill can
-            meta["_procs"][f"{node['id']}:{id(proc)}"] = proc  # never reach runner/siblings
-    except OSError as e:
-        try: logf.close()
-        except Exception: pass
-        return {"status": "failed", "error": f"launcher spawn failed: {e}",
-                "error_class": "spawn", "ms": 0, "spawn": spawn_no, "attempts": 1, **route}
-    # est-2ek.1.641: this spawn billed under the door's alive-proof — record
-    # the lane's proved-alive receipt (durable, replacement-runner-visible).
-    _route_receipt_bake(meta, node)
-    # Q1 spawn-time record (after Popen succeeded, before awaiting): the live
-    # child is visible mid-run with pid / log / argv / prompt path (A1: the
-    # prompt as sent is durable in the run dir — no redaction, no unlink).
-    spawn_cmd = list(cmd)
-    started_iso = now()
-    try:
-        write_spawn_record(run, node, byid, index, spawn_no, spawn_cmd, lp, proc.pid, skey,
-                           started_iso, prompt_path=str(pp))
-    except Exception as e:
-        log(run, "spawn.record.error", node=node["id"], error=f"{type(e).__name__}: {e}")
-    # #8 spawn-ledger: the child is legible from the moment its spawn record is.
-    ledger_row(meta, "child", proc.pid, node=node["id"], index=index, skey=skey)
-    evd = {"log_path": str(lp), "prompt_path": str(pp), "pid": proc.pid,
-           "spawn_cmd": spawn_cmd, "started": started_iso, "spawn": spawn_no, **route}
-    timed_out = False
-    early_death = False
-    extended = False
-    first_msg_s = _first_message_s(meta)
-    wall = node.get("timeout", meta.get("node_timeout", 900))
-    # wf159c finding 1 (wall-clamp): after a credential park, the remaining
-    # wall IS the per-spawn timeout for this (node,index) — a park can never
-    # buy a fresh full timeout, for the parked respawn or any later ladder
-    # spawn. #11's one-time extend still stacks on top of the clamp.
+    # wf159c finding 1 (wall-clamp) READ EARLY + #24 env stamp (take-over graft):
+    # after a credential park the remaining wall IS this spawn's timeout, and the
+    # stamp rides AFTER the clamp so the child sees the wall it is actually given;
+    # the work-metered resume's min() stacks on this one. Rides ONLY when the
+    # retry knob exists: a knob-free run's child env stays byte-identical.
     _rl_cap = (meta.get("_rl_timeout_cap") or {}).get((node["id"], index))
     if isinstance(_rl_cap, (int, float)):
         _rem = float(_rl_cap) - t0
@@ -3975,26 +6985,288 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             _rem = 0.05
         if not isinstance(wall, (int, float)) or wall > _rem:
             wall = _rem
-    deadline = t0 + wall if wall is not None else float("inf")
-    silence_deadline = t0 + first_msg_s if first_msg_s > 0 else None
+    if wall is not None and isinstance(meta.get("retry"), dict):
+        env["HERMES_WF_SPAWN_WALL_S"] = str(wall)
+    proc = None
+    reg_key = None
+    hb_path = None
+    timed_out = early_death = False
     rc = None
-    tclass, treason = None, ""
-    timeout_s = wall if isinstance(wall, (int, float)) \
-        else node.get("timeout", meta.get("node_timeout", 900))
-    final_reply = ""
-    # #61: live tree accounting — children are attributed to this spawn ONLY
-    # while it lives (after death+reap they reparent); the pgid walk reaches the
-    # survivors afterwards. The sample is best-effort evidence for the judgment
-    # and the quarantine below, never trusted for the verdict itself.
-    tree_seen = set()
-    tree_next_watch = 0.0
-    # est-bbfy: pre-cap persist/finish budget cue — one watch per spawn, dead
-    # once the run-level claim exists (respawn idempotence via the marker file).
-    cue_margin = _budget_cue_margin(meta)
-    cue_alive = not _budget_cue_claimed(run, node, index)
-    cue_next = 0.0
-    cue_home = route.get("profile_home") if route else None
+    _clean_exit = False
+
+    def _reap_child():
+        # est-g255 r2 R3: the ONE kill+reap owner for every failure after a
+        # successful Popen — registration, heartbeat setup, poll loop alike.
+        if proc is None:
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try: proc.kill()
+            except Exception: pass
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+
+    def _deregister():
+        if reg_key is not None:
+            with meta["_procs_lock"]:
+                meta["_procs"].pop(reg_key, None)
+
     try:
+        logf = _open_spawn_log(lp)   # est-hls8y: append, never truncate a prior attempt
+    except OSError as e:
+        # est-w95h7 (atbrace:hw-i6e #21): a capture the filesystem refuses is a
+        # deterministic spawn death, not a crash. Settle it typed at this seam
+        # (the launcher-failure record shape); the old bare raise reached the
+        # caller's catcher as an untyped `node crashed` commit with no class.
+        _seat_release(seat)
+        return {"status": "failed",
+                "error": f"spawn capture could not open ({lp}): {e}",
+                "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                "attempts": 1, **route}
+    log_created = time.time()   # the file's own creation stamp: never counts as activity
+    launched = False
+    try:
+        try:
+            with meta["_procs_lock"]:
+                # ATOMIC SPAWN: check→Popen→register hold the SAME lock the stop
+                # watcher takes to set _stop and scan. Either the watcher wins (pre-
+                # check cancels, nothing launches) or we win (child is registered and
+                # the watcher's scan WILL see it) — no window for a post-stop launch.
+                # est-g255 P255-1: the fan-out quorum cancel is honoured HERE too —
+                # _cancel_stragglers takes this lock BEFORE its scan (r2 R1).
+                if _lane_killed(run, node["id"]):
+                    logf.close()
+                    return {"status": "failed", "error": "killed by lane kill before spawn",
+                            "error_class": "killed", "ms": 0, **route}
+                if _cancelled():
+                    logf.close()
+                    return {"status": "failed", "error": "cancelled before spawn"
+                            + ("" if meta["_stop"].is_set() else " (quorum already met)"),
+                            "error_class": "cancelled", "ms": 0, **route}
+                if route and not (Path(route["profile_home"]) / "config.yaml").is_file():
+                    logf.close()
+                    return {"status": "failed", "error": f"profile gone: {node['profile']}",
+                            "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                            "attempts": 1, **route}
+                # #61c spawn guard: attempt N+1 may NOT start while ANY earlier
+                # generation of this (node,index) still has a live registered
+                # survivor — quarantine-reap them (SIGTERM grace -> SIGKILL ->
+                # /proc proof) and RECORD the reap before this Popen; an
+                # unprovable slate fails closed typed, never a blind spawn
+                # (reviewer B3: prior_alive must be [] at every attempt start).
+                pre = _sidecar_live_registered(run, tokens)
+                if pre is None:
+                    logf.close()
+                    return {**_proc_unreadable_record(0, node["id"], spawn_no),
+                            "ms": 0, "spawn": spawn_no, "attempts": 1, **route}
+                if pre:
+                    for tp in sorted(pre):
+                        try: os.kill(tp, signal.SIGTERM)
+                        except OSError: pass
+                    gdead = time.time() + PROCREE_TERM_GRACE_S
+                    while any(_proc_alive(p) for p in pre) and time.time() < gdead:
+                        time.sleep(0.05)
+                    for tp in sorted(pre):
+                        try: os.kill(tp, signal.SIGKILL)
+                        except OSError: pass
+                    pdead, stuck = _wait_pids_dead(pre, _proctree_kill_proof_s(meta))
+                    if not pdead:
+                        logf.close()
+                        rec = _left_live_record(0, stuck,
+                            "a respawn of this node may not start while prior-generation "
+                            "survivors of an earlier attempt are still live: ", {})
+                        rec["ms"] = 0
+                        rec["spawn"] = spawn_no
+                        log(run, ("item." if index is not None else "node.") + "tree_kill",
+                            node=node["id"], index=index, pids=sorted(pre), proof="stuck")
+                        return rec
+                    log(run, ("item." if index is not None else "node.") + "respawn_reap",
+                        node=node["id"], index=index, pids=sorted(pre), proof="dead",
+                        prior_alive=[], spawn=spawn_no)
+                # est-g255 r2 R1: the LAUNCH-INSTANT recheck. _procs_lock is held
+                # across check->Popen->register and _cancel_stragglers now takes
+                # the same lock BEFORE fo_cancel becomes visible — a coordinated
+                # setter can never land mid-section. The recheck is the belt: any
+                # cancel that became visible since this section's first check —
+                # during the survivor inspection/reaping above or by an
+                # uncoordinated setter — denies the launch at the Popen instant,
+                # so cancellation is never outrun by a spawn.
+                if _cancelled():
+                    logf.close()
+                    return {"status": "failed", "error": "cancelled at launch instant"
+                            + ("" if meta["_stop"].is_set() else " (quorum already met)"),
+                            "error_class": "cancelled", "ms": 0, **route}
+                # est-byft8: launch-instant STALENESS recheck — a queued spawn that
+                # waited on the seat across an amend must never launch its old
+                # prompt. Refuse typed (seat freed by the finally), never Popen; the
+                # wave boundary consumes restart.request, reloads, and the replay-skip
+                # efp law re-drives the node under the CURRENT definition. Same lock
+                # as the cancel recheck: stop wins over stale; an amend landing after
+                # this instant is a live-child event, unchanged law for everyone.
+                _stale = _stale_spawn_refusal(run, node, byid)
+                if _stale is not None:
+                    logf.close()
+                    return {**_stale, "spawn": spawn_no, "attempts": 1, **route}
+                tokens.append(token)     # registered BEFORE Popen — a spawn that
+                                         # dies mid-launch still owns its survivors
+                # est-w95h7 (atbrace:hw-i6e #21): the started marker lands BEFORE
+                # the exec, so no window exists between "decided to spawn" and
+                # "the record says a child may exist". The crash path is
+                # recoverable from this file alone: its name IS the settle
+                # target and its fields carry the spawn identity; the door
+                # reaper derives the interruption receipt from the record path.
+                # pid=None never passes _verify_spawn_rec, so an unproven spawn
+                # is never adopted; the existing Q1 record after the exec
+                # stamps the proven pid over the marker.
+                try:
+                    write_spawn_record(run, node, byid, index, spawn_no, cmd, lp, None,
+                                       skey, prompt_path=str(pp))
+                except OSError as e:
+                    logf.close()
+                    return {"status": "failed",
+                            "error": f"started marker could not be written: {e}",
+                            "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                            "attempts": 1, **route}
+                if str(os.environ.get("WF_TEST_KILL_AT_SPAWN_MARKER", "")) == "1":
+                    # Test-only deterministic crash hook at the marker instant
+                    # (same discipline as WF_TEST_KILL_ITEM_AT_FINALIZE).
+                    # Never set outside tests.
+                    os.kill(os.getpid(), signal.SIGKILL)
+                # est-ulwpg (witness 20261009-072611-fb-closeout-batch): the wd
+                # snapshot above is captured BEFORE the seat wait; an external
+                # sweeper can prune <run>/work/<node> while this spawn sits on
+                # a contended seat, and Popen then dies ENOENT-on-cwd as a typed
+                # error_class=spawn death (ms=0, attempts=1, no retry). (a) RE-ENSURE
+                # the cwd HERE — inside the _procs_lock section, immediately before
+                # Popen: child_work_dir's mkdir(parents=True, exist_ok=True) is
+                # idempotent, so this is free when nothing deleted the dir. (b) If
+                # the deleater still wins the instant before exec — Popen raises
+                # OSError ENOENT whose filename IS the cwd — re-create wd once and
+                # retry the Popen EXACTLY once in this same lock section. Any other
+                # error (a missing hermes_bin is ENOENT too, filename==argv[0])
+                # re-raises untouched and keeps the typed launcher failure below.
+                def _popen_child(cwd_path):
+                    return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
+                                            stdin=subprocess.DEVNULL, env=env, text=True,
+                                            cwd=cwd_path,
+                                            start_new_session=True)  # own pgid: a timeout kill can
+                _child_cwd = str(child_work_dir(run, node, index))   # THE re-ensure
+                try:
+                    proc = _popen_child(_child_cwd)
+                except OSError as _pe:
+                    _fn = str(getattr(_pe, "filename", "") or "")
+                    if (getattr(_pe, "errno", None) == errno.ENOENT
+                            and _fn and _fn in (wd, _child_cwd)):
+                        _child_cwd = str(child_work_dir(run, node, index))
+                        proc = _popen_child(_child_cwd)   # second failure = typed, as before
+                    else:
+                        raise
+                # est-g255 r2 R3: once Popen returns, the child belongs to the
+                # cleanup owner: register + heartbeat-path setup complete INSIDE
+                # this try — a fault at either reaps the child, deregisters and
+                # frees the seat below, never leaving a live child or a ticket.
+                reg_key = f"{node['id']}:{id(proc)}"
+                meta["_procs"][reg_key] = proc  # never reach runner/siblings
+                hb_path = _heartbeat_path(lp)   # est-g2xx (A): liveness sidecar
+                launched = True
+        except OSError as e:
+            if proc is None:              # the launcher itself failed: typed
+                try: logf.close()
+                except Exception: pass
+                return {"status": "failed", "error": f"launcher spawn failed: {e}",
+                        "error_class": "spawn", "ms": 0, "spawn": spawn_no,
+                        "attempts": 1, **route}
+            # est-g255 r2 R3: an OSError at/after the successful Popen (the
+            # zap registration-OSError seam) is a post-Popen fault: it never
+            # escapes as a typed spawn with a live child and a retained
+            # ticket — kill+reap, deregister, close the fd, free the seat,
+            # surface the fault. (The `with` above already released
+            # _procs_lock on unwind, so _deregister can safely re-take it.)
+            _reap_child()
+            _deregister()
+            try: logf.close()
+            except Exception: pass
+            _seat_release(seat)
+            raise
+        except BaseException:
+            if launched or proc is not None:
+                # Any fault at/after the successful Popen — registry insert,
+                # heartbeat setup, or between them — never escapes the cleanup
+                # owner: kill+reap the child, deregister, close the log fd,
+                # free the seat, then surface the fault. (Locks: the `with`
+                # above already released _procs_lock on unwind, so
+                # _deregister/re-entry are safe here.)
+                _reap_child()
+                _deregister()
+                try: logf.close()
+                except Exception: pass
+                _seat_release(seat)
+            raise
+    finally:
+        if proc is None:          # nothing launched: the seat goes straight back
+            _seat_release(seat)
+    # est-g255 P255-4 + r2 R3: ONE cleanup boundary over the whole acquired-seat/
+    # child lifetime — registration, heartbeat setup, bind, receipt, spawn record,
+    # ledger and the poll loop all run inside a try whose finally frees the seat
+    # and deregisters the child; an exception anywhere kills + reaps first.
+    try:
+        _seat_bind(seat, proc.pid)
+        # est-2ek.1.641: this spawn billed under the door's alive-proof — record
+        # the lane's proved-alive receipt (durable, replacement-runner-visible).
+        _route_receipt_bake(meta, node)
+        # est-w95h7: the FINALIZE of the started marker written before the exec.
+        # Same file, now carrying the proven pid, so the live child is visible
+        # mid-run with pid / log / argv / prompt path (A1: the prompt as sent is
+        # durable in the run dir, no redaction, no unlink).
+        spawn_cmd = list(cmd)
+        started_iso = now()
+        try:
+            write_spawn_record(run, node, byid, index, spawn_no, spawn_cmd, lp, proc.pid, skey,
+                               started_iso, prompt_path=str(pp))
+        except Exception as e:
+            log(run, "spawn.record.error", node=node["id"], error=f"{type(e).__name__}: {e}")
+        # #8 spawn-ledger: the child is legible from the moment its spawn record is.
+        ledger_row(meta, "child", proc.pid, node=node["id"], index=index, skey=skey)
+        evd = {"log_path": str(lp), "prompt_path": str(pp), "pid": proc.pid,
+               "spawn_cmd": spawn_cmd, "started": started_iso, "spawn": spawn_no, **route}
+        extended = False
+        first_msg_s = _first_message_s(meta)
+        # #24 (take-over graft): `wall` arrives ALREADY resolved — wall_s-aware
+        # and park-clamped at run_child's read — so no re-read here; the clamp
+        # below stays as the belt for the post-Popen clock move.
+        # wf159c finding 1 (wall-clamp): after a credential park, the remaining
+        # wall IS the per-spawn timeout for this (node,index) — a park can never
+        # buy a fresh full timeout, for the parked respawn or any later ladder
+        # spawn. #11's one-time extend still stacks on top of the clamp.
+        _rl_cap = (meta.get("_rl_timeout_cap") or {}).get((node["id"], index))
+        if isinstance(_rl_cap, (int, float)):
+            _rem = float(_rl_cap) - t0
+            if _rem <= 0:
+                _rem = 0.05
+            if not isinstance(wall, (int, float)) or wall > _rem:
+                wall = _rem
+        deadline = t0 + wall if wall is not None else float("inf")
+        silence_deadline = t0 + first_msg_s if first_msg_s > 0 else None
+        tclass, treason = None, ""
+        timeout_s = wall if isinstance(wall, (int, float)) \
+            else node.get("timeout", meta.get("node_timeout", 900))
+        final_reply = ""
+        # #61: live tree accounting — children are attributed to this spawn ONLY
+        # while it lives (after death+reap they reparent); the pgid walk reaches the
+        # survivors afterwards. The sample is best-effort evidence for the judgment
+        # and the quarantine below, never trusted for the verdict itself.
+        tree_seen = set()
+        tree_next_watch = 0.0
+        hb_stamped = False
+        # est-bbfy: pre-cap persist/finish budget cue — one watch per spawn, dead
+        # once the run-level claim exists (respawn idempotence via the marker file).
+        cue_margin = _budget_cue_margin(meta)
+        cue_alive = not _budget_cue_claimed(run, node, index)
+        cue_next = 0.0
+        cue_home = route.get("profile_home") if route else None
         # #18 child liveness (replaces the blind blocking communicate): poll the
         # spawn log — a child that has written NOTHING by silence_deadline never
         # got past its first API call (frontporch-rem died after 732 s blind).
@@ -4006,22 +7278,43 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             if now_s >= tree_next_watch:
                 _tree_watch(proc, tree_seen)
                 tree_next_watch = now_s + PROCREE_POLL_S
+                if silence_deadline is not None and not hb_stamped:
+                    # est-g2xx (A): durable memory of an observed live tool child
+                    _hb_pid = next((p for p in sorted(tree_seen)
+                                    if p != proc.pid and _proc_alive(p)), None)
+                    if _hb_pid is not None:
+                        _stamp_heartbeat(hb_path, _hb_pid)
+                        hb_stamped = True
             if cue_alive and now_s >= cue_next:
                 cue_next = now_s + BUDGET_CUE_POLL_S
                 if _budget_cue_inject(run, node, index, skey, cue_home,
                                       node.get("max_turns"), cue_margin, steer_file):
                     cue_alive = False
-            if silence_deadline is not None and now_s >= silence_deadline \
-                    and not _child_spoke(lp):
-                early_death = True
+            if silence_deadline is not None and now_s >= silence_deadline:
+                # #18 + est-g2xx (A): the silence law trusts bytes OR a live
+                # executing subtree — a block-buffered child running tools is
+                # past its first call. Proven once = disarmed (the wall still bounds it).
+                _tree_watch(proc, tree_seen)
+                if _proof_of_life(lp, proc, hb_path, tree_seen):
+                    if not _child_spoke(lp):
+                        log(run, ("item." if index is not None else "node.") + "proof_of_life",
+                            node=node["id"], index=index, spawn=spawn_no, basis="tool_child")
+                    silence_deadline = None
+                else:
+                    early_death = True
             if not early_death and now_s >= deadline and not extended \
-                    and not meta["_stop"].is_set() and _log_recent(lp, log_created):
+                    and not meta["_stop"].is_set() \
+                    and (_log_recent(lp, log_created)
+                         or _session_recent(run, f"{skey}#a{attempt}" if skey else None, cue_home)):
                 # EXTEND-NOT-KILL (#11): a child whose log shows a write within the
-                # last 120 s is working, not hung — grant ONE extension of 50% of the
-                # wall (node.extended); the second expiry kills.
+                # last 120 s — or, for a block-buffered oneshot -Q child whose log never
+                # moves, whose own state.db session row moved in that window
+                # (est-2ek.1.595) — is working, not hung: grant ONE extension of 50% of
+                # the wall (node.extended); the second expiry kills.
                 extended = True
                 extra_s = round(timeout_s * 0.5) or 1
-                log(run, "node.extended", node=node["id"], extra_s=extra_s)
+                log(run, "node.extended", node=node["id"], extra_s=extra_s,
+                    **({} if _log_recent(lp, log_created) else {"basis": "session"}))
                 timeout_s += extra_s
                 deadline += extra_s
                 continue
@@ -4040,9 +7333,33 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             time.sleep(0.1)
         if rc is not None and rc != 0 and rc >= 0 and not early_death:  # typed verdict BEFORE finally unlinks the report; signal-kill (stop) has no verdict
             tclass, treason = _typed_error_class(report_path)
+        _clean_exit = True
+    except BaseException:
+        # est-g255 P255-4: a failure anywhere after Popen (setup or poll) never
+        # leaves a live unsupervised child: kill its group and reap it here;
+        # the finally below then frees the seat and deregisters it.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try: proc.kill()
+            except Exception: pass
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+        raise
     finally:
-        with meta["_procs_lock"]:
-            meta["_procs"].pop(f"{node['id']}:{id(proc)}", None)
+        _deregister()             # est-g255 r2 R3: the key captured at insert
+        # est-g2xx (B): the child is reaped — the seat is free. est-g255 P255-1:
+        # a fan-out item DEFERS a clean spawn's seat to its caller (freed only
+        # after the quorum cancel is visible); an exception always frees it.
+        if seat_hold is not None and _clean_exit:
+            seat_hold.append(seat)
+        else:
+            _seat_release(seat)
+        if hb_path is not None:
+            try: os.unlink(hb_path)
+            except OSError: pass
         try: logf.close()
         except Exception: pass
         # #8 spawn-ledger: close the row for every spawn that reached judgment
@@ -4081,33 +7398,43 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     _tree_live = sorted(p for p in (tree_seen - {proc.pid}) if _proc_alive(p))
     if _tree_live:
         evd["tree_pids"] = _tree_live
+    if (rc or 0) != 0 and _lane_killed(run, node["id"]):
+        # est-cl7t: node-targeted lane kill — terminal and readable, never retried
+        return {"status": "failed", "error": "killed by lane kill (action=kill)",
+                "error_class": "killed", "raw": (out or "")[-2000:], "ms": ms,
+                "final": final_reply, **sk, **evd}
     if early_death:
         return {"status": "failed",
                 "error": f"early_death: child produced no output within {first_msg_s}s of spawn "
                          f"(killed; log empty — never got past its first call)",
                 "error_class": "early_death", "raw": "", "ms": ms, **sk, **evd}
     if timed_out:
+        bk = _bank_the_corpse(run, node, index, spawn_no, out)   # #131: the wall-kill banks the corpse
+        if bk:
+            evd["banked"] = bk
         hv = _harvest_death(out, harvest_schema)   # #4: a timeout that printed a valid answer keeps it
+        # #100 golden-solo: the wall stamp rides the death record ONLY when the
+        # retry knob exists (it meters the work-metered resume); a knob-free run's
+        # node records stay byte-identical to the frozen capture.
+        wallst = {"wall": wall} if isinstance(meta.get("retry"), dict) else {}
         if hv:
             return {"status": "partial", "error": f"timeout after {timeout_s}s "
                     "(answer harvested from stdout before the kill)",
-                    "error_class": "timeout", "ms": ms, "final": final_reply, **hv, **sk, **evd}
+                    "error_class": "timeout", "ms": ms, **wallst, "final": final_reply, **hv, **sk, **evd}
         return {"status": "failed", "error": f"timeout after {timeout_s}s",
-                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
+                "error_class": "timeout", "raw": (out or "")[-2000:], "ms": ms, **wallst,
+                "final": final_reply, **sk, **evd}
     # unsuccessful exit = failure, PERIOD — diagnostic prose on stdout must never
     # be committed as a successful result (fleet-review F: crash-with-prose).
     if rc != 0:
         if (rc or 0) < 0 and meta["_stop"].is_set():
             return {"status": "failed", "error": "cancelled by stop", "error_class": "cancelled",
                     "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
-        if (rc or 0) < 0 and not timed_out and not early_death:
-            # signal-killed by the runner itself with no stop pending = a fan-out
-            # straggler killed at quorum (#12). Not a failure of the child's making.
-            # a2d7f664: never blind — the capture is frozen by the SIGKILL, so the
-            # snapshot is faithful to the quorum moment; and a straggler that had
-            # already flushed a valid fenced answer keeps its harvest (the cancelled
-            # class was excluded from _harvest_death — this is cancelled's own pass;
-            # classification and quorum math untouched, error_class stays cancelled).
+        if (rc == -signal.SIGKILL and seat_cancel is not None and seat_cancel.is_set()
+                and getattr(proc, "_wf_quorum_cancel", False)):
+            # The cancel setter recorded a successful kill request for THIS spawn.
+            # A negative rc (or a quorum event arriving after death) is not a cause.
+            # Snapshot/harvest are independent of the cancelled classification.
             suffix, snap = _cancel_evidence(run, node["id"], index, lp)
             hv = _harvest_cancelled(out, harvest_schema, run, node["id"], index)
             rec = {"status": "failed", "error": "cancelled: quorum already met" + suffix,
@@ -4117,6 +7444,19 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             if hv:
                 rec.update(hv)
             return rec
+        if rc is not None and rc < 0:
+            signum = -rc
+            try:
+                sig_name = signal.Signals(signum).name
+            except ValueError:
+                sig_name = f"signal {signum}"
+            hv = _harvest_death(out, harvest_schema)
+            return {"status": "partial" if hv else "failed",
+                    "error": f"child terminated: {sig_name} (external: source unknown)",
+                    "error_class": "crashed", "death_class": "external_kill",
+                    "signal": sig_name, "signal_number": signum, "returncode": rc,
+                    "raw": (out or "")[-2000:], "ms": ms, "final": final_reply,
+                    **(hv or {}), **sk, **evd}
         if tclass == "cap_exhausted":
             hv = _harvest_death(out, harvest_schema)   # #4: every cap death that "said so precisely" keeps its answer
             if hv:
@@ -4161,13 +7501,29 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             # #24: name the model + record the horizon (advisory cache); the class
             # is outside _RETRYABLE_CLASSES/_BOUNDED_RETRY_CLASSES, so the ladder
             # never fires — this ONE attempt is the node's verdict.
-            _quota_note(node.get("model") or node.get("provider") or "seat default", marker)
+            _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
             return {"status": "failed",
                     "error": f"child exited rc={rc}: subscription quota exhausted for model "
                              f"'{node.get('model') or 'seat default'}' — reset horizon in the "
                              f"provider message below; amend the node to a live model instead "
                              f"of waiting. Marker: {marker}",
                     "error_class": "fatal_quota", "raw": (out or "")[-2000:], "ms": ms,
+                    "final": final_reply, **sk, **evd}
+        lb, lb_marker = _is_lease_busy(rc, out)
+        if lb:
+            # lease-busy: the CLI's own fail-closed lease notice + its lease-wait exit
+            # code — a collision with another Hermes process on this session, never a
+            # verdict on the work. Typed failed here; the #5 bounded ladder re-drives
+            # it ONCE as a FRESH session (see _bounded_retry). Ranks AFTER the #4
+            # harvest (an answer that made it out still commits partial) and before
+            # the generic unknown/malformed_turn buckets, exactly like config_input
+            # claims its deterministic shape.
+            return {"status": "failed",
+                    "error": f"child exited rc={rc} on the CLI's session-lease wait — another "
+                             f"Hermes process held this session and the message was never "
+                             f"processed; one bounded re-drive as a fresh session follows. "
+                             f"Marker: {lb_marker}",
+                    "error_class": "lease_busy", "raw": (out or "")[-2000:], "ms": ms,
                     "final": final_reply, **sk, **evd}
         if eclass == "unknown" and _tool_call_as_text(final_reply or out or ""):
             # est-2ek.1.541 malformed turn: the rc!=0 death whose reply IS serialized
@@ -4226,7 +7582,10 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                                    attempt_note=attempt_note, steering=steering, attempt=attempt,
                                    skey=skey, inputs=inputs, index=index,
                                    resume_preamble=resume_preamble,
-                                   reasoning_override=target)
+                                   reasoning_override=target,
+                                   seat_cancel=seat_cancel, seat_hold=seat_hold,
+                                   seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: the admit lock must survive every re-drive
+                                   model_override=model_override)
                     r2["ms"] = r2.get("ms", 0) + ms
                     r2["reasoning_gate400"] = {"requested": req_g, "clamped": target,
                                                "supported": sup_g}
@@ -4235,12 +7594,30 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                                "gate400_clamp": target})
                     r2["attempts_log"] = al
                     return r2
+        # WF-GRAFT-2 (est-imp1z): the generic-death settle gate. Every typed
+        # deterministic class above (config_input, fatal_quota, lease_busy,
+        # malformed_turn, cap, signals, provider_400…) already returned with its
+        # own fact — this classifier reclassifies NOTHING of that. For a death
+        # that would otherwise land `unknown`, the classifier is the single gate:
+        # a line-scoped transient sentinel types it `transport` (the same
+        # retryable ladder it already fed as unknown, now with the verbatim
+        # marker), and a failure token types it `declared_failure` (terminal).
+        # A token declaring SUCCESS never launders a dead child here — rc!=0 is
+        # the runner's own fact and the harvest law above owns the answer.
+        if eclass == "unknown":
+            _ov = _outcome.classify(rc, out, _outcome.parse_node_outcome(out))
+            _otok = _outcome.parse_node_outcome(out)
+            if _ov["outcome"] == "failure" and _ov["kind"] == "transient":
+                eclass, marker = "transport", _ov["detail"]
+            elif _ov["outcome"] == "failure" and _otok == "failure":
+                eclass = "declared_failure"
         verdict = _verdict_lines(marker if marker else out)
         rec = {"status": "failed", "error": f"child exited rc={rc}: {verdict}",
                "error_class": eclass, "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
         if eclass == "ratelimit":   # est-t0vz: keep the verbatim banner for the park's
             rec["ratelimit_banner"] = marker   # give-up text + model extraction
         return rec
+    detached = _poll_registered_job(meta, node, byid) if rc == 0 and index is None else None
     parsed, perr = extract_json(out)
     # #61 completeness gate — ABOVE every exit-0 verdict, done and correction-
     # retry alike: before an exit-0 spawn is believed at all, its own process
@@ -4254,7 +7631,8 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # refuses. Dead-or-empty returns None and every verdict below is the
     # pre-#61 path, byte-identical.
     tree_note = _account_tree(meta, node, index, spawn_no, proc.pid,
-                              tree_seen, bool(_harvest_death(out, schema)))
+                              tree_seen, bool(hv := _harvest_death(out, strip_engine_disclosure(
+                                  schema, (node or {}).get("substrate_substituted")))))
     if tree_note is not None:
         kind, extra = tree_note
         if kind == "fail":
@@ -4272,13 +7650,47 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         if kind == "partial":
             # the harvest law: the answer rode stdout while the real work
             # outlived the turn — commit it as partial, never a silent done.
-            hv = _harvest_death(out, schema)
+            # (hv: the stripped-schema harvest computed at the gate above —
+            # same view as every other harvest path, #116 disclosure out.)
             return {"status": "partial",
                     "error": "answer harvested from stdout while the spawn's process tree "
                              "outlived the turn; tree killed and proven dead — never a "
                              "silent done (#61)",
                     "error_class": "left_live_descendants", "ms": ms,
                     "final": final_reply, **hv, **extra, **sk, **evd}
+    if detached is not None:
+        return {**detached, **sk, **evd}
+    # WF-GRAFT-2 (est-imp1z): exit 0 is not yet success — the pure classifier's
+    # authority order (node_outcome token > transient sentinels > exit code) is
+    # the SINGLE gate for a CLI-backed settle from here down. The lie this graft
+    # kills: the agent CLI exhausts provider retries, prints
+    # `API call failed after N retries: HTTP 429 …` as its final message, exits
+    # 0 — and extract_json's harvest-once coercion below launders that text
+    # into {result: <prose>} and the node commits `done` on garbage. kind=transient
+    # hands off to error_class `transport` — the Q4 transient ladder's gate class
+    # (its own api_calls/tool-progress guards still own the re-drive decision);
+    # a token-declared failure is `declared_failure`, outside BOTH ladders. A
+    # token declaring SUCCESS outranks the sentinels (the node knows its result)
+    # but manufactures nothing: the schema/answer law below stays in force.
+    # Typed deterministic deaths (config_input/fatal_quota/lease_busy/…) all
+    # live on the rc!=0 path and returned above this line — this classifier can
+    # never reclassify them transient.
+    ov = _outcome.classify(rc, out, _outcome.parse_node_outcome(out))
+    if ov["outcome"] == "failure":
+        if ov["kind"] == "transient":
+            return {"status": "failed",
+                    "error": f"child exited rc={rc} but its capture carries a transient "
+                             f"provider-error sentinel — exit 0 is not success (the CLI exits "
+                             f"clean on exhausted provider retries); the bounded transient "
+                             f"ladder owns the re-drive. Marker: {ov['detail']}",
+                    "error_class": "transport", "sentinel": ov["detail"],
+                    "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
+        return {"status": "failed",
+                "error": "child exited rc=0 but its self-reported node_outcome token declares "
+                         "failure — the node's own verdict outranks the exit code and any "
+                         "parseable fence; deterministic, outside both retry ladders",
+                "error_class": "declared_failure",
+                "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
     valid_answer = False
     errs = None
     if parsed is not None and perr is None:
@@ -4294,7 +7706,16 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             if parsed is not None and perr is None else
             f"Your previous answer had no parseable json block ({perr})")
     if attempt < 1:
-        r = run_child(meta, node, byid, goal, context, schema, attempt_note=note + ". Redo the work and return valid json.", steering=steering, attempt=attempt + 1, skey=skey, inputs=inputs, index=index)
+        correction = (". Correct the answer schema without redoing finished work."
+                      if resume_preamble else ". Redo the work and return valid json.")
+        r = run_child(meta, node, byid, goal, context, schema,
+                      attempt_note=note + correction, steering=steering,
+                      attempt=attempt + 1, skey=skey, inputs=inputs, index=index,
+                      resume_preamble=resume_preamble,
+                      seat_cancel=seat_cancel, seat_hold=seat_hold,
+                      seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: admit atomicity survives the correction re-drive
+                      model_override=model_override,
+                      reasoning_override=reasoning_override)
         r["ms"] = r.get("ms", 0) + ms   # wall time of BOTH attempts
         return r
     eclass = "schema"   # sprint101 #3: was 'no_json' when unparseable, 'schema' when invalid
@@ -4441,7 +7862,8 @@ def _ratelimit_park(meta, r, respawn, ev, ev_kw, node=None, cancel=None,
         # defect). #11's one-time extend still applies on top of the clamp —
         # that law was bought separately and stays intact.
         meta.setdefault("_rl_timeout_cap", {})[key] = park_deadline
-        r = respawn()
+        hint = _resume_hint_block(run, node, ev_kw.get("index"), attempts_log)   # #130
+        r = respawn(resume_preamble=hint) if hint else respawn()
     if attempts_log:
         r["attempts_log"] = attempts_log
         last_spawn = r.get("spawn")
@@ -4456,19 +7878,41 @@ def _ratelimit_park(meta, r, respawn, ev, ev_kw, node=None, cancel=None,
     return r
 
 def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
-    """Q4 transient retry: re-spawn a failed child at most 2 more times (5 s, 20 s
-    backoff) ONLY when ALL hold — error_class ∈ {transport, unknown} AND the dead
-    attempt made api_calls == 0 AND stop is not set AND the per-run retry budget
-    (6) is not exhausted. Never retries schema/no_json/timeout/max_turns/
+    """Q4 transient retry: re-spawn a failed child up to the node's retry.transient
+    cap (default 2 — hw-23c tunable 0..8), backoff exponential by default
+    (est-9ceqc: base 2 s, doubling, ceiling 30 s — see DEFAULT_RETRY_BACKOFF; a
+    two-element run.json retry_backoff keeps the fixed two-point schedule, and
+    a dict {base, ceiling} tunes the exponential) ONLY when ALL hold — error_class ∈ {transport, unknown} AND the
+    dead attempt made api_calls == 0 AND stop is not set AND the per-run retry
+    budget (default 6, run-tunable via retry_budget) is not exhausted. Never
+    retries schema/no_json/timeout/max_turns/
     provider_400/cancelled/spawn. attempts_log records every failed attempt; a
     final retryable death after retries = error_class transport_exhausted.
     A `partial` harvest (#4) enters here as non-failed and is NEVER retried;
-    a still-retryable death hands off to _bounded_retry (#5) once Q4 is spent."""
+    a still-retryable death hands off to _bounded_retry (#5) once Q4 is spent.
+    est-ja41 (PR #159 finding, reverse of wf159c B2): a banner death the PARK
+    handled BEFORE this ladder arrives here as a transport death carrying the
+    park's attempts_log on the record (banner -> transport -> success shape).
+    The ladder SEEDS that history — never resets it — so the committed record
+    agrees with the event history (every parked death stays machine-visible).
+    The per-node cap and the transport_exhausted demotion count THIS ladder's
+    own attempts only; an inherited log alone never demotes a record the
+    ladder never touched."""
     run = meta["_run"]
     backoff = _retry_conf_params(meta)[0]
-    attempts_log = []
+    cap = _retry_caps(node)[0]   # hw-23c: author-tunable (default 2 = today's law)
+    attempts_log = list(r.get("attempts_log") or [])   # est-ja41: inherited park history
+    ladder_attempts = 0
+    # est-9ceqc: seed the ladder's own counter from the persisted per-node count —
+    # a boot that finds a spent cap re-spawns zero, so restarts cannot amplify
+    # attempts past the node's bound.
+    wkey = _retry_window_key(ev, ev_kw)
+    _seed = _retry_window_load(run).get(wkey) if wkey else None
+    if isinstance(_seed, dict) and type(_seed.get("attempts")) is int \
+            and _seed["attempts"] > 0:
+        ladder_attempts = _seed["attempts"]
     while (r.get("status") == "failed" and r.get("error_class") in _RETRYABLE_CLASSES
-           and len(attempts_log) < 2):
+           and ladder_attempts < cap):
         if meta["_stop"].is_set():
             break
         calls = (_attempt_api_calls(run, r.get("skey"), r["profile_home"])
@@ -4485,22 +7929,30 @@ def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
             attempts_log.append({"attempt": len(attempts_log),
                                  "error_class": r["error_class"], "at": now(),
                                  **_attempt_counts(run, r)})
+            ladder_attempts += 1   # est-ja41: counts for the demote trigger, same as pre-fix
             log(run, ev + ".retry_skipped", reason="retry budget exhausted",
                 error_class=r.get("error_class"), **ev_kw)
             break
         attempts_log.append({"attempt": len(attempts_log),
 "error_class": r["error_class"], "at": now(),
                              **_attempt_counts(run, r)})
+        ladder_attempts += 1   # est-ja41: THIS ladder's own attempt counter
         # jam-h22/h30: rate-limited deaths draw full-jitter sleeps (see _retry_sleep);
         # a false-positive-free retry decision is unchanged — only the delay differs.
         rate_limited = _is_rate_limited(r.get("raw"))
         if rate_limited:
             r["subtype"] = "rate_limited"
-        delay = _retry_sleep(backoff, len(attempts_log) - 1, r.get("raw"))
+        # est-ja41: the sleep schedule indexes the LADDER's attempts, never the
+        # merged history — an inherited park log must not advance the ladder's
+        # schedule position (2 s -> 4 s under the default exponential policy;
+        # under a fixed [a, b] schedule: a -> b).
+        delay = _retry_sleep(backoff, ladder_attempts - 1, r.get("raw"))
         log(run, ev + ".retrying", error_class=r["error_class"], backoff_s=delay,
             rate_limited=rate_limited,
             attempts_log=list(attempts_log), **ev_kw)
         deadline = time.time() + delay
+        _retry_window_save(run, wkey, deadline, ladder_attempts,
+                           entries=attempts_log)   # est-9ceqc (+ est-9qhpf ledger)
         while time.time() < deadline:
             if meta["_stop"].is_set():
                 break
@@ -4513,8 +7965,10 @@ def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
         iso = _isolate_prior(meta, r, ev, ev_kw)
         if iso is not None:
             iso["attempts_log"] = attempts_log
+            _retry_window_keep(meta, wkey, iso)   # est-9ceqc: typed terminal clears
             return iso
-        r = respawn()
+        hint = _resume_hint_block(run, node, ev_kw.get("index"), attempts_log)   # #130
+        r = respawn(resume_preamble=hint) if hint else respawn()
         # wf159c finding 2: a banner death that surfaces AFTER a ladder
         # respawn must reach the park too — the dispatcher contract (parks
         # while wall+budget allow, then verbatim banner + ratelimit_gave_up)
@@ -4526,15 +7980,91 @@ def _transient_retry(meta, r, respawn, ev, ev_kw, node=None, cancel=None):
             # typed give-up, or a quorum-cancel from the wait — all propagate
             # unchanged (dropping a cancel here would launder it into the
             # ladder's transport bookkeeping).
-            return _ratelimit_park(meta, r, respawn, ev, ev_kw,
+            _ret = _ratelimit_park(meta, r, respawn, ev, ev_kw,
                                    node=node, cancel=cancel,
                                    prior_attempts_log=attempts_log)
+            _retry_window_keep(meta, wkey, _ret)   # est-9ceqc: the banner ledger takes over
+            return _ret
     if attempts_log:
         r["attempts_log"] = attempts_log
         last_spawn = r.get("spawn")
         r["attempts"] = last_spawn + 1 if isinstance(last_spawn, int) else len(attempts_log) + r.get("attempts", 0)
-        if r.get("error_class") in _RETRYABLE_CLASSES:
+        # est-ja41: transport_exhausted is the LADDER's own verdict — "this
+        # ladder spent its respawns on the same dead model". An inherited park
+        # history proves nothing about this ladder; for no-inherit runs
+        # ladder_attempts>=1 reproduces the pre-fix trigger (own log non-empty)
+        # exactly, including the blocked-append path.
+        if ladder_attempts >= 1 and r.get("error_class") in _RETRYABLE_CLASSES:
             r["error_class"] = "transport_exhausted"
+    _retry_window_keep(meta, wkey, r)   # est-9ceqc: survive only the transient verdict
+    return r
+
+def _fallback_ladder(meta, r, respawn_fallback, ev, ev_kw, node=None, cancel=None):
+    """est-2ek.1.164 (spool key 217839b445203623): a transport_exhausted death —
+    the Q4 ladder spent its respawns on the SAME dead model — re-spawns the node
+    ONCE per declared `fallback_models` entry, IN ORDER, before the run blocks.
+    Gates, all tested in tests/test_plugin_asks_164_fallback.py:
+      * ONLY the transport_exhausted verdict enters (the caller invokes this
+        right after _transient_retry; every other class never reaches a rung —
+        the quota-class 429 dies at ONE attempt, #24 law intact);
+      * est-ja41/est-mqp1f: a REFUSAL-stamped transport_exhausted (the
+        est-9qhpf lifetime-cap refusal, `refusal` key set) NEVER enters —
+        that verdict is the cap speaking BEFORE this boot spawned anything;
+        walking rungs over it bills past a bound that exists to stop billing.
+      * no key / empty key => byte-identical old behavior (zero extra spawns);
+      * every rung is ONE spawn, never ladder recursion: a dead rung does NOT
+        re-run Q4 on the new model;
+      * each rung consumes the run's shared retry budget (the same
+        meta['_retries_left'] Q4 draws from) — an exhausted budget stops the
+        walk with the transport_exhausted record intact, so billing is bounded;
+      * #61 quarantine law holds here too: _isolate_prior must PROVE the prior
+        tree dead before a rung spawns, else fail closed typed;
+      * stop / cancel kills the walk instantly (a stopped run keeps its
+        cancelled-demoted record, not a half-walked ladder);
+      * the first answering rung commits, stamped `fallback_model_used`, one
+        node.fallback event per rung tried (named), attempts_log extended.
+    Absent key stays UNTOUCHED — the golden-solo byte-identity gate is the
+    referee. respawn_fallback(model) is the caller-owned one-spawn closure on
+    that model (fresh skey, fresh session, like every retry respawn)."""
+    fb = (node or {}).get("fallback_models")
+    if not (isinstance(fb, list) and fb) or r.get("status") != "failed" \
+            or r.get("error_class") != "transport_exhausted" \
+            or r.get("refusal"):   # est-mqp1f: spent-cap refusal is final — bypass
+        return r
+    run = meta["_run"]
+    attempts_log = list(r.get("attempts_log") or [])
+    for rung_model in fb:
+        if meta["_stop"].is_set() or (cancel is not None and cancel.is_set()):
+            break
+        with meta["_procs_lock"]:
+            if meta["_retries_left"] <= 0:
+                break                       # shared budget spent: bounded, keep the death
+            meta["_retries_left"] -= 1
+        log(run, ev + ".fallback", to_model=rung_model, **ev_kw)
+        iso = _isolate_prior(meta, r, ev, ev_kw)   # #61: never spawn over a live prior tree
+        if iso is not None:
+            iso["attempts_log"] = attempts_log
+            return iso
+        entry = {"attempt": len(attempts_log), "error_class": "transport_exhausted",
+                 "at": now(), "fallback_model": str(rung_model), **_attempt_counts(run, r)}
+        attempts_log.append(entry)
+        r = respawn_fallback(rung_model)
+        if r.get("status") == "done":
+            r["fallback_model_used"] = str(rung_model)
+            break
+    if attempts_log:
+        r["attempts_log"] = attempts_log
+        last_spawn = r.get("spawn")
+        cand = last_spawn + 1 if isinstance(last_spawn, int) \
+            else len(attempts_log) + r.get("attempts", 0)
+        # est-ja41/est-mqp1f: a rung death stamps `spawn` in a boot-local
+        # (log-floored) domain, while attempts_log here is the MERGED lifetime
+        # ledger. The spawn+1 arithmetic may only RAISE the count — never
+        # re-break record-vs-ledger agreement below the ledger this record
+        # now carries or its own prior count.
+        prior = r.get("attempts")
+        prior = prior if type(prior) is int else 0
+        r["attempts"] = max(cand, len(attempts_log), prior)
     return r
 
 # ---------- #25: pinned-route hold at commit (field-report fallback-billing ask) ----------
@@ -4577,7 +8107,7 @@ def _seat_alias_map(home):
                 amap[k.strip()] = v.strip().strip("'\"")
     return amap
 
-def _route_hold(meta, result, node=None):
+def _route_hold(meta, result, node=None, final_served=None):
     """#25: commit-time fail-closed hold (field report fb-fix-9c575645: pinned
     billed the seat's fallback model for 3 whole nodes while the submit ping had
     ALREADY reported the fallback-ladder surprise). When the door proved this node's
@@ -4586,11 +8116,29 @@ def _route_hold(meta, result, node=None):
     neither the verified route, an alias of it, nor the node's own resolved model
     means the child billed someone else: failed, error_class=route_unavailable.
     Unknown served (no state.db row) is NOT a mismatch — the runner never invents
-    'known' from absence (R2 law)."""
+    'known' from absence (R2 law).
+    route-hold escalation (w56): the opt-out this hold's OWN error text advertises
+    (`require_route: false`) is HONORED here — node key > graph `defaults` (same
+    precedence as the door's _require_route_effective). A node whose author
+    accepts fallback commits its completed output instead of losing it to
+    route_unavailable, and the contradicted proof is dropped from the def so no
+    later probe re-fires against it. Without the key: #25 behavior byte-identical."""
     node = node or {}
     verified = node.get("route_verified")
     if not verified or result.get("status") not in ("done", "partial"):
         return result       # never mask a genuine death with the hold
+    rq = node.get("require_route")
+    if rq is None:
+        try:
+            rq = (json.loads((meta.get("_run") / "graph.json").read_text())
+                  .get("defaults") or {}).get("require_route")
+        except Exception:
+            rq = None
+    if rq is None or rq is True:
+        pass
+    elif not rq:
+        node.pop("route_verified", None)      # the opted-out proof is void going forward
+        return result
     served = result.get("served_model")
     if not served:
         return result                                    # unknown: never counted
@@ -4606,23 +8154,28 @@ def _route_hold(meta, result, node=None):
             candidates |= {alias.lower(), str(target).lower(),
                            str(target).rsplit("/", 1)[-1].lower()}
     s = str(served).strip().lower()
-    if s in candidates or s.rsplit("/", 1)[-1] in candidates:
-        return result
+    if s in candidates or s.rsplit("/", 1)[-1] in candidates or any(
+            wfcommon.route_ids_equal(s, c, wfcommon.route_provider(node, verified)) for c in candidates):
+        return result                          # est-2ek.1.699: route-identity contract (wfcommon)
+    lead = (f"final served_model {final_served!r}; a mid-session call billed {served!r}"
+            if final_served and final_served != served else f"node billed {served!r}")
     result.update(status="failed", error_class="route_unavailable",
-                  error=f"route_unavailable: node billed {served!r} but the door proved "
+                  error=f"route_unavailable: {lead} but the door proved "
                         f"{verified!r} alive at submit — core answered from another route. "
                         f"Delete the node record and wait to re-drive, or amend to a route "
                         f"you accept falling back on (require_route: false).")
     return result
 
 def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
-    """#5 bounded auto-retry, run ONCE after _transient_retry: a death whose
+    """#5 bounded auto-retry, run after _transient_retry: a death whose
     error_class ∈ {transport, early_death, cap_exhausted, timeout} (B1's new
     names; `max_turns` included until the rename lands) AND whose dead attempt
-    made tool progress gets EXACTLY ONE resume re-drive with a machine-
-    generated preamble — never a loop, never a second bounded retry (a retry
-    of a retry would need the class tuple to widen, which it does not).
-    Never retried: provider_400 / unresolved_model / graph_invalid /
+    made tool progress gets a resume re-drive with a machine-generated
+    preamble, capped at the node's retry.bounded — default EXACTLY ONE
+    (hw-23c tunable 0..8; malformed_turn and lease_busy join the tuple below).
+    The cap, not the class tuple, is what bounds the ladder: a raised cap
+    re-drives the SAME classes, every pass re-entering every guard.
+    Never retried: provider_400 / unresolved_model /
     schema(no_json) / cancelled / spawn — permfails redrive byte-identically —
     and never a `partial` harvest (#4: harvested, so not retried). The
     re-drive is a fresh spawn: steer rides it via _steer_bake, the fresh
@@ -4632,19 +8185,45 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
     its sessions row exists but NO message rows do, the resume is a pretense —
     the re-drive takes the harvest preamble (banked work dir + cleaned log
     tail) instead of the resume preamble, and node.retry + attempts_log stamp
-    fresh_session. Absent evidence (None) keeps the resume path."""
+    fresh_session. Absent evidence (None) keeps the resume path.
+    lease-busy exception: the CLI's own notice PROVES the prior attempt never
+    processed the message, so the tool-progress gate (which exists to avoid
+    replaying AMBIGUOUS partial work) cannot apply — a spawn that provably
+    never started has nothing to duplicate. lease_busy deaths therefore skip
+    the progress gate, always take the harvest preamble (dead=True — never
+    --continue the still-busy session), and log the machine-wait event
+    `node.retrying error_class=lease_busy` before the 5 s wait.
+    est-ggqs (#256 claim 1): a harvest-on-death `partial` (_harvest_death: rc!=0 /
+    cap / wall AFTER a schema-valid fenced answer) whose death class is bounded
+    enters the SAME ladder under the SAME guards (class, positive tool progress,
+    stop, budget, #61 quarantine, #102) — the early return used to strand a
+    turn-capped node that did real work as `partial`, blocking every plain
+    descendant. The harvest is never traded away: a re-drive that dies WITHOUT
+    an answer keeps the harvested record (both deaths in attempts_log); only a
+    #61 terminal verdict on the re-drive replaces it. A FAILED record carrying a
+    harvest (the cancel-harvest shape) is still never re-driven."
+
+
+    #24 work-metered mode (run.json retry.mode, door-baked) changes ONLY the
+    timeout lane: the resume inherits the dead attempt's REMAINING wall (plus a
+    floor to make it worth driving) instead of the identical fare, and a SECOND
+    death at any wall dead-letters — honest failure, residue classified, never
+    a third spawn. Absent/malformed mode = the ladder above, as before."""
     run = meta["_run"]
-    if r.get("status") != "failed" or r.get("harvest"):
+    harvested = r.get("status") == "partial" and isinstance(r.get("harvest"), dict)
+    if not harvested and (r.get("status") != "failed" or r.get("harvest")):
         return r
     eclass = r.get("error_class")
     if eclass not in _BOUNDED_RETRY_CLASSES:
         return r
+    lease = (eclass == "lease_busy")
     progress = (_tool_progress(run, r.get("skey"), r.get("raw"), r["profile_home"])
                 if r.get("profile_home") else _tool_progress(run, r.get("skey"), r.get("raw")))
-    if meta["_stop"].is_set() or not progress:
-        return r                                   # no positive progress evidence: fail closed
-    if meta["_stop"].is_set():
-        return r
+    if meta["_stop"].is_set() or not (progress or lease):
+        return r          # no positive progress evidence: fail closed (lease: the death
+                         # fact itself is the evidence — the message was never processed)
+    # (est-7m6wv horde) a second standalone stop-guard here was dead — the
+    # compound above already returns on stop; deleted.
     # jam-h22/h30: a rate-limited death waits a FULL-JITTER draw (cap 5 s) before
     # the one resume re-drive; every other class keeps the fixed 5.0 s wait.
     rl = _is_rate_limited(r.get("raw"))
@@ -4653,6 +8232,10 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
         delay = random.uniform(0, _BOUNDED_RETRY_BACKOFF)
     else:
         delay = _BOUNDED_RETRY_BACKOFF
+    if lease:
+        # machine-wait event (ratelimit-park shape): the collision is named BEFORE
+        # the wait so a cold reader sees why the node went quiet for 5 s.
+        log(run, ev + ".retrying", error_class=eclass, backoff_s=delay, **ev_kw)
     if meta["_stop"].wait(delay) or meta["_stop"].is_set():
         return r
     with meta["_procs_lock"]:
@@ -4672,28 +8255,217 @@ def _bounded_retry(meta, r, respawn, ev, ev_kw, node=None, index=None):
         return iso
     # #102: dead (empty) session evidence — False is the pretense-resume shape,
     # True keeps today's resume, None (unavailable) never flips the path.
-    dead = False
-    if node is not None:
+    # lease_busy FORCES dead=True: the CLI's notice proves the message was never
+    # processed, so resuming that session is a pretense whatever state.db says —
+    # and the session itself may still belong to the OTHER process' lease. The
+    # re-drive always takes the harvest preamble under a fresh skey (#a{n+1}).
+    dead = bool(lease)
+    if node is not None and not dead:
         sess = (_session_has_messages(r.get("skey"), r["profile_home"])
                 if r.get("profile_home") else _session_has_messages(r.get("skey")))
         dead = (sess is False)
-    log(run, ev + ".retry", error_class=eclass,
-        reason=(f"bounded auto-retry: {eclass} with tool progress — one re-drive as a FRESH "
-                f"session (prior session persisted no messages — #102)" if dead else
-                f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive"),
-        **ev_kw, **({"fresh_session": True} if dead else {}))
+    cfg = _retry_conf(meta)
+    wall_s = None
+    reason = (f"bounded auto-retry: {eclass} — session-lease collision (message never "
+              f"processed); one re-drive as a FRESH session, never --continue the busy one"
+              if lease else
+              f"bounded auto-retry: {eclass} with tool progress — one re-drive as a FRESH "
+              f"session (prior session persisted no messages — #102)" if dead else
+              f"bounded auto-retry: {eclass} with tool progress — one machine-resume re-drive")
+    if cfg["mode"] == "work-metered" and eclass == "timeout":
+        # #24: the resume inherits the REMAINING wall (liveness, not a bigger
+        # fare) instead of the identical wall that just killed this attempt.
+        remaining = _metered_remaining(r)
+        if remaining is not None:
+            wall_s = max(remaining, min(cfg["resume_floor_s"], remaining + cfg["resume_floor_s"]))
+            reason = (f"work-metered resume: {eclass} at {r.get('wall')}s wall with tool "
+                      f"progress — one resume on the remaining wall ({remaining:.0f}s left, "
+                      f"floor {cfg['resume_floor_s']}s), never a third spawn")
+    log(run, ev + ".retry", error_class=eclass, reason=reason,
+        **({"resume_wall_s": round(wall_s, 3)} if wall_s else {}), **ev_kw,
+        **({"fresh_session": True} if dead else {}))
     al = list(r.get("attempts_log") or [])
     entry = {"attempt": len(al), "error_class": eclass, "at": now(), "resume": True,
              **_attempt_counts(run, r)}
+    # D4 (est-muob): the dead attempt's corpse pointer is the only witness of
+    # WHERE drive-1's banked work lives — the attempts_log entry and the
+    # merged winner record must both keep it.
+    if r.get("banked") is not None:
+        entry["banked"] = r["banked"]
     if dead:
         entry["fresh_session"] = True
+    if harvested:
+        entry["harvested"] = True          # est-ggqs: the cap/death stays in the ledger
     al.append(entry)
-    preamble = (_dead_session_harvest(r, eclass, run, node, index) if dead
-                else _resume_preamble(r))
-    r2 = respawn(resume_preamble=preamble)
+    hint = _resume_hint_block(run, node, index if index is not None else ev_kw.get("index"), al)
+    preamble = (_dead_session_harvest(r, eclass, run, node, index, inventory=hint) if dead
+                else "\n\n".join(p for p in (_resume_preamble(r), hint) if p))   # #130
+    r2 = respawn(resume_preamble=preamble,
+                 **({"wall_s": wall_s} if wall_s else {}))
+    if harvested and r2.get("status") not in ("done", "partial") \
+            and r2.get("error_class") != "left_live_descendants":
+        # est-ggqs: an answer-less re-drive never discards the schema-valid
+        # harvest — keep it, and record the lost re-drive beside the original death.
+        al.append({"attempt": len(al), "error_class": r2.get("error_class"), "at": now(),
+                   "redrive_lost": True, **_attempt_counts(run, r2)})
+        kept = dict(r)
+        kept["attempts_log"] = al
+        kept["attempts"] = (r2.get("spawn") + 1) if isinstance(r2.get("spawn"), int) \
+            else len(al)
+        if r2.get("tree_pids"):            # #61: the re-drive's tree stays in the
+            kept["tree_pids"] = sorted(set(kept.get("tree_pids") or [])   # commit-edge
+                                       | set(r2["tree_pids"]))            # quiesce set
+        return kept
     r2["attempts_log"] = al
     r2["attempts"] = (r2.get("spawn") + 1) if isinstance(r2.get("spawn"), int) else len(al) + 1
+    if r.get("banked") is not None and r2.get("banked") is None:
+        r2["banked"] = r["banked"]
+    if wall_s is not None and r2.get("status") == "failed" \
+            and r2.get("error_class") == "timeout" and not r2.get("harvest"):
+        # #24: second death at ANY wall = dead-letter — residue classified in the
+        # payload, honest failure, and returning here guarantees no third spawn.
+        # Renamed off main's est-ij0 _dead_letter (run-finished ledger summary):
+        # same name, later def, silent shadow that swallowed the dead_letter event.
+        _dead_letter_metered(run, ev, ev_kw, r, r2, cfg)
     return r2
+
+def _dead_letter_metered(run, ev, ev_kw, r1, r2, cfg):
+    """#24 one-strike law: a work-metered node that died a SECOND time (any wall)
+    is dead-lettered, not re-driven. The payload classifies the residue so the
+    owner can bank it: which session ledgers carry tool progress, whether the
+    resume advanced the ledger, the walls both attempts got. Emitted exactly once
+    per node/item — the runner never spawns a third attempt."""
+    r2["dead_lettered"] = True   # the tuned loop must honour the one-strike verdict
+    home = r2.get("profile_home") or r1.get("profile_home")
+    def _tc(rec):
+        try:
+            m = child_metrics(run.name, home).get(rec.get("skey") or "")
+        except Exception:
+            m = None
+        return (m or {}).get("tool_calls")
+    tc1, tc2 = _tc(r1), _tc(r2)
+    residue = "tool-ledger>0" if ((tc1 or 0) > 0 or (tc2 or 0) > 0) else "no-ledger-evidence"
+    log(run, "dead_letter", kind=ev,
+        reason="work-metered: second timeout death — one resume is the whole fare; "
+               "no third spawn, residue classified for the owner",
+        residue=residue,
+        attempt1={"error_class": r1.get("error_class"), "wall": r1.get("wall"),
+                  "ms": r1.get("ms"), "tool_calls": tc1, "skey": r1.get("skey")},
+        attempt2={"error_class": r2.get("error_class"), "wall": r2.get("wall"),
+                  "ms": r2.get("ms"), "tool_calls": tc2, "skey": r2.get("skey")},
+        resume_floor_s=cfg.get("resume_floor_s"),
+        log_paths=[r1.get("log_path"), r2.get("log_path")],
+        **ev_kw)
+
+
+def _width_tracker(meta):
+    """#24: count concurrently-running children (solo nodes + fan-out items) and
+    log the peak per observation key as node.running_width. One dict in main();
+    cheap on the wave threads; observation only — never gates a spawn."""
+    state = {"live_by_node": {}, "peak_by_node": {}, "lock": threading.Lock()}
+    # KNOB-GATED (#100 golden-solo): a knob-free run's event stream stays byte-
+    # identical to the frozen capture — width receipts only mean something once
+    # an author asked for a width. Counting still happens (cheap, inert).
+    receipted = any(k in meta for k in ("concurrency", "item_concurrency", "retry",
+                                        "knobs_provenance", "_requested"))
+    def track(nid):
+        class _T:
+            def __enter__(self_inner):
+                with state["lock"]:
+                    n = state["live_by_node"].get(nid, 0) + 1
+                    state["live_by_node"][nid] = n
+                    if n > state["peak_by_node"].get(nid, 0):
+                        state["peak_by_node"][nid] = n
+                return self_inner
+            def __exit__(self_inner, *exc):
+                with state["lock"]:
+                    state["live_by_node"][nid] -= 1
+                return False
+        return _T()
+    meta["_width"] = track
+    def flush(run):
+        with state["lock"]:
+            peaks, state["peak_by_node"] = dict(state["peak_by_node"]), {}
+        if not receipted:
+            return
+        for nid, w in peaks.items():
+            log(run, "node.running_width", node=nid, running=w)
+    meta["_width_flush"] = flush
+
+# #24 consumers are FAIL-OPEN, never fail-crash: main() always installs the
+# tracker keys, but library/in-process drivers (tests, embedders) hand bare
+# meta dicts to run_agent_node / fan-out legs all the time. Width receipts are
+# observation only (docstring above: "never gates a spawn"), so a meta that
+# never went through the runner's install simply gets the no-op — the old
+# (base 9bc5bcc) behavior for that caller is preserved byte-identically.
+def _width_track(meta):
+    return meta.get("_width", lambda nid: _nullcontext())
+
+def _width_flush(meta, run):
+    fn = meta.get("_width_flush")
+    if fn is not None:
+        fn(run)
+
+def _bounded_retry_tuned(meta, r, respawn, ev, ev_kw, node=None, index=None, cap_node=None):
+    """hw-23c: the bounded ladder under the node's author cap (default 1 = the
+    established single re-drive, byte-identical behavior). Every pass re-enters
+    _bounded_retry whole, so all guards re-apply per pass: class, tool progress,
+    stop, per-run budget draw, #61 quarantine, #102 fresh-session evidence.
+    est-jzi8a: `cap_node` decouples the cap source from the guard/evidence node —
+    the consolidate.batch site re-drives under the PARTNER node (attempt identity
+    and evidence paths are partner-keyed) while the author cap keeps reading the
+    fan-out CARRIER's retry key (per-node-key-wins law). Default: cap from node."""
+    cap = _retry_caps(node if cap_node is None else cap_node)[1]
+    for _ in range(cap):
+        r2 = _bounded_retry(meta, r, respawn, ev, ev_kw, node=node, index=index)
+        if r2 is r or r2 is None:
+            return r if r2 is None else r2
+        r = r2
+        if r.get("dead_lettered"):
+            return r          # #24 one-strike: the metered dead-letter IS the verdict
+        failed = (r.get("status") == "failed" and not r.get("harvest")) or (
+            r.get("status") == "partial" and isinstance(r.get("harvest"), dict))
+        if not failed or r.get("error_class") not in _BOUNDED_RETRY_CLASSES \
+                or meta["_stop"].is_set():
+            return r
+    return r
+
+def _harvest_clamp(node, r):
+    """est-ggqs clamp policy, per node (`harvest_policy`, agent key; solo nodes —
+    a fan-out aggregate already merges harvest credit). Runs at the commit edge
+    AFTER both retry ladders, the #61 quiesce, the served-model stamp and the
+    lane gate, so a dirty lane / live tree / wrong route never reaches it.
+      strict (default, key absent): unchanged — a harvest-on-death `partial`
+        blocks plain after-edges (blocked_by_partial_ancestor, e68544a37be37657).
+      validate: the harvest commits `done` ONLY when ALL hold — the node DECLARES
+        a schema and the harvested output re-validates against it; the child
+        declared NO unfinished `## Remaining` steps (est-2ek.1.165) and no
+        non-done terminal status (the jam-aus read-time law); the death class is
+        not left_live_descendants (#61: work provably outlived the answer).
+    The death is never hidden: error_class / error / harvest stay on the record
+    and `clamped` names the policy and the verdict it replaced (turn cap stays
+    visible to node_facts, node.finished and metrics). Pure: returns r itself
+    when nothing clamps, a new dict when it does."""
+    if (node or {}).get("harvest_policy") != "validate" or r.get("status") != "partial":
+        return r
+    hv = r.get("harvest")
+    schema = (node or {}).get("schema")
+    if not isinstance(hv, dict) or not schema or r.get("error_class") == "left_live_descendants":
+        return r
+    declared = hv.get("declared_status")
+    if isinstance(declared, str) and declared.strip().lower() not in ("done", "ok", "success", "pass"):
+        return r
+    if r.get("remaining"):
+        return r
+    out = r.get("output")
+    if not isinstance(out, dict) or validate(
+            out, strip_engine_disclosure(schema, (node or {}).get("substrate_substituted"))):
+        return r
+    c = dict(r)
+    c["status"] = "done"
+    c["clamped"] = {"policy": "validate", "from_status": "partial",
+                    "error_class": r.get("error_class")}
+    return c
 
 def drain_inbox(run, consumed):
     """Return {node_id: [steering texts]} for un-consumed steering lines."""
@@ -4784,8 +8556,20 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                             "error_class": "fanout_empty",
                                             "output": {"items": []}})
                 log(run, "node.failed", node=nid, error="fanout empty", error_class="fanout_empty", attempts=0)
+                _of = node.get("on_fail")
+                if not (isinstance(_of, str) and _of not in ("skip", "abort")):
+                    # WF-GRAFT-4: a zero-item fan-out with NO else-arm is a dead
+                    # branch, not a no-op — flag the run IN ADDITION to the node
+                    # death. The only else-arm shape this grammar has is an
+                    # on_fail:"<agent-id>" fallback: with one declared, the
+                    # existing catch path owns the death and NO flag is set.
+                    # 'skip' sets the flag too — a fan-out that yielded no work
+                    # is not a death an author tolerated, and the abort
+                    # outranks the catch at the boundary anyway.
+                    _set_abort_flag(run, nid, "fanout_empty",
+                                    "fanout resolved to no items and no else-arm fallback")
                 return
-            cap = min(len(items), meta.get("item_concurrency", 8))
+            cap = min(len(items), meta.get("item_concurrency", DEFAULT_ITEM_CONCURRENCY))
             results = [None] * len(items)
             lock = threading.Lock()
             # wf1.1 A5: the WAIT-SET and the COMMIT THRESHOLD are split. Waiting is
@@ -4796,8 +8580,286 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
             # death still commits with partial credit.
             explicit_quorum = fo.get("quorum")
             quorum = explicit_quorum or (len(items) // 2 + 1)
+            # est-06xk (#123): drain-with-deadline. `quorum_drain_s` (door-validated
+            # number >= 0, legal only with an explicit quorum) defers the quorum
+            # SIGKILL by drain_s seconds: stragglers already running at the quorum
+            # moment get a window to LAND their answer (a landing commits like any
+            # other item — the drain cancels nothing that arrives before the
+            # deadline), and at the deadline the very same _cancel_stragglers runs.
+            # 0/unset = today's behavior: SIGKILL the moment quorum is met. The
+            # future flip of the default is one constant here, not a redesign.
+            # Defensively parsed at the runner too: the door validates, but the
+            # runner loads graph.json straight (same belt as the A5 quorum parse).
+            try:
+                drain_s = float(fo.get("quorum_drain_s") or 0) if explicit_quorum else 0.0
+            except (TypeError, ValueError):
+                drain_s = 0.0
+            if not drain_s >= 0:          # NaN and negatives land on today's behavior
+                drain_s = 0.0
+            drain_timer = {}
+            def _arm_drain_once():
+                # ONE daemon timer armed at the QUORUM moment (never earlier),
+                # firing the established cancel; the callback takes the fan-out
+                # results lock exactly like every inline caller (est-g255 r2 R1:
+                # the setter holds the results lock before fo_cancel becomes
+                # visible, so the cancel can never land mid-spawn-section), and
+                # no-ops once every item has resolved — a committed node is
+                # never killed behind its own finish line.
+                if drain_s > 0 and "t" not in drain_timer:
+                    def _fire():
+                        with lock:
+                            if all(x is not None for x in results):
+                                return
+                            _cancel_stragglers()
+                    t = threading.Timer(drain_s, _fire)
+                    t.daemon = True
+                    drain_timer["t"] = t
+                    t.start()
             fo_cancel = threading.Event()
             done_count = [0]
+            # est-fanout-straggler (sys-nxrhxo): the wave-local cohort ledger.
+            # launch_ts books the ACTUAL spawn instant per item (a retry/re-drive
+            # OVERWRITES its stamp — that freshness is precisely the re-arm signal:
+            # a retried straggler mints a new wake identity, "retry is the
+            # straggler's second home"). Wave-local by design: a runner respawn or
+            # amend re-drive builds a fresh wave with a fresh ledger.
+            launch_ts = {}
+            census = {"finish": [], "dur": [], "fired": None}
+            strag_lock = threading.RLock()   # re-entrant: a tick books under it and
+            #                                  re-evaluates through the same frame
+            strag_stop = threading.Event()
+            # The grace floor is an ENGINE constant; the manifest override below is a
+            # TEST/launcher seam on run.json (never a graph key — FANOUT_KEYS omits
+            # it, so a graph that writes `straggler_grace_s` fails validation with
+            # "unknown key": the author cannot tune the clock they're timed by).
+            grace_s = meta.get("straggler_grace_s") or wfcommon.STRAGGLER_GRACE_S
+            poll_s = meta.get("straggler_poll_s") or 30.0   # same launcher seam
+            def _straggler_eval():
+                # Verdict + once-per-driven-wave latch + events.jsonl line + notify,
+                # ALL under strag_lock so the latch's read-check-write is atomic
+                # across watchdog/tick races (notify() dedupes by tid too, but the
+                # ledger check-then-append is not our second net to lean on).
+                # strag_lock is NOT the results lock and never a seat admit — a
+                # slow POST under it blocks only other census ops. Reads the
+                # current open set from `results`; a hair-stale open-count only
+                # ever makes the census stricter (>=2 open), never a missed fire.
+                with strag_lock:
+                    open_idx = [j for j, x in enumerate(results) if x is None]
+                    v = wfcommon.straggler_verdict(time.time(), census["finish"],
+                                                   launch_ts, census["dur"], open_idx,
+                                                   grace_s=grace_s)
+                    if v is None:
+                        return
+                    # est-waf8y D1 (est-c0jo1 passport D1): an open item queued
+                    # behind the cap has NO launch stamp — the census itself
+                    # excuses it (scheduling, not squirreling: verdict needs
+                    # >=1 LAUNCHED), but the cohort is mixed whenever exactly
+                    # one branch launched, so the disc line used to format the
+                    # missing stamp's string default with :.3f and raise
+                    # ValueError INSIDE the watchdog: every poll logged a fake
+                    # item.commit.error and the wake never fired for that
+                    # cohort shape. Format only stamped items (same launched
+                    # rule as straggler_verdict: get() is not None); a queued
+                    # item enters the disc as the literal 'q'. Determinism is
+                    # the latch law, untouched: same cohort state -> same disc;
+                    # a retry overwriting its stamp (or a queued item finally
+                    # launching) flips it -> re-arm.
+                    disc = (f"{nid}:{v['done']}:"
+                            + hashlib.sha256(",".join(
+                                (f"{j}:{launch_ts[j]:.3f}"
+                                 if launch_ts.get(j) is not None else f"{j}:q")
+                                for j in v["open"]
+                            ).encode()).hexdigest()[:8])
+                    if census["fired"] == disc:
+                        return      # same cohort state: one wake per driven wave;
+                        #             a retry overwrites its launch stamp -> fresh
+                        #             disc -> re-armed (retry is the straggler's
+                        #             second home)
+                    census["fired"] = disc
+                    silent = [j for j in v["open"]
+                              if not any(e.get("event") == "budget_cue.injected"
+                                         and e.get("node") == nid and e.get("index") == j
+                                         for e in _events_iter(run))]
+                    log(run, "fanout.stragglers", node=nid, open=v["open"],
+                        silent=silent, done=v["done"], items=v["items"],
+                        oldest_open_age_s=v["oldest_open_age_s"], floor_s=v["floor_s"])
+                    notify(run, "fanout.stragglers", key=disc, node=nid)
+            def _straggler_tick(r):
+                # A completing item records ITS completion, then re-evaluates the
+                # cohort — the event a wake names already carries this item (this
+                # runs right after its item.finished).
+                with strag_lock:
+                    census["finish"].append(time.time())
+                    if isinstance(r.get("ms"), (int, float)):
+                        census["dur"].append(r["ms"] / 1000.0)
+                _straggler_eval()
+            def _straggler_watchdog():
+                # The fat-tail cohort has NO further completions to ride — after the
+                # last fast item lands, only a clock-edge re-evaluation ages the open
+                # items past the floor. This thread is born with the wave and dies
+                # with it (same lifetime discipline as _cancel_stragglers): it is
+                # NOT a daemon and never outlives `ex.map`. A poll here is the
+                # ENGINE clocking its own cohort; the WAKE still tells the owner to
+                # never poll — the difference is who watches (the harness, once).
+                while not strag_stop.wait(poll_s):
+                    try:
+                        with strag_lock:
+                            pass
+                        _straggler_eval()
+                    except Exception as e:
+                        log(run, "item.commit.error", node=nid,
+                            error=f"straggler-watchdog: {type(e).__name__}: {e}")
+            def _events_iter(run):
+                try:
+                    for line in (run / "events.jsonl").read_text(encoding="utf-8").splitlines():
+                        try:
+                            yield json.loads(line)
+                        except Exception:
+                            pass
+                except OSError:
+                    return
+            # ---------- est-fanout-cell (sys-96dcod): the [fan + consolidate] cell ----------
+            # Wave-consolidation: when this fan has a declared partner, its FINISHED
+            # members flow into batch children AS THEY LAND instead of waiting for
+            # the whole aggregate — the straggler tail stops blocking consolidation.
+            # A batch child is an ordinary agent child (own skey, budget, retry)
+            # templated from the PARTNER node and fed the batch's canonical records;
+            # verdicts append consolidate/<fan>.batches.jsonl. The partner itself
+            # never spawns: it commits wfcommon.consolidate_tally (machine census:
+            # every item answered or NAMED missing) at the wave boundary. batch=1 is
+            # "as they finish"; batch=N batches; the open batch always flushes with
+            # its tail NAMED at wave end / stop / quorum — never silently dropped.
+            # est-1n7gx (collapse-to-one law): byid.values() iteration = graph
+            # declaration order (byid is built in node-list order), so a fan with
+            # (validator-legal) multiple partners picks the first DECLARED one —
+            # deterministic in the graph bytes, the same contract as the gate pick.
+            cons_partner = next((m for m in byid.values()
+                                 if isinstance(m.get("consolidate"), dict)
+                                 and m["consolidate"].get("from") == nid), None)
+            cell = None
+            def _cell_flush():      # pre-bound no-op; the real one replaces it below
+                return              # only when cell is constructed (same else-branch)
+            if cons_partner is not None:
+                try:
+                    (run / "consolidate").mkdir(exist_ok=True)
+                except OSError:
+                    pass
+                # durable wave facts FIRST (even a disabled cell writes its
+                # ledger: the partner's tally must be able to count dispatched
+                # items and name every one missing — a cell that cannot feed
+                # itself cannot hide it).
+                _led = run / "consolidate" / f"{nid}.json"
+                _fin = run / "consolidate" / f"{nid}.batches.jsonl"
+                _led.write_text(json.dumps({"fan": nid, "partner": cons_partner["id"],
+                                            "dispatched": len(items), "pending": []}))
+                _fin.touch(exist_ok=True)
+                pinputs, perr = build_inputs(run, cons_partner, outputs)
+                if perr:
+                    log(run, "consolidate.disabled", node=nid, partner=cons_partner["id"],
+                        error=perr)
+                else:
+                    cell = {"node": cons_partner, "inputs": pinputs,
+                            "batch": int(cons_partner["consolidate"].get("batch") or 1),
+                            "pending": [], "finals": [], "inflight": 0,
+                            "lock": threading.Lock(),
+                            "pool": ThreadPoolExecutor(max_workers=2,
+                                                       thread_name_prefix=f"cell:{nid}")}
+                    # batch numbers continue across resume: old finals stay covered
+                    _bn = [1 + max((json.loads(l).get("batch", 0)
+                                    for l in _fin.read_text().splitlines() if l.strip()),
+                                   default=0)]
+
+                    def _cell_ledger():
+                        d = {"fan": nid, "partner": cons_partner["id"],
+                             "dispatched": len(items), "pending": list(cell["pending"])}
+                        _led.write_text(json.dumps(d))
+
+                    def _cell_batch(b, its):
+                        # ONE batch child: ordinary spawn, partner's seat, this
+                        # batch's canonical records as its payload. Committed like
+                        # an item (nodes/<partner>.<b>.json) BEFORE its event.
+                        payload = []
+                        for j in its:
+                            rj = results[j] or {}
+                            payload.append({"index": j,
+                                            "item": rj.get("item"),
+                                            "status": rj.get("status"),
+                                            "error_class": rj.get("error_class"),
+                                            "ms": rj.get("ms"),
+                                            "output": rj.get("output")})
+                        body = json.dumps(payload, ensure_ascii=False, indent=1,
+                                          default=str)
+                        if len(body) > AUTO_INPUTS_CAP:
+                            body = body[:AUTO_INPUTS_CAP] + "\n…[truncated; full records at nodes/]"
+                        goal = (cons_partner.get("goal") or "") + \
+                            f"\n\n## Batch {b} — {len(its)} finished fan-out members (indices {its})\n" \
+                            f"```json\n{body}\n```"
+                        sk = skey_for(run, byid, cons_partner, b)
+                        log(run, "consolidate.batch.started", node=nid, partner=cons_partner["id"],
+                            batch=b, items=its, skey=sk)
+
+                        def _bs():
+                            if meta["_stop"].is_set():
+                                return {"status": "failed", "error": "stopped before batch spawn",
+                                        "error_class": "cancelled", "ms": 0, "skey": sk}
+                            return run_child(meta, cons_partner, byid, goal,
+                                             cons_partner.get("context", ""),
+                                             cons_partner.get("schema"), steering=steering,
+                                             skey=sk, inputs=cell["inputs"], index=b)
+                        try:
+                            rb = _transient_retry(meta, _bs(), _bs, "consolidate.batch",
+                                                  {"node": nid, "partner": cons_partner["id"],
+                                                   "batch": b},
+                                                  node=cons_partner, cancel=meta["_stop"])
+                            rb = _bounded_retry_tuned(meta, rb, _bs, "consolidate.batch",
+                                                      {"node": nid, "partner": cons_partner["id"],
+                                                       "batch": b},
+                                                      node=cons_partner, index=b, cap_node=node)
+                        except Exception as e:
+                            rb = {"status": "failed", "error": f"batch worker crashed: {e}",
+                                  "error_class": "crashed", "ms": 0, "skey": sk}
+                        with cell["lock"]:
+                            cell["inflight"] -= 1
+                            cell["finals"].append({"batch": b, "items": its,
+                                                   "status": rb["status"],
+                                                   "error_class": rb.get("error_class")})
+                        try:
+                            commit_item_record(run, cons_partner, byid, b, rb)
+                        except Exception as e:
+                            log(run, "item.commit.error", node=cons_partner["id"], index=b,
+                                error=f"batch: {type(e).__name__}: {e}")
+                        with open(_fin, "a") as f:
+                            f.write(json.dumps({"batch": b, "items": its, "status": rb["status"],
+                                                "error_class": rb.get("error_class")}) + "\n")
+                        log(run, "consolidate.batch.finished", node=nid,
+                            partner=cons_partner["id"], batch=b, items=its,
+                            status=rb["status"], error_class=rb.get("error_class"),
+                            ms=rb.get("ms"), skey=sk)
+
+                    def _cell_flush():
+                        # dispatch the currently-held batch (caller holds cell lock)
+                        if not cell["pending"]:
+                            return
+                        its, cell["pending"] = cell["pending"], []
+                        b = _bn[0]; _bn[0] += 1
+                        cell["inflight"] += 1
+                        _cell_ledger()   # names what is mid-flight before dispatch
+                        cell["pool"].submit(_cell_batch, b, its)
+
+            def _cell_on_item(i, r):
+                if cell is None:
+                    return
+                try:
+                    with cell["lock"]:
+                        if r["status"] in ("done", "partial"):
+                            cell["pending"].append(i)
+                            if len(cell["pending"]) >= cell["batch"]:
+                                _cell_flush()
+                        # failed/cancelled members are NOT dispatched: the tally
+                        # names them, the batch seat never gets a hollow record.
+                except Exception as e:
+                    log(run, "consolidate.error", node=nid, index=i,
+                        error=f"{type(e).__name__}: {e}")
             def _cancel_stragglers():
                 # queued items check fo_cancel before launch; in-flight children of
                 # THIS node (registry key "<node_id>:<id(proc)>") get SIGKILLed.
@@ -4809,15 +8871,37 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                 # and the durable work dir and append it to the death reason —
                 # 'no output on disk at quorum moment' vs 'had output at quorum
                 # moment (log N bytes, workdir M files)'. Never cancel silently.
-                fo_cancel.set()
+                # est-g255 r2 R1: the SET is coordinated with the spawn critical
+                # section, exactly the stop watcher's v5 law — the setter takes
+                # _procs_lock BEFORE fo_cancel becomes visible, so the cancel can
+                # never land mid-spawn-section: either it lands before the
+                # section's check(s) (that spawn never happens) or the section
+                # completed first and its child is registered for THIS scan to
+                # kill. Callers hold the fan-out results lock; _seat_acquire
+                # takes it as admit_lock (lock -> _procs_lock/flock order is
+                # consistent — nothing takes _procs_lock then the results lock).
                 with meta["_procs_lock"]:
+                    fo_cancel.set()
                     for k, p in list(meta["_procs"].items()):
                         if k.startswith(f"{nid}:"):
+                            # Only a live recipient of our successful kill request
+                            # gets quorum intent. Already-dead siblings keep their
+                            # actual exit cause, even if the event is now set.
+                            if isinstance(p, _AdoptedHandle):
+                                alive = _proc_alive(p.pid)
+                            else:
+                                alive = p.poll() is None
+                            if not alive:
+                                continue
                             try:
                                 os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                                setattr(p, "_wf_quorum_cancel", True)
                             except Exception:
-                                try: p.kill()
-                                except Exception: pass
+                                try:
+                                    p.kill()
+                                    setattr(p, "_wf_quorum_cancel", True)
+                                except Exception:
+                                    pass
             def one(i, item):
                 # an item's own `goal` wins over the fan-out template (papercut 2026-09-22:
                 # items[].goal was silently ignored, children got the placeholder template)
@@ -4879,17 +8963,84 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     # sprint101 #12: per-item prompt = node goal + item goal, so the
                     # shared mission travels with every item (no 'unused' placeholder).
                     goal = node["goal"] + "\n\n" + goal
-                if meta["_stop"].is_set() or fo_cancel.is_set():
+                if meta["_stop"].is_set() or fo_cancel.is_set() or _lane_killed(run, nid):
                     r = {"status": "failed", "item": item, "error": "stopped before launch",
-                         "error_class": "cancelled", "attempts": 0, "attempts_log": [], "ms": 0}
+                         "error_class": "killed" if _lane_killed(run, nid) else "cancelled",
+                         "attempts": 0, "attempts_log": [], "ms": 0}
                     with lock:
                         results[i] = r
+                    # est-2ek.1.765 single-writer ordering: the canonical record
+                    # is a committed fact BEFORE the event that declares it.
+                    try:
+                        commit_item_record(run, node, byid, i, r)
+                    except Exception as e:
+                        log(run, "item.commit.error", node=nid, index=i,
+                            error=f"{type(e).__name__}: {e}")
                     log(run, "item.finished", node=nid, index=i, status=r["status"],
                         error=r["error"], error_class=r["error_class"], tail=None,
                         log_path=str(run / "runner.log"), child_log_path=None, skey=None,
                         ms=0, attempts=0, attempts_log=[])
                     return
-                def spawn(resume_preamble=""):
+                # est-37d74 (#453): optional per-fanout custody precheck, run
+                # BEFORE the child spawn, per item. Fixed argv, no shell — the
+                # gate wait.until_argv law mirrored exactly (door-validated
+                # non-empty list of non-empty strings); executed AS-IS (no item
+                # substitution) with cwd = the item's own A4 work dir, and the
+                # run-identity pins re-baked like the gate probe's (PR #243 law:
+                # re-pin, never inherit). exit 0 -> the item is live, spawn
+                # proceeds untouched; non-zero (or a probe that cannot run) ->
+                # the item commits `skipped` with the precheck output tail as
+                # its reason and NEVER `failed` — zero tokens spent, excluded
+                # from the failure math exactly like stop-cancelled rows.
+                _pa = fo.get("precheck_argv")
+                if _pa and isinstance(_pa, list) and all(isinstance(a, str) and a for a in _pa):
+                    t_pre = time.time()
+                    try:
+                        cp = _aux_run(list(_pa), timeout=_FANOUT_PRECHECK_TIMEOUT_S,
+                                      cwd=str(child_work_dir(run, node, i)),
+                                      env={**os.environ, "HERMES_WF_RUN_DIR": str(run),
+                                           "HERMES_WF_RUN_ID": run.name})
+                        _rc, _po, _pe = cp.returncode, cp.stdout or "", cp.stderr or ""
+                    except subprocess.TimeoutExpired:
+                        _rc, _po, _pe = (None, "", f"precheck timed out after "
+                                                   f"{_FANOUT_PRECHECK_TIMEOUT_S}s")
+                    except Exception as _e:
+                        _rc, _po, _pe = None, "", f"{type(_e).__name__}: {_e}"
+                    if _rc != 0:
+                        _bits = [t.strip() for t in (_pe, _po) if t and t.strip()]
+                        reason = (f"precheck rc={_rc}"
+                                  + ((" — " + " / ".join(_bits)) if _bits else ""))
+                        r = {"status": "skipped", "reason": reason, "error": reason,
+                             "error_class": "precheck_skipped", "attempts": 0,
+                             "attempts_log": [],
+                             "ms": int((time.time() - t_pre) * 1000)}
+                        with lock:
+                            results[i] = {**r, "item": item}
+                        try:
+                            commit_item_record(run, node, byid, i, r)
+                        except Exception as e:
+                            log(run, "item.commit.error", node=nid, index=i,
+                                error=f"{type(e).__name__}: {e}")
+                        log(run, "item.finished", node=nid, index=i, status="skipped",
+                            error=reason[:300], error_class="precheck_skipped",
+                            tail=reason[-300:] or None,
+                            log_path=str(run / "runner.log"), child_log_path=None, skey=None,
+                            ms=r["ms"], attempts=0, attempts_log=[])
+                        return
+                held = []   # est-g255 P255-1: this item's deferred seat (run_child seat_hold)
+                # est-fanout-straggler: the census books the ACTUAL spawn instant per
+                # item INSIDE _spawn — a retry/re-drive overwrites the stamp, and
+                # that freshness is exactly the wake re-arm (retry is the straggler's
+                # second home). Wall-clock; the wake identity is revision-keyed.
+                def _book_launch():
+                    launch_ts[i] = time.time()
+                def _spawn(resume_preamble="", model_override=None, **kw):
+                    spent = _honor_retry_window(meta, nid, i, cancel=fo_cancel,
+                                                node=node)   # est-9ceqc: resume honors the persisted window; est-9qhpf: the bound gates EVERY first spawn
+                # rebase-union @wake-147: #582 metered **kw + est-9qhpf spent-gate both preserved
+                    if _lane_killed(run, nid):
+                        return {"status": "failed", "error": "killed by lane kill before launch",
+                                "error_class": "killed", "ms": 0}
                     if meta["_stop"].is_set() or fo_cancel.is_set():
                         return {"status": "failed", "error": "cancelled at quorum",
                                 "error_class": "cancelled", "ms": 0}
@@ -4909,19 +9060,44 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                                fo.get("schema") or node.get("schema"),
                                                fo_cancel=fo_cancel)
                         return {**adopted, **_profile_evidence(node)}
+                    if spent is not None:
+                        # est-9qhpf (B1): persisted lifetime attempts already
+                        # at the cap — this item NEVER spawns (an adoptable
+                        # live child above is not a spawn and stays valid);
+                        # commit the exhausted verdict with the seeded count
+                        # and the persisted ledger.
+                        return _window_spent_record(meta, node, nid, i, spent)
                     sk = skey_for(run, byid, node, i)   # fresh nonce per spawn (retry respawns
                     log(run, "item.started", node=nid, index=i, skey=sk)   # are fresh sessions)
-                    return run_child(meta, node, byid, goal, node.get("context", ""),
-                                     fo.get("schema") or node.get("schema"), steering=steering,
-                                     skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble)
+                    _book_launch()   # census launch stamp at the ACTUAL spawn instant
+                    with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
+                        return run_child(meta, node, byid, goal, node.get("context", ""),
+                                         fo.get("schema") or node.get("schema"), steering=steering,
+                                         skey=sk, inputs=inputs_txt, index=i, resume_preamble=resume_preamble,
+                                         seat_cancel=fo_cancel, seat_hold=held,
+                                         seat_admit_lock=lock, model_override=model_override, **kw)
+                def spawn(resume_preamble="", model_override=None, **kw):
+                    # est-g255 P255-1: only a DONE answer can trip quorum, so only
+                    # its seat stays deferred until one()'s quorum block below; any
+                    # other verdict frees the seat now (a retry backoff or a
+                    # rate-limit park never sits on a global seat).
+                    r = _spawn(resume_preamble, model_override=model_override, **kw)
+                    if r.get("status") != "done":
+                        while held:
+                            _seat_release(held.pop())
+                    return r
                 try:
                     r = _ratelimit_park(meta, spawn(), spawn, "item",   # est-t0vz
                                         {"node": nid, "index": i}, node=node,
                                         cancel=fo_cancel)                  # wf159c finding 3
                     r = _transient_retry(meta, r, spawn, "item", {"node": nid, "index": i},
                                          node=node, cancel=fo_cancel)
-                    r = _bounded_retry(meta, r, spawn, "item", {"node": nid, "index": i},
-                                       node=node, index=i)
+                    r = _fallback_ladder(meta, r,
+                                         lambda m, rp="": spawn(rp, model_override=m),
+                                         "item", {"node": nid, "index": i},
+                                         node=node, cancel=fo_cancel)      # est-2ek.1.164
+                    r = _bounded_retry_tuned(meta, r, spawn, "item", {"node": nid, "index": i},
+                                             node=node, index=i)
                     r = _final_quiesce(meta, r, "item", {"node": nid, "index": i})   # #61
                 except Exception as e:
                     r = {"status": "failed", "error": f"worker crashed: {type(e).__name__}: {e}",
@@ -4939,7 +9115,34 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         # without one the node waits for every item (papercut #3).
                         if (explicit_quorum and done_count[0] >= quorum
                                 and any(x is None for x in results)):
-                            _cancel_stragglers()
+                            # est-06xk (#123): a drain window DEFERS the kill to its
+                            # deadline — a straggler that lands inside it commits and
+                            # the timer's full-commit guard no-ops. drain_s == 0 (the
+                            # default) keeps today's immediate cancel, verbatim.
+                            if drain_s > 0:
+                                _arm_drain_once()
+                            else:
+                                _cancel_stragglers()
+                    # est-g255 P255-1: the seat goes back only NOW — after the
+                    # quorum cancel (fo_cancel) is set — so a straggler parked in
+                    # _seat_acquire can never take it and spawn past quorum.
+                    while held:
+                        _seat_release(held.pop())
+                # est-2ek.1.765 single-writer ordering: THIS thread is the one
+                # writer of the canonical record nodes/<node>.<i>.json; the
+                # commit lands BEFORE the item.finished event and before the
+                # aggregate is ever assembled, so an aggregate `done` can never
+                # outrun the individual completion facts it claims. A commit
+                # failure is loud (item.commit.error) and the aggregate gate
+                # (item_records_certified) refuses done over it — never silent.
+                # (No new event type on the happy path: the golden-solo batch
+                # normalizer pins the item.* event vocabulary; the ordering law
+                # is pinned in-process by tests/test_fanout_item_commit_765.py.)
+                try:
+                    commit_item_record(run, node, byid, i, r)
+                except Exception as e:
+                    log(run, "item.commit.error", node=nid, index=i,
+                        error=f"{type(e).__name__}: {e}")
                 # Final item facts carry typed failure + retry evidence so consumers
                 # need not reconstruct attempts from child logs.
                 log(run, "item.finished", node=nid, index=i, status=r["status"],
@@ -4949,16 +9152,46 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                     tail=(r.get("raw") or "")[-300:] or None,
                     log_path=str(run / "runner.log"), child_log_path=r.get("log_path"),
                     skey=r.get("skey"), ms=r.get("ms"))
-            with ThreadPoolExecutor(max_workers=cap) as ex:
-                list(ex.map(lambda t: one(*t), list(enumerate(items))))
+                # est-fanout-straggler: cohort census tick AFTER the canonical
+                # event — the ledger a wake names already carries this completion.
+                try:
+                    _straggler_tick(r)
+                except Exception as e:   # an observation never disturbs the wave
+                    log(run, "item.commit.error", node=nid, index=i,
+                        error=f"straggler-watch: {type(e).__name__}: {e}")
+                # est-fanout-cell: a celled fan streams this finished member into
+                # its partner's next batch the same instant (no aggregate wait).
+                _cell_on_item(i, r)
+            _strag_thread = threading.Thread(target=_straggler_watchdog, daemon=True,
+                                             name=f"stragwatch:{nid}")
+            _strag_thread.start()   # born with the wave; the finally below buries it
+            try:
+                with ThreadPoolExecutor(max_workers=cap) as ex:
+                    list(ex.map(lambda t: one(*t), list(enumerate(items))))
+            finally:
+                strag_stop.set()
+            _width_flush(meta, run)   # #24: observed item width of THIS fan-out wave
+            # est-fanout-cell: the wave ends -> the open batch ALWAYS flushes with
+            # its tail NAMED (never silently dropped), then the pool drains so the
+            # finals exist before the partner's boundary tally reads them.
+            if cell is not None:
+                with cell["lock"]:
+                    _cell_flush()
+                cell["pool"].shutdown(wait=True)
             results = [r or {"status": "failed", "item": None, "error_class": "crashed", "ms": 0} for r in results]
             # sprint101 #7: stop-killed items are CANCELLED, not failures — they
             # count toward neither the failure list nor the quorum (hindsight-002946:
             # 5 stopped items surfaced as a false quorum failure).
             cancelled = [r for r in results if r.get("error_class") == "cancelled"]
-            failed = [r for r in results if r["status"] not in ("done", "partial") and r.get("error_class") != "cancelled"]
+            # est-37d74 (#453): precheck-skipped rows are EXCLUDED from failure
+            # math exactly like stop-cancelled rows — stale roster, not dead
+            # work; they shrink the quorum denominator too (a purged item cannot
+            # be counted against a quorum it was never live to serve).
+            skipped = [r for r in results if r["status"] == "skipped"]
+            failed = [r for r in results if r["status"] not in ("done", "partial", "skipped")
+                      and r.get("error_class") != "cancelled"]
             merged = [r.get("output") for r in results if r["status"] in ("done", "partial")]
-            quorum_req = min(quorum, len(items) - len(cancelled))
+            quorum_req = min(quorum, len(items) - len(cancelled) - len(skipped))
             if cancelled and len(cancelled) == len(results):
                 # every item died to `stop`: the node is NOT a failure — commit the
                 # evidence with the cancelled class; node_rec demotes it to pending
@@ -4976,7 +9209,7 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                           "served_model": r.get("served_model"),
                           "served_billing_provider": r.get("served_billing_provider")}
                          for i, r in enumerate(results)
-                         if r["status"] not in ("done", "partial")
+                         if r["status"] not in ("done", "partial", "skipped")
                          and r.get("error_class") != "cancelled"]
                 save_node(run, node, byid, {"status": "failed", "error_class": "forbidden_model",
                                             "error": "forbidden served model in fan-out",
@@ -4984,6 +9217,72 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                                             "output": {"items": merged, "all_results": results}})
                 log(run, "node.failed", node=nid, error="forbidden served model in fan-out",
                     error_class="forbidden_model", failed_detail=fails, attempts=1)
+            elif any(r.get("error_class") == "budget_exhausted" for r in results):
+                # est-3acn: a RunBudget-capped fan-out is TYPED, never a quorum
+                # death: the items refused never billed (pre-dispatch refusals),
+                # so calling that `quorum` would misread a cap as broken work.
+                # Partial WITH harvest: every surviving item's output commits
+                # (partial IS committed output, #4 law); zero harvest commits
+                # failed with the same class. Downstream/verdict see `partial`,
+                # the runner's terminal hook closes the run gracefully.
+                dies = [i for i, r in enumerate(results)
+                        if r.get("error_class") == "budget_exhausted"]
+                if merged:
+                    # est-ps8i9 (est-13z1/#56 law, R8 sweep of #525): a budget
+                    # partial IS a committing record (#4: partial IS committed
+                    # output), so it takes the SAME commit-edge boundary chain
+                    # as the aggregate and solo edges — lane, then effect, then
+                    # bead-close — before the record may land. A capped fan-out
+                    # declaring {effects} or {bead_close id:{item}} used to bank
+                    # its harvest with ZERO read-back: the lying-done class at
+                    # the third commit edge. An unproven claim now DEMOTES this
+                    # record exactly as at the other edges (the demote branch
+                    # below mirrors the aggregate edge's); the honest no-key node
+                    # passes every gate untouched — byte-identical (golden E).
+                    _prec = {"status": "partial",
+                             "error_class": "budget_exhausted",
+                             "error": f"budget_exhausted: {len(dies)}/{len(items)} items "
+                                      f"refused at the RunBudget cap; harvested {len(merged)}",
+                             "output": {"items": merged, "all_results": results}}
+                    _prec = _lane_gate(run, node, _prec)          # 64c6772b: a declared lane must be clean at commit
+                    _prec = _effect_gate(run, node, _prec)        # #56: receipts proven at commit
+                    _prec = _bead_close_gate(run, node, _prec)    # est-13z1: a claimed close in ANY item output is read back from the store at commit
+                    save_node(run, node, byid, _prec)
+                    if _prec["status"] == "partial":
+                        log(run, "node.finished", node=nid, harvested=True,
+                            error_class="budget_exhausted")
+                    else:
+                        # est-6ig3s (review of this branch's own demote): the
+                        # gate's verdict must not ECLIPSE the cap. The demote
+                        # replaces node.finished(harvested=True, error_class=
+                        # budget_exhausted), so an event-only reader saw only
+                        # the gate class and never learned this was a capped
+                        # fan-out that banked a harvest — the legibility
+                        # est-60ca closed on the solo path (item.finished
+                        # carries harvested + error_class on cap-exhausted).
+                        # The gate class stays the verdict in `error_class`;
+                        # the cause rides the SAME line as `budget_cause`, with
+                        # the banked work in `harvested`/`harvested_items`. The
+                        # honest path mints none of it (golden E pins the key
+                        # set): these kv appear only where a harvest was banked
+                        # and a claim then failed.
+                        log(run, "node.failed", node=nid, error=_prec.get("error"),
+                            error_class=_prec.get("error_class", "incomplete_work"),
+                            harvested=True, budget_cause="budget_exhausted",
+                            harvested_items=len(merged), attempts=1)
+                else:
+                    fails = [{"index": i, "item": results[i].get("item"),
+                              "error": (results[i].get("error") or "")[:300],
+                              "error_class": "budget_exhausted"}
+                             for i in dies]
+                    save_node(run, node, byid, {"status": "failed",
+                                                "error_class": "budget_exhausted",
+                                                "error": f"budget_exhausted: all {len(dies)} items refused "
+                                                         f"pre-dispatch at the RunBudget cap (zero harvest)",
+                                                "failed_detail": fails,
+                                                "output": {"items": [], "all_results": results}})
+                    log(run, "node.failed", node=nid, error="budget_exhausted in fan-out",
+                        error_class="budget_exhausted", failed_detail=fails, attempts=1)
             elif len(merged) < quorum_req:
                 # partial credit: surviving children's outputs are committed; name each
                 # failure (index + reason) right here so the parent never digs through
@@ -4992,41 +9291,83 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                           "error": (results[i].get("error") or "")[:300]}
                          for i in range(len(items))
                          if results[i]["status"] != "done"
+                         and results[i]["status"] != "skipped"
                          and results[i].get("error_class") != "cancelled"]
                 save_node(run, node, byid, {"status": "failed",
                                             "error": f"{len(failed)}/{len(items)} items failed: "
                                                      + "; ".join(f"[{f['index']}] {f['error']}" for f in fails)[:900],
                                             "failed_detail": fails,
                                             "output": {"items": merged, "all_results": results}})
-                log(run, "node.failed", node=nid, error="quorum not met", failed_detail=fails,
+                log(run, "node.failed", node=nid, error=_quorum_death_label(bool(explicit_quorum), quorum, len(items)), failed_detail=fails,
                      error_class="quorum", attempts=1)
             else:
                 merged_rec = _lane_gate(run, node, {"status": "done",
                                                     "output": {"items": merged,
                                                                "failed_items": len(failed),
                                                                "cancelled_items": len(cancelled) or None,
+                                                               "skipped_items": len(skipped) or None,
                                                                "all_results": results}})
+                if merged_rec["status"] == "done":
+                    # est-2ek.1.765: aggregate done is DERIVED from the committed
+                    # per-item records, re-read from disk — never from the
+                    # in-memory results alone. If ANY item's canonical record is
+                    # missing, uncommitted, efp-invalid, status-incompatible, or
+                    # diverges from the claimed output, the aggregate commits
+                    # failed, naming each problem. For aggregates produced by
+                    # THIS gate, a `done` with claimed-complete results over a
+                    # still-running or committed-failed individual record is
+                    # structurally impossible.
+                    ok, problems = item_records_certified(run, node, byid, results)
+                    if not ok:
+                        merged_rec = {"status": "failed",
+                                      "error": "fan-out aggregate refused: per-item records do not "
+                                               "back the claimed completion — "
+                                               + "; ".join(f"[{p['index']}] {p['problem']}"
+                                                           for p in problems)[:900],
+                                      "error_class": "item_record",
+                                      "record_problems": problems,
+                                      "output": {"items": merged, "all_results": results}}
+                merged_rec = _effect_gate(run, node, merged_rec)  # #56: receipts proven at commit
+                merged_rec = _bead_close_gate(run, node, merged_rec)  # est-13z1: a claimed close in ANY item output is read back from the store at commit
                 save_node(run, node, byid, merged_rec)
                 if merged_rec["status"] == "done":
                     log(run, "node.finished", node=nid, done=len(merged), failed=len(failed),
-                        cancelled=len(cancelled))
+                        cancelled=len(cancelled), skipped=len(skipped) or None)
                 else:
                     log(run, "node.failed", node=nid, error=merged_rec["error"],
-                        error_class="incomplete_work", attempts=1)
+                        error_class=merged_rec.get("error_class", "incomplete_work"), attempts=1)
         else:
             first = {"done": False}
-            def spawn(resume_preamble=""):
+            def spawn(resume_preamble="", model_override=None, **kw):
+                spent = None
+                if not first["done"]:
+                    spent = _honor_retry_window(meta, nid, None, cancel=meta["_stop"],
+                                                node=node)   # est-9ceqc window; est-9qhpf bound gate
                 sk = solo_key if not first["done"] else skey_for(run, byid, node)
                 first["done"] = True
-                return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
-                                 node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
-                                 resume_preamble=resume_preamble)
+                detached = _poll_registered_job(meta, node, byid)
+                if detached is not None:
+                    return detached
+                if spent is not None:
+                    # est-9qhpf (B1): persisted lifetime attempts already at
+                    # the cap — NEVER spawn; commit the exhausted verdict with
+                    # the seeded count and the persisted ledger.
+                    return _window_spent_record(meta, node, nid, None, spent)
+                with _width_track(meta)(nid):   # #24 width receipt (knob-gated flush)
+                    return run_child(meta, node, byid, node.get("goal", ""), node.get("context", ""),
+                                     node.get("schema"), steering=steering, skey=sk, inputs=inputs_txt,
+                                     resume_preamble=resume_preamble, model_override=model_override, **kw)
             r = _ratelimit_park(meta, spawn(), spawn, "node", {"node": nid}, node=node)  # est-t0vz
             r = _transient_retry(meta, r, spawn, "node", {"node": nid}, node=node)
-            r = _bounded_retry(meta, r, spawn, "node", {"node": nid}, node=node)
+            r = _fallback_ladder(meta, r, lambda m, rp="": spawn(rp, model_override=m),
+                                 "node", {"node": nid}, node=node)   # est-2ek.1.164
+            r = _bounded_retry_tuned(meta, r, spawn, "node", {"node": nid}, node=node)
             r = _final_quiesce(meta, r, "node", {"node": nid})   # #61: never commit over a live tree
             r = _stamp_served(meta, r, node)   # dad50be0: seat truth at the commit, never the alias
             r = _lane_gate(run, node, r)   # 64c6772b: a declared lane must be clean at commit
+            r = _harvest_clamp(node, r)    # est-ggqs: per-node clamp policy (default strict)
+            r = _effect_gate(run, node, r)  # #56: declared effect receipts must be PROVEN at commit
+            r = _bead_close_gate(run, node, r)  # est-13z1: a claimed bead close must be READ BACK from the store at commit
             save_node(run, node, byid, r)
             if r["status"] in ("done", "partial"):   # #4: a harvested partial IS committed output
                 # #61b B3: when the tracked tree set was non-empty, the solo
@@ -5038,6 +9379,9 @@ def run_agent_node(run, meta, byid, node, outputs, steering):
                         and r.get("error_class") == "left_live_descendants" \
                         and r.get("tree_descendants"):
                     extra_kv["error_class"] = r["error_class"]
+                if r.get("clamped"):       # est-ggqs: the clamped death stays visible
+                    extra_kv.update(harvested=True, clamped=r["clamped"]["policy"],
+                                    error_class=r.get("error_class"))
                 log(run, "node.finished", node=nid, ms=r.get("ms"), **extra_kv)
             else:
                 log(run, "node.failed", node=nid, ms=r.get("ms"), error=r.get("error"),
@@ -5144,11 +9488,6 @@ PUBLISHER_REFUSAL = ("publisher_ungated: {nid} declares publication side effects
                      "{missing} (a node earns the token only by declaring "
                      "suite_proof: true and committing done)")
 
-def _publisher_refusal(run, n, byid, missing):
-    why = PUBLISHER_REFUSAL.format(nid=n["id"],
-                                   missing=", ".join(missing) if missing
-                                   else "no suite_proof node in this node's after-ancestry")
-    _fail_precondition(run, n, byid, [why])
 
 def _mint_suite_proof(run, node, rec, byid):
     """est-2ek.1.603: a declared proof producer that committed done writes its
@@ -5165,6 +9504,23 @@ def _mint_suite_proof(run, node, rec, byid):
     tmp = p.with_name(f"{node['id']}.suite-proof.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(tok))
     os.replace(tmp, p)   # atomic: a token is a committed fact like a node record
+
+def _set_abort_flag(run, node_id, source, reason=None):
+    """WF-GRAFT-4 (est-f1w4u): persist the run's abort flag — run-dir
+    abort.json {node, source, reason, at}, atomic tmp+os.replace (a flag is a
+    committed fact like a node record), so it survives a runner restart. The
+    FIRST flag wins: the original abort is the cause; a later source never
+    overwrites it."""
+    if wfcommon.run_abort_flag(run):
+        return
+    p = run / "abort.json"
+    rec = {"node": str(node_id), "source": str(source), "at": now(),
+           "reason": (str(reason)[:300] if reason else None)}
+    tmp = p.with_name(f"abort.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(rec, ensure_ascii=False))
+    os.replace(tmp, p)   # atomic: durable abort fact
+
+_abort_flag = wfcommon.run_abort_flag   # ONE read of the flag, shared with the read model
 
 def _on_fail_catch(run, rs, states):
     """jam-h23 on_fail: a caught agent death becomes the join-tolerant `skipped`
@@ -5184,6 +9540,19 @@ def _on_fail_catch(run, rs, states):
             continue
         of = n.get("on_fail")
         if of is None:
+            continue
+        if of == "abort":
+            # WF-GRAFT-4: the abort keyword is handled BEFORE the fallback-agent
+            # lookup — the same precedence shape as 'skip' vs an agent named
+            # 'skip'. The flag persists; the failed status STANDS, an abort is
+            # never laundered into a tolerated skip. caught=True only re-makes
+            # states: the boundary's abort check on the next pass commits the
+            # typed failed verdict before any catch could convert anything.
+            _, rec = node_rec(run, n, rs.byid)
+            _set_abort_flag(run, n["id"], "on_fail_abort", (rec or {}).get("error"))
+            log(run, "node.on_fail", node=n["id"], on_fail="abort",
+                caught_error_class=(rec or {}).get("error_class"))
+            caught = True
             continue
         if of != "skip":
             fb = rs.byid.get(of)
@@ -5216,17 +9585,47 @@ AUTO_INPUTS_CAP = 8000   # #9/#10 lane: per-parent byte cap for auto-injected pa
 def _inputs_block(label, val, cap):
     s = json.dumps(val, ensure_ascii=False, indent=2, default=str)
     if len(s) > cap:
+        path = f"nodes/{str(label).split('.')[0]}.json"
         s = (s[:cap]
-             + f"\n…[truncated {len(s) - cap} chars; full record at "
-               f"nodes/{str(label).split('.')[0]}.json]")
+             + f"\n…[truncated {len(s) - cap} chars; full record at {path}]")
+        # #476: the marker NAMES the path but a goal that never re-reads it
+        # silently mis-tallies over the truncated tail. The advisement line
+        # under the fence turns that path into a standing instruction for the
+        # consumer — every injection path (explicit ref, auto-parent, ancestor
+        # gate answer, on_exit facts) inherits from this ONE site, and a
+        # non-truncated block stays byte-identical.
+        return (f"{label}\n```json\n{s}\n```\n"
+                f"[truncated: read {path} for the full record before deciding coverage]")
     return f"{label}\n```json\n{s}\n```"
+
+def _skip_sentinel(run, ref, cap):
+    """#473: an explicit `inputs:` ref whose HEAD committed `skipped` resolves to ONE
+    labelled skipped-sentinel block instead of the `not resolvable` spawn crash. `skipped`
+    is a join-tolerant terminal state (the `on_fail:"skip"` catch, a false `when`, an
+    all-deps-pruned cascade) and the runner keeps it OUT of the outputs map — so a consumer
+    that NAMED the ref died `error_class:inputs` at spawn while a join carrying the very
+    same dead dep ran without complaint. The committed record already carries the readable
+    death; hand it over as data, fail-closed, labelled. A head that never committed, or
+    committed any other state (a `done` head that lacks the dotted path), is NOT a sentinel:
+    the hard failure stands, so an author typo can never read as a sanctioned skip."""
+    head = str(ref).split(".")[0]
+    rec = jload(run / "nodes" / f"{head}.json", {}) or {}
+    if rec.get("status") != "skipped":
+        return None
+    out = rec.get("output")
+    payload = out if isinstance(out, dict) and out else {"skipped": "skipped"}
+    return _inputs_block(f"{ref} (skipped: {payload.get('skipped', 'skipped')})", payload, cap)
 
 def build_inputs(run, node, outputs):
     """Node-level `inputs: [refs]` -> (prompt section, error). ONE fenced json block per
     ref, labelled by the ref string, resolved against committed outputs via resolve_ref.
     Each block is capped at INPUTS_CAP chars (overflow is truncated with a marker naming
     the full-record path). An unresolvable ref returns an error: the node FAILS at spawn,
-    never silently spawns with empty inputs. Fan-out: identical section for every item.
+    never silently spawns with empty inputs — the ONE exception (#473) is a ref whose HEAD
+    committed `skipped`: that resolves to a labelled skip-sentinel block (see _skip_sentinel)
+    because `skipped` is a join-tolerant terminal state and the dropout arm of
+    `on_fail:"skip"` must reach its consumer as readable data, not as a spawn-time crash.
+    Fan-out: identical section for every item.
     Sprint101 #10: every direct parent (`after:`) that is done gets its committed output
     injected automatically (capped AUTO_INPUTS_CAP chars, marker on overflow); a parent
     already covered by an `inputs:` ref (whole or dotted) is not repeated — `inputs:`
@@ -5280,11 +9679,65 @@ def build_inputs(run, node, outputs):
     for ref in refs:
         val = resolve_ref(outputs, ref, missing=_MISSING)
         if val is _MISSING:
+            sent = _skip_sentinel(run, ref, INPUTS_CAP)
+            if sent is not None:
+                blocks.append(sent)
+                continue
             return "", f"inputs: {ref} not resolvable"
         blocks.append(_inputs_block(ref, val, INPUTS_CAP))
-    return "## Inputs\n\n" + "\n\n".join(blocks), None
+    # est-x92v7: a per-block cap keeps every block honest, but pathological fan-in
+    # (many parents) can still assemble a section no child prompt should carry. The
+    # total gets a budget too: past it the node REFUSES at spawn through the same
+    # typed `inputs` failure an unresolvable ref uses, never a silent truncate.
+    section = "## Inputs\n\n" + "\n\n".join(blocks)
+    budget = _int_knob("WORKFLOW_INPUTS_BUDGET", INPUTS_BUDGET_DEFAULT)
+    if len(section) > budget:
+        big_block = max(blocks, key=len) if blocks else ""
+        return "", (f"inputs: assembled {len(section)} chars exceeds the {budget}-char "
+                    f"input budget (largest block {big_block.splitlines()[0]!r} at "
+                    f"{len(big_block)} chars); narrow the node's inputs or raise "
+                    f"WORKFLOW_INPUTS_BUDGET: refused loudly, never silently truncated")
+    return section, None
 
 # ---------- machine-answered gates (P4, jury form) ----------
+
+_PW_UNSET = object()
+_PW_MOD = _PW_UNSET
+
+
+def _park_watch_mod():
+    """Lazy guarded import of the park watchdog kernel (stdlib-only sibling;
+    byte-identical degradation when the file is absent or broken)."""
+    global _PW_MOD
+    if _PW_MOD is _PW_UNSET:
+        try:
+            import park_watch
+            _PW_MOD = park_watch
+        except Exception:
+            _PW_MOD = None
+    return _PW_MOD
+
+
+def _park_watch_cfg():
+    pw = _park_watch_mod()
+    return pw.config(wfcommon) if pw is not None else None
+
+
+def _settle_park_hold(run, gate, byid, hm, reason):
+    """Settle a parked human-gate hold failed, loudly (park watchdog). The loud
+    notice is the run's own run.failed wake (B3 identity, one-shot by law); this
+    commits the typed gate death and the events.jsonl verdict line."""
+    watch = hm.get("watch") or {}
+    _bs = watch.get("blocked_since")
+    held_s = int(time.time() - _bs) if isinstance(_bs, (int, float)) else -1
+    err = (f"park-watchdog: human gate {gate['id']} held for {held_s}s"
+           + (f" with {watch.get('strikes')} consecutive undelivered owner wakes"
+              if reason == "strikes" else "")
+           + "; settling the gate failed instead of holding forever")
+    save_node(run, gate, byid, {"status": "failed", "error": err})
+    log(run, "gate.watchdog_settled", node=gate["id"], reason=reason, kind="human-hold",
+        strikes=int(watch.get("strikes", 0) or 0), blocked_s=held_s)
+
 
 def park_gate(run, run_id, gate, byid, consume_markers):
     """Park on gate.wait in-process: timer (wait_s) and/or a fixed argv check re-run
@@ -5302,9 +9755,23 @@ def park_gate(run, run_id, gate, byid, consume_markers):
     attempt, last = 0, {}
     pk_path = run / "gates" / f"{gate['id']}.parked.json"
     (run / "gates").mkdir(exist_ok=True)
+    pw_cfg = _park_watch_cfg() if kind == "check" else None
+    watch = {}
+    if pw_cfg is not None:
+        # The persisted clock: a re-park inherits the elapsed window (a runner
+        # restart must not buy a fresh park), and an efp-invalid mirror is a
+        # different park and starts clean.
+        _prev = jload(pk_path, {}) or {}
+        if record_efp_valid(_prev, byid, gate, "_def") and isinstance(_prev.get("watch"), dict):
+            watch = {k: v for k, v in _prev["watch"].items()
+                     if k in ("blocked_since", "strikes")}
+        if not isinstance(watch.get("blocked_since"), (int, float)):
+            watch = {"blocked_since": t0, "strikes": 0}
     def mirror(**extra):
         rec = {"_def": efp(byid, gate), "fp_rule_version": FP_RULE_VERSION, "kind": kind, "attempt": attempt, "started": t0,
                "deadline": deadline, "next_at": None, **last, **extra}
+        if watch:
+            rec["watch"] = dict(watch)
         tmp = pk_path.with_suffix(".tmp"); tmp.write_text(json.dumps(rec)); os.replace(tmp, pk_path)
     def answer(rec):
         rec = {**rec, "_def": efp(byid, gate), "fp_rule_version": FP_RULE_VERSION, "_machine": True,
@@ -5314,7 +9781,26 @@ def park_gate(run, run_id, gate, byid, consume_markers):
     log(run, "gate.parked", node=gate["id"], kind=kind, wait_s=w.get("wait_s"),
         every_s=every if kind == "check" else None, timeout_s=deadline - t0)
     mirror()
+    def settle_watchdog(reason):
+        out = {"answer": None, "wait": "watchdog", "reason": reason, "kind": kind,
+               "attempt": attempt, **last}
+        err = (f"park-watchdog: gate {gate['id']} parked ({kind}) for "
+               f"{int(time.time() - watch['blocked_since'])}s"
+               + (f" with {watch.get('strikes')} consecutive dispatcher failures"
+                  if reason == "strikes" else "")
+               + "; settling the gate failed instead of polling forever")
+        save_node(run, gate, byid, {"status": "failed", "error": err, "output": out})
+        log(run, "gate.watchdog_settled", node=gate["id"], reason=reason, kind=kind,
+            attempt=attempt, strikes=int(watch.get("strikes", 0) or 0),
+            blocked_s=int(time.time() - watch["blocked_since"]))
+        return "failed"
     next_check = wait_until
+    if pw_cfg is not None:
+        _r = _park_watch_mod().tick(watch, time.time(), timeout_s=pw_cfg[0],
+                                    strikes_max=pw_cfg[1])
+        mirror()
+        if _r:
+            return settle_watchdog(_r)      # aged clock: fail before re-probing
     while True:
         m = consume_markers()
         if m in ("stopped", "reloaded"):
@@ -5334,21 +9820,52 @@ def park_gate(run, run_id, gate, byid, consume_markers):
                 log(run, "gate.released", node=gate["id"], by="timer")
                 mirror(state="released")
                 return "released"
+            findings = wfcommon.argv_residency(w["until_argv"])
+            if findings:
+                error = "wait: nonresident persisted argv: " + "; ".join(
+                    f"{f['entrypoint']} ({f['status']}: {f['detail']})" for f in findings)
+                save_node(run, gate, byid, {"status": "failed", "error_class": "precondition",
+                                           "error": error, "output": {"residency": findings}})
+                log(run, "gate.wait_refused", node=gate["id"], error_class="precondition", error=error)
+                mirror(state="failed", error=error)
+                return "failed"
             attempt += 1
             try:
-                cp = _aux_run(w["until_argv"], timeout=min(every, 300), cwd=str(run))
+                # PR #243 (zap 6017431934): the probe is bound to the run that
+                # OWNS the gate. A nested runner inherits its caller agent's
+                # HERMES_WF_RUN_DIR (__init__.py passes os.environ through), so
+                # a probe that prefers the env var would read the ANCESTOR's
+                # handoff. Apply the agent-spawn law (bake the absolute run dir)
+                # to the gate's own spawn: re-pin BOTH run-identity pins to this
+                # run — never delete (a probe preferring the env still gets the
+                # RIGHT dir), never inherit.
+                cp = _aux_run(w["until_argv"], timeout=min(every, 300), cwd=str(run),
+                              env={**os.environ, "HERMES_WF_RUN_DIR": str(run),
+                                   "HERMES_WF_RUN_ID": run.name})
                 last = {"last_exit": cp.returncode, "stdout_tail": cp.stdout[-400:], "stderr_tail": cp.stderr[-400:]}
             except subprocess.TimeoutExpired:
                 last = {"last_exit": None, "stdout_tail": "", "stderr_tail": f"check timed out after {min(every, 300)}s"}
             except Exception as e:
                 last = {"last_exit": None, "stdout_tail": "", "stderr_tail": f"{type(e).__name__}: {e}"}
             if last.get("last_exit") == 0:
+                watch.clear()               # clean wake: the clock dies with the park
                 answer({"answer": "check", "attempt": attempt, "waited_s": int(now - t0), **last})
                 log(run, "gate.released", node=gate["id"], by="check", attempt=attempt)
                 mirror(state="released")
                 return "released"
             next_check = now + every
-            mirror(next_at=next_check)
+            if pw_cfg is not None:
+                # A probe that could not be dispatched AT ALL (exit is None: the
+                # launch failed or the probe hung) strikes; a probe that ran and
+                # honestly reported "not ready" (exit != 0) is a legitimate park.
+                _r = _park_watch_mod().tick(watch, time.time(),
+                                            dispatch_failed=(last.get("last_exit") is None),
+                                            timeout_s=pw_cfg[0], strikes_max=pw_cfg[1])
+                mirror(next_at=next_check)
+                if _r:
+                    return settle_watchdog(_r)
+            else:
+                mirror(next_at=next_check)
         time.sleep(min(2.0, max(0.2, next_check - time.time())))
 
 # ---------- main loop ----------
@@ -5393,6 +9910,43 @@ def _boot_lane_assert(run, nodes):
                           "bank_cmd": f"git -C {rp} stash push -m redrive:{Path(run).name}:{n['id']}"})
     return offenders
 
+def _unconsume_pending_gate_answers(run):
+    """#152 (runner leg of the mixed-version skew fix): an ADMISSION graph-invalid
+    death (an old bundled wf.py refusing a newer grammar) must never leave a
+    human's gate answer CONSUMED. The answer is durable state; its consumption
+    must not be the last thing a doomed process saw. For every gate whose answer
+    file is currently VALID (gate_answer_valid — the efp law owns the rest) but
+    whose node record never committed done/skipped, rename gates/<id>.json ->
+    gates/<id>.json.unconsumed (never delete — evidence) and log
+    gate.answer_unconsumed with the prior answer's 'at'. The gate returns to
+    pending; the next release from ANY door that can honor the graph re-lands
+    the answer. An already-committed answer (node done/skipped — consumed at a
+    real boundary) NEVER un-consumes. Returns the list of un-consumed gate ids."""
+    out = []
+    try:
+        graph = jload(run / "graph.json") or {}
+        byid = {n["id"]: n for n in graph.get("nodes", [])}
+    except Exception:
+        return out
+    for nid, n in byid.items():
+        if n.get("type") != "gate":
+            continue
+        p = run / "gates" / f"{nid}.json"
+        ans = jload(p)
+        if ans is None or gate_answer_valid(run, n, byid) is None:
+            continue   # no answer on record, or a stale one that never blocked a release
+        rec = jload(run / "nodes" / f"{nid}.json", {}) or {}
+        if rec.get("status") in ("done", "skipped"):
+            continue   # consumed at a real boundary — the committed-answer law
+        try:
+            os.replace(p, p.with_name(p.name + ".unconsumed"))
+        except OSError:
+            continue
+        log(run, "gate.answer_unconsumed", gate=nid, answer_at=ans.get("at"),
+            why="runner admission refused the committed graph; answer returned to pending")
+        out.append(nid)
+    return out
+
 def write_runner_exit(run, reason, detail=None, graph=None):
     """Write one verdict per runner process, tied to the graph snapshot it ran.
     An amended graph makes this record visibly stale until a fresh runner exits."""
@@ -5412,6 +9966,172 @@ def write_runner_exit(run, reason, detail=None, graph=None):
     except Exception:
         pass  # an exit record is diagnostics, never a reason to die differently
 
+
+def close_budget_ledger(run, meta, capped, never):
+    """est-3acn terminal budget hook — the ONE writer of budget_ledger.json,
+    MERGE-ON-WRITE (est-y938s, P3 from the PR #529 review).
+
+    The loop's terminal hook calls this at every budget closure. The file is an
+    accumulating record, never a per-closure snapshot: a run capped first at a
+    fan-out and re-expressed at a downstream node must not lose the FIRST cause
+    from the ledger. The re-expression is real, not hypothetical — a capped
+    fan-out whose boundary-gate DEMOTE (est-ps8i9) forfeits the graceful
+    closure leaves a record classed by the GATE, so the hook's re-scan arrives
+    with a NARROWER set than an earlier closure wrote; overwriting would erase
+    the first cause by construction.
+
+    Top-level keys keep the pre-y938s shape with FIRST-cause semantics: `cause`
+    and `at` name the first closure, `exhausted_nodes`/`never_launched` are the
+    first-seen-order unions across closures, `cap_tokens` the first baked value
+    the ledger ever saw. `occurrences[]` is the cause chain in close order —
+    one row per DISTINCT closure; a benign resume re-closing the same set mints
+    no duplicate row (the est-3acn resume law: a later pass sees the same file).
+    A pre-fix legacy ledger (no occurrences[]) is absorbed: its snapshot joins
+    the chain as the first occurrence, cause intact.
+    """
+    row = {"at": now(), "exhausted_nodes": list(capped), "never_launched": list(never)}
+    led = {"cause": "budget_exhausted", "at": row["at"],
+           "exhausted_nodes": row["exhausted_nodes"],
+           "never_launched": row["never_launched"],
+           "cap_tokens": (meta.get("budget") or {}).get("tokens")
+           if isinstance(meta.get("budget"), dict) else None}
+    prev = jload(run / "budget_ledger.json", {}) or {}
+    if isinstance(prev, dict) and prev.get("cause"):
+        chain = prev.get("occurrences")
+        if not (isinstance(chain, list) and chain and all(isinstance(o, dict) for o in chain)):
+            # Pre-fix legacy snapshot row (or a malformed chain): absorb the
+            # top-level facts as the first occurrence, never discard them.
+            chain = [{"at": prev.get("at"),
+                      "exhausted_nodes": prev.get("exhausted_nodes") or [],
+                      "never_launched": prev.get("never_launched") or []}]
+        last = chain[-1]
+        if (last.get("exhausted_nodes") or []) == row["exhausted_nodes"] \
+                and (last.get("never_launched") or []) == row["never_launched"]:
+            return prev                     # same closure re-passed: no duplicate row
+        prev_cap = prev.get("cap_tokens")
+        led["cause"] = prev.get("cause") or led["cause"]      # the FIRST cause stands
+        led["at"] = chain[0].get("at") or led["at"]           # the first closure's instant
+        dedup = lambda xs: list(dict.fromkeys(xs))            # first-seen order
+        led["exhausted_nodes"] = dedup(
+            [n for o in chain for n in (o.get("exhausted_nodes") or [])] + row["exhausted_nodes"])
+        led["never_launched"] = dedup(
+            [n for o in chain for n in (o.get("never_launched") or [])] + row["never_launched"])
+        led["cap_tokens"] = prev_cap if prev_cap is not None else led["cap_tokens"]
+        led["occurrences"] = chain + [row]
+    else:
+        led["occurrences"] = [row]
+    lp = run / "budget_ledger.json"
+    tmp = lp.with_name(f"budget_ledger.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(led, ensure_ascii=False))
+    os.replace(tmp, lp)                     # atomic: durable ledger
+    return led
+
+
+def _terminal_status(reason):
+    if reason in ("done", "stopped"):
+        return reason
+    if str(reason).startswith("crashed:"):
+        return "crashed"
+    if str(reason).startswith("blocked by failed ") or str(reason).startswith("aborted by ") \
+            or reason == "graph stuck":
+        # WF-GRAFT-4: an aborted run is terminal-failed — the on_exit postmortem
+        # sees status=failed, never a hole where the verdict reads as neither.
+        return "failed"
+    return None
+
+
+def _run_on_exit(run, graph, meta, status):
+    """#129: one durable invocation; recovery harvests, never re-spawns.
+
+    Called only under runner.lock AFTER the ordinary verdict is committed and
+    the wave has settled. A claim precedes Popen; its def/spawn identity survives
+    runner death. An empty capture on recovery is a failed receipt, not a retry.
+    """
+    nid = graph.get("on_exit")
+    if not nid:
+        return
+    path = run / "on_exit.json"
+    claim = jload(path, {}) or {}
+    if claim.get("phase") == "finished":
+        return
+    byid = {n["id"]: n for n in graph["nodes"]}
+    node = byid[nid]
+    outputs, provenance, failed, classes = {}, {}, [], {}
+    for n in wfcommon.workflow_nodes(graph):
+        st, rec = node_rec(run, n, byid)
+        rec = rec or {}
+        if st in ("done", "partial"):
+            outputs[n["id"]] = rec.get("output")
+            provenance[n["id"]] = bool(rec.get("harvest"))
+        if st == "failed":
+            failed.append(n["id"])
+            classes[n["id"]] = rec.get("error_class") or "unknown"
+    facts = {"run_status": status, "failed_node_ids": failed, "error_classes": classes}
+    fresh = not path.exists()
+    if fresh:
+        claim = {"node": nid, "_def": efp(byid, node), "fp_rule_version": FP_RULE_VERSION,
+                 "spawn_count": 1, "phase": "spawned", "inputs": facts}
+        with path.open("x") as fh:
+            json.dump(claim, fh); fh.flush(); os.fsync(fh.fileno())
+    facts = claim.get("inputs") or facts
+    # Event repair covers either crash window around the claim/receipt commits.
+    events = []
+    for line in ((run / "events.jsonl").read_text() if (run / "events.jsonl").exists() else "").splitlines():
+        try: events.append(json.loads(line))
+        except ValueError: pass
+    if not any(e.get("event") == "on_exit.spawned" for e in events):
+        log(run, "on_exit.spawned", node=nid, run_status=facts["run_status"], spawn=0)
+    child_meta = {**meta, "_stop": threading.Event()}
+    try:
+        raw = jload(run / "nodes" / f"{nid}.json", {}) or {}
+        if not fresh:
+            if claim.get("node") != nid or claim.get("_def") != efp(byid, node):
+                raise RuntimeError("on_exit definition changed after its once-only claim")
+            if raw.get("status") in ("done", "partial", "failed") and record_efp_valid(raw, byid, node):
+                rec = raw
+            elif raw.get("pid") and record_efp_valid(raw, byid, node):
+                rec = _adopt_child(child_meta, node, byid, None, raw, node.get("schema"))
+            else:
+                raise RuntimeError("on_exit attempt interrupted before a committed spawn/output")
+        else:
+            inputs, error = build_inputs(run, node, outputs)
+            missing = _unmet_requires(node, outputs, provenance)
+            ok, proof_missing = publisher_gate_check(run, node, byid)
+            if error or missing or not ok:
+                rec = {"status": "failed", "error_class": "inputs" if error else "precondition",
+                       "error": error or ("precondition unmet: " + ",".join(missing or proof_missing))}
+            else:
+                inputs += "\n\n" + _inputs_block("on_exit (run facts)", facts, INPUTS_CAP)
+                rec = run_child(child_meta, node, byid, node.get("goal", ""), node.get("context", ""),
+                                node.get("schema"), inputs=inputs, skey=skey_for(run, byid, node))
+        rec = _final_quiesce(child_meta, rec, "node", {"node": nid})
+        rec = _stamp_served(child_meta, rec, node)
+        rec = _effect_gate(run, node, _lane_gate(run, node, rec))
+        # est-ikeon (est-13z1 law): the terminal postmortem commit is a commit
+        # edge like any other — a declared `bead_close` is read back from the
+        # estate store HERE, not taken from the child's prose. The run verdict
+        # is untouched either way: write_runner_exit stamps it BEFORE
+        # _run_on_exit runs (#129), so the demote lands on the node record and
+        # on_exit_receipt.md. Undeclaring nodes never touch the store.
+        rec = _bead_close_gate(run, node, rec)
+    except Exception as exc:
+        rec = {"status": "failed", "error_class": "crashed",
+               "error": f"on_exit: {type(exc).__name__}: {exc}"}
+    save_node(run, node, byid, rec)
+    receipt = {"node": nid, "inputs": facts, "status": rec.get("status"),
+               "output": rec.get("output"), "error_class": rec.get("error_class"), "error": rec.get("error")}
+    target = run / "on_exit_receipt.md"
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text("# Workflow postmortem\n\n```json\n" + json.dumps(receipt, indent=2, default=str) + "\n```\n")
+    os.replace(tmp, target)
+    if not any(e.get("event") == "on_exit.finished" for e in events):
+        log(run, "on_exit.finished", node=nid, run_status=facts["run_status"],
+            status=rec.get("status"), error_class=rec.get("error_class"), receipt=target.name)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({**claim, "phase": "finished"}))
+    os.replace(tmp, path)
+
+
 class Run:
     """Mutable graph snapshot; hot-reloadable at wave boundaries."""
     def __init__(self, run):
@@ -5419,27 +10139,138 @@ class Run:
         self.reload()
     def reload(self):
         self.graph = jload(self.run / "graph.json")
-        self.nodes = self.graph["nodes"]
-        self.byid = {n["id"]: n for n in self.nodes}
+        self.nodes = wfcommon.workflow_nodes(self.graph)
+        self.byid = {n["id"]: n for n in self.graph["nodes"]}
+
+def arm_tick(async_boot=False):
+    """est-ip975 PR-2: arm the watchdog tick (the door's post-flock launch tail
+    is the live seam - see _arm_from_launch in __init__.py). Kept as the sync
+    loader for the `arm` verb and tests: loads the sibling runner_watchdog by
+    path and delegates; every failure mode degrades to a no-op.
+
+    async_boot=True was the runner-boot fork shape - POISONED at both ends:
+    cold-cron latency inside the door's lane flock broke claim dedupe, and a
+    runner-spawned child (Popen or double-fork) is re-adopted by the runner's
+    own #61b census, so an external SIGTERM settles it and attributes the
+    death to the claimed node (gateway_sigterm_detach_6226 C, CI red on the
+    pinned core). The fork is refused: async_boot now arms inline, never
+    forks."""
+    def _do():
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_hw_boot_watchdog", Path(__file__).resolve().parent / "runner_watchdog.py")
+            if spec is None or spec.loader is None:
+                return
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.ensure_tick()
+        except Exception:
+            pass
+    return _do()
+
 
 def main(run_id):
     run = find_run(run_id)   # resolved runs_root first; a pre-fix run stays resumable from the launch root
+    # #152 T3 provenance read (first reader wins — the key NEVER rides into a
+    # child env; spawn envs are dict(os.environ, ...), same law as READY_FD):
+    # a stamped boot came through the door's _spawn_runner (fresh launch,
+    # crash-respawn, wait-resume, release/amend respawn); an unstamped boot is
+    # a direct CLI invocation — the owner-resume shape, always allowed to run.
+    _spawned_by = os.environ.pop("HERMES_WF_SPAWNED_BY", None)
     meta = jload(run / "run.json", {}) or {}
     if not jload(run / "graph.json", {}):
         emit(f"WORKFLOW_FAILED {run_id} (no graph.json)")
         notify(run, "run.failed", key="pre-start: no graph.json")
         write_runner_exit(run, "crashed: no graph.json"); sys.exit(2)
-    err = validate_graph(jload(run / "graph.json")["nodes"])
+    _exit_errors = wfcommon.on_exit_errors(jload(run / "graph.json"))
+    err = validate_graph(jload(run / "graph.json")["nodes"]) or (_exit_errors[0]["msg"] if _exit_errors else None)
     if err:
+        # #152: an admission death must never CONSUME a pending gate answer —
+        # the answer is durable state and its consumption must not be the last
+        # thing a doomed process saw. Un-consume any answer whose gate node
+        # never committed done/skipped (evidence kept as .unconsumed, never
+        # deleted) so the gate returns to pending and the next release from ANY
+        # capable door re-lands it; the run stays 'interrupted'-resumeable.
+        _uc152 = _unconsume_pending_gate_answers(run)
         emit(f"WORKFLOW_FAILED {run_id} (graph invalid: {err})")
         notify(run, "run.failed", key="pre-start: graph invalid")
-        write_runner_exit(run, "crashed: graph invalid", err); return
-    if not meta.get("hermes_bin"):
-        import shutil as _sh
-        meta["hermes_bin"] = _sh.which("hermes") or "hermes"
+        write_runner_exit(run, "interrupted: admission graph invalid" if _uc152
+                          else "crashed: graph invalid", err); return
+    # #85: re-measure the artifact-admission guard against the RUN DIR at runner
+    # start (the door proved the 1:1 structural law; only here can the declared
+    # bytes be measured — an orchestrator may have pre-seeded them between admit
+    # and spawn). Fail-closed: a missing/mismatched artifact is a named refusal,
+    # never an item silently reading nothing / another item's artifact.
+    _led = admission_ledger_errors(jload(run / "graph.json"), run_dir=run)
+    if _led:
+        _e0 = _led[0]
+        emit(f"WORKFLOW_FAILED {run_id} (graph invalid: "
+             f"{'node ' + str(_e0['node']) + ': ' if _e0.get('node') else ''}{_e0['msg']})")
+        notify(run, "run.failed", key="pre-start: ledger admission")
+        write_runner_exit(run, "crashed: ledger admission", _e0["msg"]); return
+    # est-2ek.1.166: version handshake at RUNNER BOOT (the door refuses at arm
+    # time; the boot re-check catches the old-door + new-runner skew). Typed,
+    # loud, BOTH versions named, ZERO children — a stale seat reads exactly
+    # what to upgrade (spool e6e55416cd78c9bd). Absent key = no check: a plain
+    # run boots byte-identically (solo golden law).
+    _req = (jload(run / "graph.json", {}) or {}).get("requires_plugin")
+    if _req is not None:
+        _vh = wfcommon.version_handshake_error(_req, wfcommon.plugin_version())
+        if _vh:
+            emit(f"WORKFLOW_FAILED {run_id} (version handshake: {_vh})")
+            notify(run, "run.failed", key="pre-start: version handshake")
+            write_runner_exit(run, "blocked: plugin version handshake", _vh)
+            return
+    # Re-resolve an install path collected since dispatch using the runner's
+    # owner-controlled PATH. Present pins (even non-executable ones) and bare
+    # command names retain their original spawn semantics; no run.json rewrite.
+    _pin = meta.get("hermes_bin")
+    _missing_pin = False
+    if _pin and os.path.dirname(_pin):
+        try:
+            os.stat(_pin)
+        except FileNotFoundError:
+            _missing_pin = True
+        except OSError:
+            pass  # inaccessible/invalid pins keep failing at spawn, never bypassed
+    if not _pin or _missing_pin:
+        meta["hermes_bin"] = shutil.which("hermes") or "hermes"
     (run / "nodes").mkdir(exist_ok=True)
     (run / "gates").mkdir(exist_ok=True)
     acquire_lock(run)
+    # #152 T3 (stop/release TOCTOU class, admission cut): a stop landing while a
+    # held runner sits in its terminal-handoff fence races the door's
+    # spawn-to-consume. The fence sees the marker, re-acquires, and consumes it
+    # (run.stopped appended, runner_exit "stopped") in the same instant the door —
+    # seeing liveness false across the fence's deliberately-released flock — has
+    # already respawned a consumer. That consumer boots, finds the marker GONE,
+    # and pre-guard deleted runner_exit.json, logged run.resumed, and re-ran the
+    # graph: the stopped run re-held, and a release then saw neither proof (no
+    # marker, run.stopped no longer the last event) and landed the answer with
+    # auto_resumed where the byte-identical refusal is test-locked (reproduced
+    # 10/10 under suite timing; the CI flake class). Admission law now: a DOOR
+    # -spawned runner (proven via the HERMES_WF_SPAWNED_BY stamp the door sets
+    # at _spawn_runner and this boot popped — value must equal THIS run id, so
+    # a stray leak can only ever name its own run) whose run dir ALREADY
+    # carries the durable stop verdict with no marker left to consume is a
+    # duplicate consumer — retire the spawn, verdict and evidence intact, no
+    # writes, no wf.pid, no runner_exit delete. A direct CLI boot carries no
+    # stamp: the owner-resume of a stopped run (`wf.py run <stopped-id>` — the
+    # test-locked B1 #7 shape, which re-drives cancelled nodes as pending) is
+    # exactly what it looks like and always runs. A legitimate door-side resume
+    # of a stopped run enters only through amend, which appends graph.amended
+    # (last event no longer run.stopped) AND writes restart.request AND
+    # re-fingerprints the graph (the runner_exit record goes stale) — all three
+    # clear this gate regardless of provenance. run_state is THE read model;
+    # the door's release refusal consults the same derivation (one truth, one
+    # read).
+    if _spawned_by == run_id and \
+            not (run / "stop.request").exists() and \
+            (wfcommon.run_state(run) or {}).get("status") == "stopped" and \
+            (not (jload(run / "graph.json") or {}).get("on_exit") or
+             (jload(run / "on_exit.json", {}) or {}).get("phase") == "finished"):
+        emit(f"WORKFLOW_STOPPED {run_id} (stop already consumed)")
+        return "stopped"
     # #61c: become the subreaper of this subtree FIRST — every orphan a child
     # leaves behind (double-fork+setsid, PPid would otherwise go to 1) then
     # reparents HERE, where _runner_orphans/_survivors can enumerate and kill
@@ -5457,6 +10288,13 @@ def main(run_id):
     # Log-and-schedule over an alive predecessor is the exact shape the
     # reviewer's fault injection punished (new child + committed done over a
     # live prior tree).
+    boot_graph = jload(run / "graph.json")
+    boot_byid = {n["id"]: n for n in boot_graph["nodes"]}
+    for job_node in boot_graph["nodes"]:
+        # Accepted work is polled, never swept/re-launched. Once it is dead,
+        # the unchanged sweep proves every leftover predecessor is quiescent.
+        if job_node.get("type") == "agent" and not job_node.get("fanout"):
+            _poll_registered_job(meta, job_node, boot_byid)
     sweep = _boot_sweep(meta)
     if sweep is not None and sweep.get("proof") not in ("clean", "dead"):
         emit(f"WORKFLOW_FAILED {run_id} (boot sweep {sweep.get('proof')}: "
@@ -5479,14 +10317,26 @@ def main(run_id):
         write_runner_exit(run, "blocked: lane wreckage — bank the previous attempt's WIP "
                                "before re-drive (error_class lane_wreckage)", _why)
         sys.exit(2)
-    try: (run / "runner_exit.json").unlink()   # fresh verdict per runner process
-    except OSError: pass
+    prior_exit = wfcommon.runner_exit_read(run) if (jload(run / "graph.json") or {}).get("on_exit") else None
+    prior_status = _terminal_status((prior_exit or {}).get("reason"))
+    if not prior_status:
+        try: (run / "runner_exit.json").unlink()   # fresh verdict per runner process
+        except OSError: pass
     _EXIT_WRITTEN[0] = False
     _CRASH_GEN[:] = [None, None]  # fresh runner: later crashes mint a new durable generation
     ready_stamp(run)   # #8: own-pid stamp + ready-pipe announce (door observes, never guesses)
     meta["_procs"] = {}
     meta["_procs_lock"] = threading.Lock()
     meta["_stop"] = threading.Event()
+    # Continuous zombie hygiene (BELOW the meta init it reads): subreaper
+    # adoption means every double-fork descendant that dies lands in THIS
+    # process's child table; boot-sweep-only reaping let healthy lanes
+    # accumulate thousands of zombies (receipt 2026-10-07: 8.8k zombies,
+    # load 39 on 20 cores, every runner burning ~0.65 cores on O(pool) /proc
+    # walks). The daemon drains the pool every second; it never reaps a pid
+    # the runner owns (_procs seats / _aux_pids probes: verdict integrity),
+    # and it does not start at all unless meta["_subreaper"] (#283 review B2).
+    _start_reaper(meta)
     # est-2ek.1.666: termination cleanup wired on EVERY exit path (atexit +
     # SIGTERM-clean-and-reraise) — a runner that leaves must not leave its
     # agent-node child mutating real state unsupervised.
@@ -5497,7 +10347,21 @@ def main(run_id):
     meta["_reasoning_server_clamp"] = {}   # est-vsgj B1-crossed: (node,index,lane,asked)
                                            # -> server-declared value; runner-private,
                                            # never persisted; survives outer-ladder respawns
+    _width_tracker(meta)                    # #24: observed fan-out width per node
     exit_graph = [jload(run / "graph.json")]
+    if prior_status and (prior_status == "crashed" or
+                         (jload(run / "on_exit.json", {}) or {}).get("phase") != "finished"):
+        try:
+            _run_on_exit(run, exit_graph[0], meta, prior_status)
+        except Exception as exc:
+            log(run, "on_exit.error", error=f"{type(exc).__name__}: {exc}")
+        finally:
+            try: _sweep_orphans(meta, "on_exit_recovery")
+            except Exception: pass
+        return prior_exit["reason"]
+    if prior_status:
+        try: (run / "runner_exit.json").unlink()
+        except OSError: pass
 
     def _stop_watcher():
         """Boundary-stop is honest only if in-flight children actually die AND the
@@ -5530,9 +10394,22 @@ def main(run_id):
                 try: _sweep_orphans(meta, "stop")
                 except Exception: pass
                 return
+            try: _lane_kill_sweep(run, meta)   # est-cl7t: node-targeted kills only
+            except Exception: pass
             time.sleep(2)
 
     threading.Thread(target=_stop_watcher, daemon=True).start()
+    # #44 lease heartbeat: while THIS process lives, the lease's 'at' stays fresh
+    # (one beat / 30s << LEASE_STALE_S 120s). The beat dies with the process — a
+    # dead holder CANNOT keep its lease fresh (the kernel dropped its flock at
+    # death; the beat stops too), which is what makes the wedged classification
+    # provable. Daemon thread: never keeps the runner alive on its own.
+    def _lease_beat():
+        while True:
+            try: _lease_heartbeat(run)
+            except Exception: pass
+            time.sleep(30.0)
+    threading.Thread(target=_lease_beat, daemon=True).start()
     first = not (run / "events.jsonl").exists()
     # #8 item 3: crash-respawn idempotence — when a prior runner of this run
     # already logged (events.jsonl exists — the reaper's revival), write the
@@ -5543,6 +10420,10 @@ def main(run_id):
     _respawn_attempt_record(run, meta,
                             {n["id"]: n for n in (exit_graph[0] or {}).get("nodes", [])})
     log(run, "run.started" if first else "run.resumed")
+    # #100: the requested-vs-applied receipt rides AFTER the started/resumed
+    # line — emitting it earlier would create events.jsonl and make the FIRST
+    # runner misread itself as a resume (the reaper test pins the trace order).
+    _receipt_concurrency(meta)                # once per runner process
     rs = Run(run)
     exit_graph[0] = rs.graph
     consumed, steering = set(), {}
@@ -5559,7 +10440,10 @@ def main(run_id):
         Stop is re-checked after the wave and before every terminal decision."""
         if (run / "restart.request").exists():
             g2 = jload(run / "graph.json")
-            ok = g2 and g2.get("nodes") and not validate_graph(g2["nodes"])
+            ok = (g2 and g2.get("nodes") and not validate_graph(g2["nodes"])
+                  # #85: a hot-reloaded graph re-passes the artifact-admission
+                  # guard against the live run dir before it is accepted.
+                  and not admission_ledger_errors(g2, run_dir=run))
             try: (run / "restart.request").unlink()  # consume AFTER parsing, always
             except OSError: pass
             if ok:
@@ -5580,10 +10464,24 @@ def main(run_id):
             # next generation.
             try: _sweep_orphans(meta, "stop")
             except Exception: pass      # never mask the stop verdict
-            try: (run / "stop.request").unlink()
-            except OSError: pass
+            # #152 T3 TOCTOU: publish the stop verdict BEFORE consuming the
+            # marker. The door's release refusal is
+            # `stop.request.exists() or run_state == "stopped"`; consuming
+            # (unlinking) the marker first opened a window where a release saw
+            # NEITHER proof — no marker, no run.stopped event — wrote the
+            # answer, and auto-respawned the run the owner had just stopped
+            # (ok/auto_resumed where a byte-identical refusal is test-locked;
+            # reproduced under CI suite load, clean-room alone: flake class).
+            # Append-then-unlink closes it: any release that reads the marker
+            # GONE necessarily sees run.stopped as the last event (the append
+            # is durable before the unlink), so it refuses. A SIGKILL between
+            # the two leaves the marker for the next admitted runner to
+            # re-consume — the duplicate-run.stopped shape is unchanged from
+            # the old kill-after-unlink window.
             log(run, "run.stopped")
             emit(f"WORKFLOW_STOPPED {run_id}")
+            try: (run / "stop.request").unlink()
+            except OSError: pass
             return "stopped"
         return None
 
@@ -5596,12 +10494,47 @@ def main(run_id):
         for nid, texts in drain_inbox(run, consumed).items():
             steering.setdefault(nid, []).extend(texts)
 
+        # est-zmizd: due trailing re-checks of a coalesced wake burst land at the
+        # wave boundary; finalize() flushes whatever is still pending before the
+        # terminal wake, so the final event of a burst always reaches the owner.
+        _wake_refire_pending(run, graph=rs.graph)
+
         states, outputs, prov = {}, {}, {}
+        _capped = []   # est-3acn: nodes whose COMMITTED record carries the RunBudget death
         for n in rs.nodes:
             st, rec = node_rec(run, n, rs.byid)
             states[n["id"]] = st
             if st in ("done", "partial"): outputs[n["id"]] = (rec or {}).get("output")  # #4: partial output IS output
-            prov[n["id"]] = bool((rec or {}).get("harvest"))                            # e68544a37be37657
+            # e68544a37be37657; est-ggqs: a validate-clamped harvest is the node's
+            # own vouched `done` — its declared schema already held the answer.
+            prov[n["id"]] = bool((rec or {}).get("harvest")) and not (rec or {}).get("clamped")
+            # A committed `partial` whose class is budget_exhausted (capped
+            # fan-out WITH harvest) is a RunBudget death too — the class, not
+            # the status, is the fact. A failed pre-dispatch refusal counts as
+            # well; harvest-reclassified `done` reads (node_rec law) carry no
+            # budget answer, so they can never masquerade here.
+            if st in ("failed", "partial") \
+                    and (rec or {}).get("error_class") == "budget_exhausted":
+                _capped.append(n["id"])
+        # est-3acn: RunBudget terminal hook — AFTER states build, BEFORE the
+        # prune cascade: a capped run closes GRACEFULLY as `partial`, never
+        # stumbles into `blocked by failed` prose. The durable ledger names the
+        # cap deaths and every node that NEVER LAUNCHED (pending at the instant
+        # of closing — derived, not guessed). est-y938s: the write is
+        # MERGE-ON-WRITE — every closure lands through close_budget_ledger, so
+        # a re-expression downstream (a demoted record shrinks the re-scan, and
+        # a later resume re-passes this hook) accumulates the occurrences[]
+        # cause chain instead of overwriting the first cause; a same-set
+        # re-closure mints no duplicate row. finalize() commits the
+        # run.partial fact; the runner_exit verdict `budget_exhausted` rides
+        # main()'s write at exit — run_state reads both and reports
+        # status=partial + the derived budget view.
+        if _capped:
+            never = [n["id"] for n in rs.nodes if states[n["id"]] == "pending"]
+            close_budget_ledger(run, meta, _capped, never)
+            log(run, "run.budget_exhausted", nodes=_capped, never_launched=never)
+            finalize(run, rs.graph, "partial")
+            return "budget_exhausted"
         # prune propagation: derived skips become efp-stamped facts (replay-skip law)
         for nid in prune_states(rs.nodes, states):
             save_node(run, rs.byid[nid], rs.byid, {"status": "skipped", "output": {"skipped": "all deps pruned"}})
@@ -5652,7 +10585,17 @@ def main(run_id):
                     _fail_precondition(run, n, rs.byid, [why])
                     states[n["id"]] = "failed"
                     continue
-                save_node(run, n, rs.byid, {"status": "done", "output": n.get("output"), "ms": 0})
+                # est-pygyy (#56): the receipt gate rides the echo commit path too
+                # (same boundary-commit law as the publisher gate above).
+                _erec = _effect_gate(run, n, {"status": "done", "output": n.get("output"),
+                                              "ms": 0})
+                _erec = _bead_close_gate(run, n, _erec)   # est-13z1: an echo's close claim is read back too
+                save_node(run, n, rs.byid, _erec)
+                if _erec["status"] != "done":
+                    log(run, "node.failed", node=n["id"], error=_erec["error"],
+                        error_class=_erec.get("error_class", "effect_receipt"), attempts=0)
+                    states[n["id"]] = "failed"
+                    continue
                 log(run, "node.done", node=n["id"], echo=True)
                 states[n["id"]] = "done"; outputs[n["id"]] = n.get("output")
 
@@ -5708,8 +10651,68 @@ def main(run_id):
             log(run, "node.done", node=n["id"], join=True)
             states[n["id"]] = "done"; outputs[n["id"]] = out
 
+        # est-fanout-cell (sys-96dcod): consolidate partners commit at the wave
+        # boundary from the machine record — zero spawn of their own (their batch
+        # children were streamed DURING the fan's wave), zero prose verdict. The
+        # tally is wfcommon.consolidate_tally over consolidate/<fan>.json +
+        # <fan>.batches.jsonl: every dispatched item answered by a done/partial
+        # batch final or NAMED missing (failed members, undelivered tails). The
+        # fan failed => the partner fails typed (join-parent law, never a hang).
+        for n in rs.nodes:
+            con = n.get("consolidate")
+            if not isinstance(con, dict) or states[n["id"]] != "pending":
+                continue
+            src = con.get("from")
+            sst = states.get(src)
+            if sst == "failed":
+                _fail_precondition(run, n, rs.byid, [f"fan-out {src} failed"],
+                                   why="consolidate source failed: ")
+                states[n["id"]] = "failed"; continue
+            if sst not in ("done", "partial"):
+                continue                       # fan still running: next wave
+            _led = jload(run / "consolidate" / f"{src}.json", {}) or {}
+            finals = []
+            try:
+                for line in (run / "consolidate" / f"{src}.batches.jsonl"
+                             ).read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        try:
+                            finals.append(json.loads(line))
+                        except Exception:
+                            pass
+            except OSError:
+                pass
+            tally = wfcommon.consolidate_tally(
+                int(_led.get("dispatched") or 0), finals,
+                inflight=0, pending_batch=_led.get("pending") or [])
+            # The partner's boundary done is a COMMIT EDGE like the agent
+            # solo/aggregate/echo paths — a declared `effects` row is proven from
+            # bytes here or the commit demotes (the #56 law; the tally is honest
+            # about the wave, it is not proof of a publication postcondition).
+            _crec = _effect_gate(run, n, {"status": "done", "output": tally, "ms": 0})
+            _crec = _bead_close_gate(run, n, _crec)   # est-13z1: the partner is a commit edge too — a consolidate node's close claim is read back from the store (the fourth-path gap)
+            save_node(run, n, rs.byid, _crec)
+            states[n["id"]] = _crec["status"]
+            if _crec["status"] == "done":
+                log(run, "node.done", node=n["id"], consolidate=True,
+                    dispatched=tally["dispatched"], consolidated=tally["consolidated"],
+                    missing=tally["missing"], batches=len(tally["batches"]))
+                outputs[n["id"]] = tally
+            else:
+                log(run, "node.failed", node=n["id"], error=_crec["error"],
+                    error_class=_crec.get("error_class", "effect_receipt"), attempts=1)
+
         ready = [n for n in rs.nodes if kind(n).spawns is True and states[n["id"]] == "pending"
+                 and not n.get("consolidate")          # est-fanout-cell: boundary commit above
                  and deps_ok(n) and deps_res(n)]
+        if ready and _abort_flag(run):
+            # WF-GRAFT-4 precedence: a flagged run spawns NOTHING NEW. This point
+            # is post-wave at every iteration, so in-flight work has drained (we
+            # never kill a live wave); the abort verdict below names the flagged
+            # node and closes the run typed.
+            log(run, "run.spawn_refused", nodes=[n["id"] for n in ready],
+                error_class="aborted", flag=_abort_flag(run))
+            ready = []
         if ready:
             spawnable = []
             for n in ready:
@@ -5727,18 +10730,86 @@ def main(run_id):
                 missing = _unmet_requires(n, outputs, prov) if n.get("requires") else []
                 if missing:
                     _fail_precondition(run, n, rs.byid, missing)
-                else:
-                    spawnable.append(n)
+                    continue
+                # est-xd3b (issue #132, runner slice): agent nodes HONOR when +
+                # on_skip — the gate-skip law at the same boundary: evaluated
+                # AFTER requires-unmet (an unmet hard dependency fails first,
+                # it is never laundered into a skip), BEFORE any spawn. A false
+                # predicate never spends a spawn or a token. on_skip: prune
+                # (default) commits the efp-stamped `skipped` rec + the
+                # agent.skipped event and the existing prune_states cascade
+                # arms the node's whole after-subtree; on_skip: pass commits
+                # `done` with the {agent: skipped} rec — the exact gate-skip
+                # pass-shape (wfcommon.run_state counts it done, downstream
+                # reads the marker). A BROKEN predicate FAILS SAFE: the node
+                # spawns and agent.when_error names the eval error (a node is
+                # never skipped by a failing assumption). Structurally-broken
+                # exprs never reach here — the door's bounded grammar refused
+                # them at submit (validator slice est-l2ey).
+                if n.get("when") is not None:
+                    _passed = True
+                    try:
+                        _passed = when_true(n, outputs)
+                    except Exception as _we:
+                        log(run, "agent.when_error", node=n["id"],
+                            error=f"{type(_we).__name__}: {_we}", when=n.get("when"))
+                    if not _passed:
+                        if str(n.get("on_skip", "prune")).lower() == "pass":
+                            # est-0lxnh (#56 law): the skip-pass done-commit is a
+                            # boundary commit and rides the receipt gate, exactly
+                            # like the echo edge above — a node declaring effects
+                            # can NEVER book done with zero measured rows, and a
+                            # false predicate guarantees the artifact was never
+                            # written. Unproven rows DEMOTE the commit to typed
+                            # failed (error_class effect_receipt, never retried).
+                            # Effects-free nodes pass through UNTOUCHED (the gate
+                            # is a no-op without `effects`): byte-identical for
+                            # every existing on_skip:pass graph.
+                            # est-ikeon (est-13z1 law): the bead-close gate rides
+                            # this edge too — the census applies BOTH boundary
+                            # gates at every commit edge, and a false predicate
+                            # guarantees the node never ran, so a `bead_close`
+                            # declaration here is a close claim with zero work
+                            # behind it, read back from the store or demoted.
+                            # The demote branch below is gate-agnostic
+                            # (`status != done`, `error`, `error_class` with an
+                            # `effect_receipt` default), so no branch changes.
+                            _srec = _effect_gate(run, n, {"status": "done",
+                                                         "output": {"agent": "skipped"},
+                                                         "ms": 0})
+                            _srec = _bead_close_gate(run, n, _srec)
+                            save_node(run, n, rs.byid, _srec)
+                            if _srec["status"] != "done":
+                                log(run, "node.failed", node=n["id"],
+                                    error=_srec["error"],
+                                    error_class=_srec.get("error_class", "effect_receipt"),
+                                    attempts=0)
+                                states[n["id"]] = "failed"
+                                continue
+                            log(run, "agent.skipped", node=n["id"], mode="pass")
+                            states[n["id"]] = "done"
+                            outputs[n["id"]] = {"agent": "skipped"}
+                        else:
+                            save_node(run, n, rs.byid, {"status": "skipped", "ms": 0})
+                            log(run, "agent.skipped", node=n["id"], mode="prune")
+                            states[n["id"]] = "skipped"
+                        continue
+                spawnable.append(n)
             if spawnable:
-                with ThreadPoolExecutor(max_workers=meta.get("concurrency", 4)) as ex:
+                with ThreadPoolExecutor(max_workers=meta.get("concurrency", DEFAULT_CONCURRENCY)) as ex:
                     list(ex.map(lambda n: run_agent_node(run, meta, rs.byid, n, outputs,
                                                          steering.pop(n["id"], None) or []), spawnable))
+                _width_flush(meta, run)   # #24: peak children of THIS wave, per node
             continue  # top of loop: consume markers, recompute states
 
         m = consume_markers()
         if m == "stopped": return "stopped"
         if m == "reloaded": continue
 
+        # est-1n7gx (collapse-to-one law): declaration-order contract, named here —
+        # when several gates are simultaneously ready (branch twins), the pick is the
+        # GRAPH's own node enumeration (deterministic in graph.json bytes), never fs
+        # or dict luck. This is scheduling over the declared DAG, not a data collapse.
         gate = next((n for n in rs.nodes if kind(n).spawns is False and states[n["id"]] == "pending"
                      and deps_ok(n) and (not n.get("requires") or deps_res(n))), None)
         if gate:
@@ -5802,7 +10873,33 @@ def main(run_id):
                                    or not isinstance(hm.get("since"), (int, float))):
                 hm = {"since": time.time(), "_def": hdef, "fp_rule_version": FP_RULE_VERSION}
                 hf.write_text(json.dumps(hm))
-            notify(run, "gate.held", key=f"{gate['id']}:{hdef}")
+            _wv = notify(run, "gate.held", key=f"{gate['id']}:{hdef}", node=gate["id"])
+            pw_cfg = _park_watch_cfg()
+            if pw_cfg is not None:
+                # Park watchdog: an un-woken, un-answered hold must not hang the
+                # run forever (the 9.3 h tour-demo burn shape). The clock lives
+                # in this gate's own held record, so a runner restart replays
+                # the elapsed window; an undelivered owner wake is one strike.
+                if not record_efp_valid(hm, rs.byid, gate, "_def"):
+                    hm = {}                      # stale/amended def: a fresh hold
+                watch = hm.get("watch")
+                if not isinstance(watch, dict):
+                    watch = hm["watch"] = {}
+                if not isinstance(watch.get("blocked_since"), (int, float)):
+                    _seed = hm.get("since") if isinstance(hm.get("since"), (int, float)) else time.time()
+                    watch["blocked_since"] = hm.setdefault("since", _seed)
+                    watch["strikes"] = 0
+                hm["_def"] = hdef
+                hm["fp_rule_version"] = FP_RULE_VERSION
+                _r = _park_watch_mod().tick(watch, time.time(),
+                                            dispatch_failed=(_wv in ("undelivered", "skipped")),  # #561 law: a suppressed wake is one dispatcher strike; owner-null None stays strike-free by design
+                                            timeout_s=pw_cfg[0], strikes_max=pw_cfg[1])
+                hf.write_text(json.dumps(hm))
+                if _r:
+                    _settle_park_hold(run, gate, rs.byid, hm, _r)
+                    continue     # top of loop: the failed gate routes the run out loudly
+
+
             if ht is None:
                 # PR#97 lost-handoff fix: the owner turn runs synchronously inside
                 # notify(). A release/stop/amend can therefore land while this runner
@@ -5819,7 +10916,9 @@ def main(run_id):
             # runner restarts via gates/<id>.held.json (efp-stamped). At expiry, with
             # default_option the gate releases itself exactly like a human answer;
             # without one it logs gate.expired ONCE (loud, never silent) and keeps
-            # holding — tour-demo burned 9.3 h on "either button is fine".
+            # holding — tour-demo burned 9.3 h on "either button is fine". The
+            # keep-holding wait rides the park watchdog above: its persisted
+            # time-box (default 6 h) settles the hold failed, loudly.
             while True:
                 m = consume_markers()
                 if m == "stopped": return "stopped"
@@ -5841,8 +10940,31 @@ def main(run_id):
                         hm["expired"] = True
                         hf.write_text(json.dumps(hm))
                         log(run, "gate.expired", node=gate["id"], held_s=held_s)
+                if pw_cfg is not None:
+                    # The keep-holding wait carries the same persisted time-box:
+                    # an expired hold without a default_option still has a floor.
+                    _r = _park_watch_mod().tick(hm["watch"], time.time(),
+                                                timeout_s=pw_cfg[0], strikes_max=pw_cfg[1])
+                    if _r:
+                        hf.write_text(json.dumps(hm))
+                        _settle_park_hold(run, gate, rs.byid, hm, _r)
+                        break
                 time.sleep(0.5)
             continue   # top of loop: the answer reads exactly like a human release
+        _ab = _abort_flag(run)
+        if _ab:
+            # WF-GRAFT-4: the persisted abort flag is checked FIRST at this
+            # quiescent boundary — before the on_fail-catch opportunity and
+            # before finalize-done. A flagged run commits failed (reason
+            # "aborted by <node>") regardless of any branch later going done.
+            log(run, "run.blocked", failed=[], blocked=[], aborted=_ab,
+                error_class="aborted")
+            emit(f"WORKFLOW_FAILED {run_id} (aborted by {_ab.get('node')})")
+            notify(run, "run.failed", key=f"aborted by {_ab.get('node')}", graph=rs.graph)
+            m = consume_markers()
+            if m == "stopped": return "stopped"
+            if m == "reloaded": continue
+            return f"aborted by {_ab.get('node')}"
         failed = [n for n in rs.nodes if states[n["id"]] == "failed"]
         if failed:
             # jam-h23: give every on_fail catch one chance at this quiescent
@@ -5865,6 +10987,42 @@ def main(run_id):
             if m == "reloaded": continue
             return "blocked by failed " + ",".join(n["id"] for n in failed)
         if all(states[n["id"]] in ("done", "partial", "skipped") for n in rs.nodes):   # #4: a harvested partial closes the run
+            _forks = wfcommon.dead_end_forks(
+                rs.nodes, states,
+                lambda c: jload(run / "nodes" / f"{c}.json", {}) or {})
+            if _forks:
+                # WF-GRAFT-4: a settled router with NO satisfiable edge is a
+                # failed close naming the fork(s) — never a finalize done.
+                log(run, "run.blocked", failed=_forks, blocked=[],
+                    error_class="dead_end", forks=_forks)
+                emit(f"WORKFLOW_FAILED {run_id} (dead end at fork {','.join(_forks)})")
+                notify(run, "run.failed", key="dead end", graph=rs.graph)
+                m = consume_markers()
+                if m == "stopped": return "stopped"
+                if m == "reloaded": continue
+                return "blocked by failed dead_end at " + ",".join(_forks)
+            unreceipted = []
+            for n in rs.nodes:
+                if states[n["id"]] == "skipped":
+                    continue
+                _st, rec = node_rec(run, n, rs.byid)
+                receipts = wfcommon.external_effect_receipts(n, rec)
+                missing = [r["target"] for r in receipts if not r["verdict"]]
+                if missing:
+                    unreceipted.append(n["id"])
+                    log(run, "effect.unreceipted", node=n["id"], missing=missing,
+                        recovery="publication-only")
+            if unreceipted:
+                # Bank done/partial authors. A wait only re-reads; recovery must
+                # complete publication and echo-bank the original output via amend.
+                log(run, "run.blocked", failed=[], blocked=unreceipted,
+                    recovery="publication-only", error_class="effect_receipt")
+                emit(f"WORKFLOW_FAILED {run_id} (effect receipt {','.join(unreceipted)})")
+                notify(run, "run.failed", key="effect receipt", graph=rs.graph)
+                m = consume_markers()
+                if m == "stopped": return "stopped"
+                if m == "reloaded": continue
+                return "blocked by effect receipt " + ",".join(unreceipted)
             finalize(run, rs.graph, "done")
             return "done"
         emit(f"WORKFLOW_FAILED {run_id} (graph stuck — check after/refs)")
@@ -5897,6 +11055,8 @@ def main(run_id):
             if not (isinstance(reason, str) and
                     (reason.startswith("held at ") or
                      reason.startswith("blocked by failed ") or
+                     reason.startswith("blocked by effect receipt ") or
+                     reason.startswith("aborted by ") or
                      reason == "graph stuck")):
                 break
             # Terminal handoff fence: make liveness false BEFORE the final action
@@ -5923,11 +11083,13 @@ def main(run_id):
                 continue
             if yield_to_successor:
                 reason = None
+            elif rs.graph.get("on_exit") and _terminal_status(reason) and not _reacquire_terminal_lock(run):
+                reason = None  # the successor owns postmortem recovery too
             break
     except SystemExit:
         # Defensive: a self-reported exit is a verdict, not a crash. loop() does
         # not raise SystemExit today (every self-reported exit happens before this
-        # try — enumerated at L79/L1693/L1947), but the guard keeps the invariant
+        # try — enumerate with `grep -n write_runner_exit wf.py`), but the guard keeps the invariant
         # local instead of a cross-function assumption. (write_runner_exit is
         # first-writer-wins per process, so a same-process false stamp was never
         # possible anyway.)
@@ -5949,27 +11111,181 @@ def main(run_id):
         except Exception: pass
     if reason is not None:
         write_runner_exit(run, reason, graph=exit_graph[0])
+        status = _terminal_status(reason)
+        if status and exit_graph[0].get("on_exit"):
+            try:
+                _run_on_exit(run, exit_graph[0], meta, status)
+            except Exception as exc:
+                log(run, "on_exit.error", error=f"{type(exc).__name__}: {exc}")
     return reason
 
 def finalize(run, graph, status):
-    nodes = graph["nodes"]
-    finals = [n["id"] for n in nodes
-              if not any(n["id"] in o.get("after", []) for o in nodes)]
+    nodes = wfcommon.workflow_nodes(graph)
     lines = [f"# Workflow '{graph.get('name', 'workflow')}' — {status}"]
-    for fid in finals:
-        rec = jload(run / "nodes" / f"{fid}.json")
-        if rec and rec.get("status") in ("done", "partial"):   # #4: harvested partial output belongs in the summary
-            lines.append(f"\n## {fid}\n\n```json\n"
+    # est-p318w: every node, graph order, status + output. Rendering only
+    # done/partial LEAVES left a bare header whenever the sole leaf was
+    # pruned (gate on_skip:prune skipping a publisher) — run.done promises
+    # the node outputs are here. #4: harvested partial output stays in.
+    for n in nodes:
+        rec = jload(run / "nodes" / f"{n['id']}.json") or {}
+        lines.append(f"\n## {n['id']} — {rec.get('status') or 'no record'}")
+        if rec.get("output") is not None:
+            lines.append("\n```json\n"
                          + json.dumps(rec.get("output"), ensure_ascii=False, indent=2, default=str)
                          + "\n```")
     (run / "summary.md").write_text("\n".join(lines) + "\n")
     log(run, f"run.{status}")
     emit(f"WORKFLOW_{status.upper()} {run.name}")
+    # est-zmizd: flush ALL pending trailing re-checks (force: inside a still-open
+    # window too) BEFORE the terminal wake: a coalesced straggler burst must not
+    # die un-woken behind run.done/failed; a delivered instance dedupes to zero POSTs.
+    _wake_refire_pending(run, graph=graph, force=True)
     notify(run, f"run.{status}", graph={"nodes": nodes})
 
+
+# ---------- CLI: validate (issue #474) ----------
+
+_DOOR_MOD_NAME = "_hermes_workflows_door_cli"   # private bind, same law as _COMMON_PATH above
+
+
+def _cli_validate(argv):
+    """`wf.py validate [--json] <graph.json>` — the door's validate pipeline on argv.
+
+    NOT a second validator. This spec-loads the sibling door module (`__init__.py`,
+    privately under `_DOOR_MOD_NAME` — no sys.path mutation, no generic name in
+    sys.modules) and calls its `act_validate` verbatim, so the defaults fill, defect
+    collection, model/route policy and the advisory warnings channel are the SAME code
+    path `workflow {action: "validate"}` walks: one pipeline, one verdict. Nothing
+    pings, nothing is written, no run dir, nothing spawns.
+
+    Exit codes: 0 = ok:true; 1 = red verdict (the errors[] envelope is printed);
+    2 = usage/IO fault — the file was never readable enough for the door to judge,
+    so there is no verdict to report.
+    """
+    as_json = False
+    paths = []
+    for a in argv[2:]:
+        if a == "--json":
+            as_json = True
+        elif a.startswith("-"):
+            print(f"validate: unknown flag {a!r} "
+                  "(usage: wf.py validate [--json] <graph.json>)")
+            return 2
+        else:
+            paths.append(a)
+    if len(paths) != 1:
+        print("usage: wf.py validate [--json] <graph.json>")
+        return 2
+    _p = Path(paths[0]).expanduser()
+    try:
+        graph_path = (_p if _p.is_absolute() else Path.cwd() / _p).resolve()
+    except OSError:
+        graph_path = _p
+    if not graph_path.is_file():
+        print(f"validate: not a readable file: {paths[0]}")
+        return 2
+    _spec = importlib.util.spec_from_file_location(
+        _DOOR_MOD_NAME, Path(__file__).resolve().parent / "__init__.py")
+    if _spec is None or _spec.loader is None:
+        print("validate: no door module beside this runner (install the plugin dir, "
+              "not a lone wf.py copy)")
+        return 2
+    door = importlib.util.module_from_spec(_spec)
+    try:
+        _spec.loader.exec_module(door)
+        res = door.act_validate({"graph_path": str(graph_path)})
+    except Exception as e:   # the door itself faulted: no verdict, never a false green
+        print(f"validate: door pipeline did not run: {type(e).__name__}: {e}")
+        return 2
+    if not isinstance(res, dict) or "ok" not in res:
+        print("validate: " + (res.get("error") if isinstance(res, dict) and res.get("error")
+                              else f"door returned no verdict: {res!r}"))
+        return 2
+    if as_json:
+        print(json.dumps(res, ensure_ascii=False, indent=2, default=str))
+    elif res.get("ok"):
+        print(f"VALID ok {graph_path.name} — {res.get('hint') or 'validated only'}")
+        _routes = res.get("resolved_routes") or {}
+        for _nid, _pair in (sorted(_routes.items()) if isinstance(_routes, dict) else []):
+            _r = (_pair or {}).get("resolved") or {}
+            if _r.get("model"):
+                print(f"  {_nid} -> {_r.get('provider') or '?'}/{_r['model']}")
+    else:
+        print(f"VALID fail {graph_path.name}: {res.get('error') or 'graph invalid'}")
+        for e in res.get("errors") or []:
+            if isinstance(e, dict):
+                where = f"node {e['node']}" if e.get("node") else "graph"
+                print(f"  {where}: {e.get('field')}: {e.get('msg')}")
+            else:
+                print(f"  graph: {e}")
+    # #479 adversary pin: the warning rows are a HUMAN-channel surface.
+    # Under --json they rode stdout AFTER the envelope and broke strict
+    # json.loads ('Extra data') for every machine reader the PR's own docs
+    # advertise. The envelope already carries them under 'warnings' — skip
+    # the echo loop entirely in JSON mode; human mode stays byte-identical.
+    if not as_json:
+        for w in res.get("warnings") or []:   # mixed rows: s12 strings, p95 dicts (#256/#421)
+            if isinstance(w, dict):
+                print(f"  warn node {w.get('node')}: {w.get('field')}: {w.get('msg')}")
+            else:
+                print(f"  warn {w}")
+    return 0 if res.get("ok") else 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 7 and sys.argv[1] == "register-job":
+        r = find_run(sys.argv[2])
+        graph = jload(r / "graph.json") or {}
+        byid = {n["id"]: n for n in graph.get("nodes", [])}
+        n = byid.get(sys.argv[3])
+        if r.name != sys.argv[2] or not n or n.get("type") != "agent":
+            raise SystemExit("register-job requires an exact run and agent node id")
+        register_job(r, n, byid, int(sys.argv[4]), sys.argv[5], sys.argv[6])
+        print("WORKFLOW_JOB_REGISTERED " + n["id"])
+        sys.exit(0)
+    # est-ip975 PR-2: the watchdog cron entry. PR-1's generated shim execs this
+    # exact argument-free line (`wf.py tick`), so the body loads by path on
+    # bare stdlib python - no core, no plugin-loader - and prints its census.
+    if len(sys.argv) == 2 and sys.argv[1] == "arm":
+        arm_tick()
+        sys.exit(0)
+    if len(sys.argv) == 2 and sys.argv[1] == "tick":
+        _wd_spec = importlib.util.spec_from_file_location(
+            "_hw_tick_watchdog", Path(__file__).resolve().parent / "runner_watchdog.py")
+        if _wd_spec is None or _wd_spec.loader is None:
+            print("TICK REFUSED runner_watchdog.py not present")
+            sys.exit(1)
+        _wd_mod = importlib.util.module_from_spec(_wd_spec)
+        _wd_spec.loader.exec_module(_wd_mod)
+        sys.exit(_wd_mod.main())
+    # #44 (issue ask 2): the owner escape hatch rides the SAME entry point —
+    # `wf.py release-lock <run_id>` heals a PROVEN-wedged runner.lock (zero live
+    # holders on the kernel ledger + dead lease) so wait-resume recovers without
+    # copying directories. Refuses everything else (live holder, EACCES-ambiguous,
+    # legacy lease-absent shape): wfcommon.heal_wedged_runner_lock is the single
+    # safety authority; this door only renders its verdict.
+    if len(sys.argv) == 3 and sys.argv[1] == "release-lock":
+        _rl_run = wfcommon.find_run(sys.argv[2])
+        if not jload(_rl_run / "graph.json", {}):
+            print(f"REFUSED {sys.argv[2]} (unknown run — no graph.json)")
+            sys.exit(1)
+        _rl = wfcommon.heal_wedged_runner_lock(_rl_run)
+        if _rl.get("ok"):
+            print(("RELEASED " if _rl.get("reason") == "healed" else "FREE ")
+                  + f"{_rl_run.name} ({_rl.get('reason')}"
+                  + (f", stranded={Path(_rl['stranded']).name}" if _rl.get("stranded") else "")
+                  + ")")
+            sys.exit(0)
+        print(f"REFUSED {_rl_run.name} ({_rl.get('reason')})")
+        sys.exit(1)
+    # #474: the graph-lint entrypoint for heads with no `workflow` tool in reach
+    # (CI, pre-commit, plain shells). Same door pipeline as action=validate — see
+    # _cli_validate for the one-pipeline law and the exit-code contract.
+    if len(sys.argv) >= 3 and sys.argv[1] == "validate":
+        sys.exit(_cli_validate(sys.argv))
     if len(sys.argv) < 3 or sys.argv[1] != "run":
-        print("usage: wf.py run <run_id>"); sys.exit(2)
+        print("usage: wf.py run <run_id> | wf.py validate [--json] <graph.json> "
+              "| wf.py release-lock <run_id>"); sys.exit(2)
     # 5c37b19 guard 2 (belt-and-braces): a runner whose cwd was deleted mid-life dies
     # on the FIRST relative-path/cwd-touching call. HERE is durable — the same dir
     # __init__.py pins as the spawn cwd — so recover there before main() can raise.

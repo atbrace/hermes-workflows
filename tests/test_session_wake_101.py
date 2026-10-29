@@ -82,10 +82,24 @@ SINK_PORT = _sink_srv.server_address[1]
 tmp = Path(tempfile.mkdtemp(prefix="wf-wake-"))
 
 def env():
-    # HERMES_HOME scopes the runs root (wfcommon.runs_root); WF_WAKE_SINK_PORT stubs
-    # the delivery endpoint the same way a gateway's api_server binds it.
-    return dict(os.environ, HERMES_HOME=str(tmp), WF_WAKE_SINK_PORT=str(SINK_PORT),
-                FAKE_LOG=str(tmp / "fake.log"))
+    # HERMES_HOME alone is NOT a sandbox — the resolver precedence (#42) is
+    # settings.runs_root > WF_RUNS_ROOT > <hermes_home>/workflows, so a
+    # WF_RUNS_ROOT or API_SERVER_* variable inherited from the invoking
+    # process outranks the test's home and every child runner writes elsewhere
+    # (the suite then fails "no graph.json" while a clean-CI-shape run passes —
+    # repro: env WF_RUNS_ROOT=/tmp/hostile API_SERVER_KEY=SYNTH python
+    # tests/test_session_wake_101.py). Pin our own root and strip the inherited
+    # one, exactly the way the sibling wake suites (matrix_101 base_env,
+    # lost_handoff ENV) already do. The API_SERVER_* strip is the same
+    # hermeticity rule: the sink-less sections (6/11/12/13) fall back to the
+    # env endpoint, and an inherited key would send wake deliveries to a real
+    # API server instead of the test's local sink.
+    e = dict(os.environ)
+    for k in ("WF_RUNS_ROOT", "API_SERVER_KEY", "API_SERVER_HOST", "API_SERVER_PORT"):
+        e.pop(k, None)
+    e.update(HERMES_HOME=str(tmp), WF_RUNS_ROOT=str(RUNS),
+             WF_WAKE_SINK_PORT=str(SINK_PORT), FAKE_LOG=str(tmp / "fake.log"))
+    return e
 
 (tmp / "fake.log").write_text("")
 RUNS = tmp / "workflows"
@@ -121,6 +135,17 @@ def wakes(r):
         return []
 
 
+def ptr(text, name):
+    """One protocol-field value from the wake text (None if absent): the JSON
+    token following `name=` in the segment BEFORE the em-dash separator — the
+    #501 pointers are protocol fields, a body quote must never satisfy a pin."""
+    proto = text.split(" \u2014 ", 1)[0]
+    i = proto.find(f" {name}=")
+    if i < 0:
+        return None
+    return json.JSONDecoder().raw_decode(proto[i + len(name) + 2:])[0]
+
+
 def answer(r, gid, val):
     g = jg = json.loads((r / "graph.json").read_text())
     byid = {n["id"]: n for n in g["nodes"]}
@@ -151,6 +176,10 @@ try:
     check("wake carries run_id + owner stamp",
           bool(w) and w[0].get("run_id") == r.name and w[0].get("owner") == OWNER, w)
     check("wake text names the run (nudge shape)", bool(w) and r.name in w[0].get("text", ""), w)
+    check("gate.held carries no pointer fields (#501 lane: two events only)",
+          bool(w) and ptr(w[0]["text"], "run_dir") is None
+          and " failed_node_logs=" not in w[0]["text"],
+          str(w[0].get("text", "")[:160]) if w else str(w))
     check("sink saw the delivery", any(s["session_header"] == OWNER["session_id"] for s in sinks), str(sinks))
 
     # ---- 2. owner-null run fires ZERO wakes, stdout identical ----
@@ -175,6 +204,11 @@ try:
     w3 = wakes(r3)
     check("held+done = exactly 2 wakes (no held re-notify)",
           len(w3) == 2 and [e.get("event") for e in w3] == ["gate.held", "run.done"], w3)
+    p3 = ptr(w3[1]["text"], "run_dir") if len(w3) == 2 else None
+    check("run.done end-to-end carries run_dir pointing at the run (#501)",
+          p3 is not None and Path(p3).resolve() == r3.resolve()
+          and ptr(w3[1]["text"], "failed_node_logs") is None,
+          str(w3[1].get("text", "")[:160]) if len(w3) == 2 else str(w3))
 
     # ---- 4. run.failed fires one wake ----
     r4 = mk("w4", [{"id": "boom", "type": "agent", "goal": "FAILME"}], OWNER)
@@ -183,6 +217,13 @@ try:
     w4 = wakes(r4)
     check("run.failed fires exactly one wake",
           len(w4) == 1 and w4[0].get("event") == "run.failed", w4)
+    t4 = w4[0].get("text", "") if w4 else ""
+    p4, logs4 = ptr(t4, "run_dir"), ptr(t4, "failed_node_logs")
+    check("run.failed end-to-end carries run_dir + committed log pointers (#501)",
+          p4 is not None and Path(p4).resolve() == r4.resolve()
+          and isinstance(logs4, list) and len(logs4) >= 1
+          and all(Path(p).resolve().parent == (r4 / "logs").resolve() for p in logs4),
+          t4[:200])
 
     # ---- 5. park (hold_timeout) adds ZERO per-tick lines, then releases on the answer ----
     r5 = mk("w5", [{"id": "n1", "type": "agent", "goal": "LIST: go"},
@@ -422,6 +463,7 @@ try:
         _saved_home = os.environ.get("HERMES_HOME")
         _saved_sink = os.environ.pop("WF_WAKE_SINK_PORT", None)   # force the config path
         os.environ["HERMES_HOME"] = str(tmp)
+        os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
         try:
             ep = _wf2._wake_endpoint()
         finally:
@@ -429,6 +471,7 @@ try:
                 os.environ["WF_WAKE_SINK_PORT"] = _saved_sink
             if _saved_home is not None:
                 os.environ["HERMES_HOME"] = _saved_home
+                os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
         check("endpoint expands ${VAR} refs and brackets IPv6 (core parity)",
               bool(ep) and ep[0] == "http://[::1]:8642/v1/chat/completions"
               and ep[1] == "expanded-key", str(ep))

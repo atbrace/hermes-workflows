@@ -36,6 +36,9 @@ import json, os, shutil, subprocess, sys
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 HOME = BUILD / "home-flah"
 RUNS = HOME / "workflows"
 sys.path.insert(0, str(BUILD.parent))
@@ -100,7 +103,7 @@ def mk(run_id, nodes, meta_extra=None):
     return r
 
 def drive(run, env_extra):
-    env = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(HOME / f"fake-{run.name}.log"), **env_extra)
+    env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(HOME / f"fake-{run.name}.log"), **env_extra)
     p = subprocess.run([sys.executable, str(BUILD.parent / "wf.py"), "run", str(run)],
                        env=env, capture_output=True, timeout=180, text=True)
     return p
@@ -283,7 +286,7 @@ r9 = mk("flah-gate-iso", [{"id": "a", "type": "agent", "goal": "GO gate iso",
     "            raise PermissionError('fault: proc denied in _isolate_prior')\n"
     "    return _real(p)\n"
     "os.listdir=_u\n")
-_env9 = dict(os.environ, HERMES_HOME=str(HOME),
+_env9 = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS),
              FAKE_LOG=str(HOME / "fake-gate-iso.log"),
              FAKE_ARGV_LOG=str(argv_log9), FAKE_MODE="reasoning_gate400",
              FAKE_SUPPORTED_EFFORTS="xhigh,medium,low", FAKE_REJECT_EFFORT="high",
@@ -429,6 +432,7 @@ if CORE:
     # in-process unit needs the env pointed at the fixture home (restore after).
     _saved_home = os.environ.get("HERMES_HOME")
     os.environ["HERMES_HOME"] = str(HOME)
+    os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
     try:
         out_mcp = wf._filter_child_toolsets(r_ts, {}, {"id": "x",
                                                        "toolsets": ["bogus-xyz", "audit_mcp"]})

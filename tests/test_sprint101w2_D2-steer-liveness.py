@@ -18,11 +18,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 ROOT = BUILD.parent
 HOME = ROOT / "tests" / "home-d2"
 RUNS = HOME / "workflows"
 FAKE = str(BUILD / "fake")
 os.environ["HERMES_HOME"] = str(HOME)
+os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
 sys.path.insert(0, str(ROOT))
 import wfcommon  # noqa: E402
 
@@ -51,7 +55,7 @@ def mk(run_id, meta_extra=None):
     return r
 
 def launch(r, env_extra=None):
-    env = dict(os.environ, HERMES_HOME=str(HOME), **(env_extra or {}))
+    env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), **(env_extra or {}))
     return subprocess.Popen([sys.executable, str(ROOT / "wf.py"), "run", r.name],
                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

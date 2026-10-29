@@ -9,10 +9,13 @@ import importlib.util, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 HOME = BUILD / "home_join"
 RUNS = HOME / "workflows"
 if RUNS.exists(): shutil.rmtree(RUNS)   # hermetic
-env = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(BUILD / "fake_join.log"))
+env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(BUILD / "fake_join.log"))
 FAKE = str(BUILD / "fake")
 os.environ["HERMES_WF_HERMES_BIN"] = FAKE
 sys.path.insert(0, str(BUILD.parent))
@@ -42,6 +45,7 @@ def wf(run_id):
 # #71: HERMES_HOME alone does NOT sandbox the shelf — WF_RUNS_ROOT pins runs/library
 # and wf_test_isolation neutralises settings.runs_root; without both, saves pollute prod.
 os.environ["HERMES_HOME"] = str(HOME)
+os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
 os.environ["WF_RUNS_ROOT"] = str(RUNS)
 _spec = importlib.util.spec_from_file_location("hw_join", BUILD.parent / "__init__.py")
 hw = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(hw)

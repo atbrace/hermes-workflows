@@ -98,7 +98,9 @@ function fmtOutput(o) {
 
 const isBusy = status => status === 'running'
 const runningCount = data => data?.counts?.running ?? (data?.runs || []).filter(r => isBusy(r.status)).length
-const statusLabel = s => s || 'unknown'
+// WF-03 (QA 2026-10-27): an absent status reads an em-dash, never the raw
+// sentinel word — 'unknown' on the screen reads like a broken sensor.
+const statusLabel = s => s || '—'
 const nodesCount = r => `${r.nodes_done ?? 0}/${r.nodes_total ?? '?'} terminal`
 
 // Fan-out expansion state: which fan-out node is fanned open, and which item is
@@ -143,12 +145,22 @@ function fanItems(def, st, events) {
     const ev = byIdx.get(i)
     const item = rec?.item ?? (defItems ? defItems[i] : undefined)
     const metrics = im?.[i] || null
-    const status = rec?.status || (verified
+    const ec0 = rec?.error_class || ev?.error_class || null
+    // est-zmpx8 (the #584 peer-review residual): the spent-cap refusal stamp is a
+    // record fact like error_class — read it verbatim where the source carries it,
+    // never invent one where it does not (AGENTS rule 8).
+    const rf0 = rec?.refusal || ev?.refusal || null
+    const rawStatus = rec?.status || (verified
       ? (nodeLive && metrics?.live > 0 ? 'running' : ev?.status || 'pending')
       : ev?.status || (legacyDone ? 'done' : nodeLive ? (hasStarts ? (startedIdx.has(i) ? 'running' : 'pending') : 'running') : 'pending'))
+    // WF-02 (QA 2026-10-27): cancelled is never a failure (the #7 law — a stop
+    // re-drives cancelled work). A quorum loser / stopped straggler is recorded
+    // failed+error_class=cancelled; the panel renders it as its own neutral
+    // terminal word, never as a red 'failed'.
+    const status = rawStatus === 'failed' && ec0 === 'cancelled' ? 'cancelled' : rawStatus
     const goal = item && typeof item === 'object' && typeof item.goal === 'string' ? item.goal : fo.goal ? renderGoal(fo.goal, item, i) : ''
     rows.push({
-      index: i, status, item, goal,
+      index: i, status, errorClass: ec0, refusal: rf0, item, goal,
       label: itemLabel(item, i),
       output: rec && rec.status === 'done' ? rec.output : (recs == null && out && Array.isArray(out.items) && st?.status === 'done' ? out.items[i] : undefined),
       error: rec?.error || ev?.error || null,
@@ -176,12 +188,16 @@ function renderGoal(tmpl, item, i) {
   })
 }
 
+// WF-02 (QA 2026-10-27): cancelled joins the terminal tally as its OWN neutral
+// bucket — never folded into failed. The key rides the counts ONLY when
+// non-zero (the ratified no-cancelled fanCounts shape stays byte-identical for
+// every contract pin that deep-equals it).
 const fanCounts = rows => {
   const counts = { total: rows.length, done: 0, failed: 0, running: 0, skipped: 0, stopped: 0, pending: 0, terminal: 0 }
   for (const row of rows) {
     const status = row.status
-    if (status === 'done' || status === 'failed' || status === 'skipped' || status === 'stopped') {
-      counts[status]++
+    if (status === 'done' || status === 'failed' || status === 'skipped' || status === 'stopped' || status === 'cancelled') {
+      counts[status] = (counts[status] || 0) + 1
       counts.terminal++
     } else if (status === 'running' || status === 'pending') {
       counts[status]++
@@ -190,20 +206,27 @@ const fanCounts = rows => {
   return counts
 }
 
-const fanSummary = c => `${c.terminal}/${c.total} terminal${c.skipped ? ` ·${c.skipped} skipped` : ''}${c.stopped ? ` ·${c.stopped} stopped` : ''}${c.running ? ` ·${c.running}▶` : ''}${c.failed ? `, ${c.failed} failed` : ''}`
+const fanSummary = c => `${c.terminal}/${c.total} terminal${c.skipped ? ` ·${c.skipped} skipped` : ''}${c.stopped ? ` ·${c.stopped} stopped` : ''}${c.cancelled ? ` ·${c.cancelled} cancelled` : ''}${c.running ? ` ·${c.running}▶` : ''}${c.failed ? `, ${c.failed} failed` : ''}`
 
 // ---- vitals: dense spend + liveness ----------------------------------------------
 // Backend joins each child's state.db sessions row (title = wf:<run>:<node>[:<i>]:<efp8>)
 // into node.metrics / node.item_metrics / run.metrics. Liveness is deterministic: while a
 // child cooks, api_calls/tool_calls rise and last_activity moves; flat + old = stalling.
 const kfmt = n => n == null ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)
-const usd = v => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : `$${v.toFixed(4)}`
+// WF-09 (QA 2026-10-27): a positive estimate must never render as '$0.0000' —
+// a sub-cent number floors to '<$0.0001'; zero is only reached through the
+// callers' truthy guards (seat-billed routes report cost 0 → 'included', no
+// dollar figure at all).
+const usd = v => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : v > 0 ? (v < 0.00005 ? '<$0.0001' : `$${v.toFixed(4)}`) : '—'
 const idleS = m => m && m.last_activity ? Math.max(0, Math.round(Date.now() / 1000 - m.last_activity)) : null
 // 0–30 s = cooking (accent), 30–90 s = watch (warning), >90 s = stalled (danger)
 const idleTone = s => s == null ? EDGE_TONE.pending : s < 30 ? EDGE_TONE.running : s < 90 ? EDGE_TONE.held : EDGE_TONE.failed
 
-/** One dense line: `1.2k▸86 · 3⚡ · 4🔧 [· $0.012]`; live adds a heartbeat `● 4s`. */
-function Vitals({ m, live, size, cost }) {
+/** One dense line: `1.2k▸86 · 3⚡ · 4🔧 [· $0.012]`; live adds a heartbeat `● 4s`.
+ *  #133: live also carries the wall meter word — `● 4s · near-wall` — the read
+ *  model's {elapsed_s, wall_s, p95_s, meter} for a running node. Absent stays
+ *  absent (never invented); the words are the run_state vocabulary verbatim. */
+function Vitals({ m, live, size, cost, wall }) {
   if (!m) return null
   const fs = size === 'xs' ? 10 : 11
   const sep = jsx('span', { style: { opacity: 0.45 }, children: '·' })
@@ -227,6 +250,19 @@ function Vitals({ m, live, size, cost }) {
   const kids = []
   parts.forEach((p, i) => { if (i) kids.push(sep); kids.push(p) })
   if (beat) { if (kids.length) kids.push(sep); kids.push(beat) }
+  // #133: the wall meter rides right after the heartbeat, one word, tone-coded
+  // against the same EDGE_TONE palette the heartbeat already uses. Only when
+  // the read model published it — an absent meter renders nothing at all.
+  const meter = live && wall && typeof wall.meter === 'string' ? wall.meter : null
+  if (meter) {
+    if (kids.length) kids.push(sep)
+    const bound = wall.wall_s ?? wall.p95_s ?? null
+    kids.push(jsx('span', {
+      title: `elapsed ${wall.elapsed_s}s of wall ${wall.wall_s ?? '?'}s (shape p95 ${wall.p95_s ?? '?'})${bound != null ? ` — ${Math.round(100 * (wall.elapsed_s || 0) / bound)}%` : ''}`,
+      style: { color: METER_TONE[meter] || 'var(--ui-text-tertiary)', fontVariantNumeric: 'tabular-nums' },
+      children: meter
+    }))
+  }
   return jsx('span', {
     style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: fs, lineHeight: 1, whiteSpace: 'nowrap', color: 'var(--ui-text-tertiary)', fontVariantNumeric: 'tabular-nums' },
     children: jsxs(Fragment, { children: kids })
@@ -267,7 +303,9 @@ function ItemDetail({ row, compact }) {
       m ? jsx(Vitals, { m, live: row.status === 'running', cost: true }) : null),
     lastDesc ? box('text-[0.6875rem] text-(--ui-text-tertiary)', `last: ${lastDesc}`) : null,
     pre('goal', row.goal),
-    pre('error', row.error, EDGE_TONE.failed),
+    // WF-02: a cancelled child is not a failure — its reason line rides the
+    // neutral secondary colour, never the failed red.
+    pre('error', row.error, row.status === 'cancelled' ? undefined : EDGE_TONE.failed),
     pre('output', fmtOutput(row.output)),
     row.status === 'running' ? box('text-xs text-(--ui-text-tertiary)', 'child running…') : null,
     row.status === 'pending' ? box('text-xs text-(--ui-text-tertiary)', 'not started.') : null
@@ -280,7 +318,8 @@ function ItemChips({ runId, nodeId, rows, picked, size }) {
     style: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' },
     children: rows.map(r => {
       const on = picked === r.index
-      const tone = r.status === 'done' ? EDGE_TONE.done : r.status === 'failed' ? EDGE_TONE.failed : r.status === 'running' ? EDGE_TONE.running : r.status === 'skipped' || r.status === 'stopped' ? EDGE_TONE.skipped : EDGE_TONE.pending
+      // WF-02 (QA 2026-10-27): cancelled joins the neutral skipped tone.
+      const tone = r.status === 'done' ? EDGE_TONE.done : r.status === 'failed' ? EDGE_TONE.failed : r.status === 'running' ? EDGE_TONE.running : r.status === 'skipped' || r.status === 'stopped' || r.status === 'cancelled' ? EDGE_TONE.skipped : EDGE_TONE.pending
       // read-once: one binding shared by the guards and the derefs below
       const m = r.metrics || null
       const idle = m ? idleS(m) : null
@@ -295,7 +334,7 @@ function ItemChips({ runId, nodeId, rows, picked, size }) {
           fontSize: size === 'sm' ? 10 : 11, lineHeight: 1, whiteSpace: 'nowrap', cursor: 'pointer',
           border: `1px solid ${on ? 'var(--ui-accent)' : tone}`, borderRadius: 999,
           background: on ? 'var(--ui-bg-secondary, transparent)' : 'transparent',
-          color: r.status === 'pending' || r.status === 'skipped' || r.status === 'stopped' ? 'var(--ui-text-tertiary)' : 'var(--ui-text-secondary)',
+          color: r.status === 'pending' || r.status === 'skipped' || r.status === 'stopped' || r.status === 'cancelled' ? 'var(--ui-text-tertiary)' : 'var(--ui-text-secondary)',
           textDecoration: r.status === 'skipped' ? 'line-through' : 'none'
         },
         children: [jsx(Dot, { status: r.status }), jsx('span', { children: r.label }),
@@ -404,16 +443,23 @@ function DirectiveCard({ id }) {
 }
 
 // Two compact rows; absent metrics stay absent, never displayed as zero.
+// WF-06 (QA 2026-10-27): the header elapsed is the RUN clock — the word rides
+// the value so the same run's node-card and timeline clocks (different
+// sources) can never be mistaken for it.
+// WF-09: a zero cost is the seat-billed truth, not a dollar figure — never
+// 'COST $0.0000'; activity at zero reads 'COST included' (SKILL.md: report
+// metrics, not dollars; subscription routes report 'included').
 const inlineHeader = (data, elapsed) => {
   const m = data.metrics
   const first = [data.name || data.id, data.status, nodesCount(data)]
-  if (elapsed != null) first.push(fmtDur(elapsed))
+  if (elapsed != null) first.push(`run ${fmtDur(elapsed)}`)
   const second = []
   if (m) {
     for (const [key, label] of [['tokens_in', 'IN'], ['tokens_out', 'OUT'], ['api_calls', 'API'], ['tool_calls', 'TOOL']]) {
       if (m[key] != null) second.push(`${label} ${kfmt(m[key])}`)
     }
-    if (m.cost != null) second.push(`COST ${usd(m.cost)}`)
+    if (m.cost > 0) second.push(`COST ${usd(m.cost)}`)
+    else if (m.cost === 0 && ((m.api_calls ?? 0) > 0 || (m.tokens_in ?? 0) > 0 || (m.tokens_out ?? 0) > 0)) second.push('COST included')
     if (m.live > 0 && data.status === 'running') {
       second.push(`LIVE ${m.live}`)
       const idle = idleS(m)
@@ -646,6 +692,21 @@ const $stripFold = atom(null) // focused sid while its terminal fold is expanded
 // {sid, runId} or null. In-memory plugin atom — never persisted, so a reload
 // never resurrects an expanded panel.
 const $railOpen = atom(null)
+// Collapsible live-run tray (#22, design contract on issue #22):
+// {expanded, openRun} or null. In-memory plugin atom — never localStorage,
+// so a reload never resurrects an expanded tray. EXPORTED so the contract
+// test can drive the expanded state (same seam the rail tests probe via
+// atom instrumentation); component bodies live beside the models below.
+// (test_register_surface locks the 'session-strip' registration.)
+export const $trayOpen = atom(null)
+// est-z717 SETTINGS GATE: the live-run tray is OPTIONAL until the native tray
+// SDK area lands (NousResearch/hermes-agent#133724). Tri-state atom:
+// null = not yet answered (renders HIDDEN — default OFF), true/false = the
+// answer of GET /settings (the door's owner_settings shape, plugins.entries.
+// hermes-workflows.settings.tray). In-memory plugin atom — never localStorage.
+// The PillRail is UNTOUCHED by this gate: it stays the always-on surface.
+// When #133724 lands, default-on rides that mount (one line in register()).
+export const $trayGate = atom(null)
 
 /** Pure pill-toggle (exported so node can test the transition table without a
  *  DOM): null → open {sid, runId}; clicking the OPEN pill (same sid AND same
@@ -673,6 +734,19 @@ export function ownedRuns(runs, sid, uiSid = '') {
   if (!sid && !uiSid) return []
   return (runs || []).filter(r =>
     (sid && r?.owner?.session_id === sid) || (uiSid && r?.owner?.ui_session_id === uiSid))
+}
+
+/** Feature-detected composer mount for the session strip (#230 item 0):
+ *  tray ?? underside ?? top. COMPOSER_AREAS is an SDK const map — a key EXISTS
+ *  ONLY on cores that mount that area, so a missing key reads undefined and ??
+ *  falls through: exactly one mount, never two. `composer.tray` is the tray
+ *  accumulation slot (subagents / background scripts / task lists — core's
+ *  ComposerStatusStack, internal as of hermes-agent@8b66a51036); the upstream
+ *  SDK-surface ask is filed (esc key wf230-composer-tray-area, issue #230), so
+ *  the day core exposes it the strip rides the real tray with no plugin change.
+ *  Today no shipped key is `tray` ⇒ underside (core >= v2026.7.30) ⇒ top. */
+export function sessionStripArea(composerAreas) {
+  return composerAreas?.tray ?? composerAreas?.underside ?? composerAreas?.top
 }
 
 /** Model split of one chat's runs: held first, then running by started desc,
@@ -777,7 +851,7 @@ export function railModel(ownedRunsList) {
   }
 }
 
-export function Pill({ run, sid, open, onToggle }) {
+export function Pill({ run, sid, open, onToggle, suppressGates }) {
   // #48 F3 (deep review): the ACTUAL Pill (not just pillModel) borders itself
   // from the ONE tone table — border colour and the open ring both read the
   // run's NODE_TONE entry at render time; a table perturbation moves them.
@@ -831,7 +905,9 @@ export function Pill({ run, sid, open, onToggle }) {
       }, 'label'),
       // Gate-held pills keep GateActions (question + option buttons inline),
       // OUTSIDE the toggle span so a gate answer never bubbles into the toggle.
-      run.status === 'held' && run.held_gate
+      // The #22 tray takes over the release surface inside SessionStrip
+      // (suppressGates) so a held run never shows two release surfaces.
+      run.status === 'held' && run.held_gate && !suppressGates
         ? jsx(GateActions, { runId: run.id, gate: run.held_gate, owner: run.owner || {} }, 'gate')
         : null,
     ]
@@ -841,7 +917,7 @@ export function Pill({ run, sid, open, onToggle }) {
 /** One horizontal row of compact pills for the session's live runs, plus the
  *  +N overflow affordance beyond the cap. Renders nothing for an empty set —
  *  never an empty bordered box. */
-export function PillRail({ runs, sid, railOpen, onPill }) {
+export function PillRail({ runs, sid, railOpen, onPill, suppressGates }) {
   const { pills, overflow } = railModel(runs)
   if (!pills.length) return null
   const byId = Object.fromEntries((runs || []).map(r => [r.id, r]))
@@ -854,6 +930,7 @@ export function PillRail({ runs, sid, railOpen, onPill }) {
       ...pills.map(p => jsx(Pill, {
         run: byId[p.id] || { id: p.id, name: p.label, status: p.status }, sid,
         open: !!(railOpen && railOpen.sid === sid && railOpen.runId === p.id),
+        suppressGates,
         onToggle: () => onPill?.(p.id),
       }, p.id)),
       overflow > 0
@@ -886,6 +963,301 @@ function RailPanel({ runId }) {
   }, 'rail-panel')
 }
 
+/** ---- Live-run tray (#22, design contract on issue #22) -----------------
+ *  Collapsible situational tray stacked as a sibling of the native
+ *  task-list/subagents/queued-messages family directly above the chat window.
+ *  The pure models (trayScoping/trayRunModel/trayShouldShow/toggleTray) live
+ *  HERE because test_11_ui_imports freezes plugin.js imports at exactly the
+ *  three SDK sources — the scaffold mirror in
+ *  desktop/src/components/runtray.mjs is design documentation only.
+ *  #230 RUNNING-ONLY LAW: rows = runs whose status ∉ TERMINAL — terminal
+ *  runs LEAVE the tray (the #22 ack-away ledger and the 60 s recap were
+ *  deleted with their exports); zero rows hides the tray entirely.
+ *  Mount law: SessionStrip stays the mount owner; the collapsed RunTrayRow
+ *  stacks as a sibling tray row (same composer registration as PillRail).
+ *  SCOPING: trayScoping keys on the owner.session_id VALUE — dispatch/cron-
+ *  shaped launches whose owner.session_id matches the focused chat belong in
+ *  the tray (closes the auto-cards half of #22); blank-owner cron launches
+ *  stay honest-absent, pane-only (the ownedRuns law). */
+
+/** Tray scoping (pure): every run whose owner.session_id === sid, INCLUDING
+ *  dispatch/cron-shaped launches (launched_by is irrelevant — the owner VALUE
+ *  is the contract). A run owned by ANOTHER session, or with a blank owner,
+ *  never appears: the pane is its only home (the ownedRuns law). A
+ *  cron-shaped owner id ('cron_...') is the one design-carved inclusion: a
+ *  schedule-launched run has no chat of its own, and the tray of the session
+ *  that surfaced it is its glanceable home (the auto-cards half of #22). */
+export function trayScoping(runs, sid) {
+  if (!sid) return []
+  return (runs || []).filter(r => {
+    const o = r?.owner?.session_id
+    if (!o) return false
+    return o === sid || (typeof o === 'string' && o.startsWith('cron_'))
+  })
+}
+
+const runStatusOf = r => (r && r.status) || 'pending'
+
+/** ---- #230 RUNNING-ONLY LEDGER -------------------------------------------------
+ *  The tray's ledger is the live set ONLY: rows = runs whose status ∉
+ *  TERMINAL={done,failed,stopped}. A terminal run LEAVES the tray outright —
+ *  no ack-away ledger, no 60 s recap (both superseded, deleted with their
+ *  exports). Ordering is THE SAME comparator as splitRuns: held first, then
+ *  the rest by started desc — asserted as trayRunModel order == splitRuns
+ *  active order on one shared ledger (splitRuns caps `active` at 3; the tray
+ *  lists every live run, uncapped, same comparator). Pure, node-testable. */
+export function trayRunModel(runs) {
+  const live = (runs || []).filter(r => r && !TERMINAL.has(runStatusOf(r)))
+  const held = live.filter(r => runStatusOf(r) === 'held')
+  const rest = live.filter(r => runStatusOf(r) !== 'held')
+    .sort((a, b) => parseTime(b.started) - parseTime(a.started))
+  return { rows: [...held, ...rest].map(r => ({ id: r.id, status: runStatusOf(r), run: r })) }
+}
+
+/** The live set as a PLAIN run array (#230 spec): the running-only ledger
+ *  (status ∉ TERMINAL) in THE SAME comparator as splitRuns — held first,
+ *  then the rest by started desc, uncapped. Terminal runs leave outright
+ *  (no ack-away ledger, no 60 s recap window — the tray never renders one). */
+export function trayLiveModel(runs) {
+  return trayRunModel(runs).rows.map(r => r.run)
+}
+
+export function trayRunningLabel(runs) {
+  const count = trayLiveModel(runs).length
+  return { count, line: `${count} running workflows` }
+}
+
+/** Pure chevron transition (item 2): given the current glyph or the
+ *  expanded flag, answer the OTHER state's glyph. ▾ collapsed, ▴ expanded. */
+export function flipChevron(current) {
+  if (current === '▴') return '▾'
+  if (current === '▾') return '▴'
+  return current ? '▴' : '▾'
+}
+
+/** Pure visibility rule: zero rows (an empty ledger, a null ledger, a bare
+ *  {rows:[]} model, or a ledger of ONLY terminal runs — they all produce
+ *  zero rows) hides the tray entirely: the collapsed row renders nothing.
+ *  Accepts the trayRunModel model OR a plain live-set array (the
+ *  trayLiveModel shape) — both are zero when nothing lives.
+ *  est-z717 SETTINGS GATE (2nd arg): the tray renders ONLY under the owner's
+ *  explicit opt-in — `gate === true`, the answer of GET /settings (the door's
+ *  owner_setting('tray'), plugins.entries.hermes-workflows.settings.tray).
+ *  Anything else — absent, null (never fetched / backend down), false, a
+ *  truthy non-boolean — stays HIDDEN: default OFF while the native tray SDK
+ *  area (hermes-agent#133724) is unlanded; when it lands, default-on rides
+ *  that mount. (The retired #22 wall-clock parity arg is replaced here —
+ *  #230 already ignored it, there is no recap window.) */
+export function trayShouldShow(model, gate) {
+  if (gate !== true) return false
+  const rows = Array.isArray(model) ? model : ((model && model.rows) || [])
+  return !!rows.length
+}
+
+/** Pure tray/accordion transition table (exported so node can drive it
+ *  without a DOM): collapsed tray → open with NO single row expanded; an
+ *  open tray's HEADER collapses the tray (back to the collapsed row — Esc
+ *  / click-away parity); with the tray open, a row click accordion-toggles
+ *  that row, clicking the open row again closes just the row. */
+export function toggleTray(state, runId) {
+  if (!state || !state.expanded) return { expanded: true, openRun: null }
+  if (runId == null) return null
+  return { expanded: true, openRun: state.openRun === runId ? null : runId }
+}
+
+/** Collapsed affordance (#230 items 1+2, design truth = the native collapsed
+ *  background-task tray): ONE slim single-line row `[chevron] N running
+ *  workflows` — numeral + label, muted secondary text via a CSS var, 1px
+ *  low-contrast border. The #22 shape (pulse glyph, `N runs · X building ·
+ *  Y held` segments, micro sparkline) is retired with its exports: a count of
+ *  RUNNING workflows is the whole glance, per-band colour belongs on the
+ *  expanded rows. Theme-safe: inline styles ride CSS vars only, never a
+ *  forked palette. Click / Enter / Space expands (the row click also clears
+ *  the accordion row via the owner's handler). `count` is ALWAYS the
+ *  running-only count — terminal runs are already out of the model. */
+export function RunTrayRow({ runs, count, expanded, onExpand }) {
+  // #230 spec shape: pass the scoped ledger via `runs` and the row computes
+  // its own count over the live set (never fabricates: empty reads 0). The
+  // legacy {count} call shape stays accepted (test_run_tray precedent).
+  const n = runs !== undefined ? trayRunningLabel(runs).count
+    : (Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0)
+  // Chevron is the PURE transition fn's answer for the current state.
+  const chev = flipChevron(!!expanded)
+  return jsxs('div', {
+    role: 'button',
+    tabIndex: 0,
+    title: 'Toggle the running-workflow tray',
+    onClick: e => { e?.stopPropagation?.(); onExpand?.() },
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onExpand?.() }
+    },
+    style: {
+      display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+      fontSize: '0.6875rem', lineHeight: '1.2', padding: '3px 8px', borderRadius: 8,
+      // Slim + quiet: one low-contrast hairline, muted secondary text — the
+      // row is an affordance, not an alert (CSS vars only, theme-safe).
+      color: 'var(--ui-text-secondary)',
+      border: '1px solid var(--ui-stroke-secondary)',
+      background: 'var(--ui-sidebar-surface-background, var(--card))'
+    },
+    children: [
+      jsx('span', {
+        'aria-hidden': true,
+        style: { color: 'var(--ui-text-tertiary)' },
+        children: chev
+      }, 'chev'),
+      jsx('span', {
+        style: { fontVariantNumeric: 'tabular-nums' },
+        children: `${n} running workflows`
+      }, 'label')
+    ]
+  }, 'tray-row')
+}
+
+function trayElapsed(r) {
+  // Wall-clock elapsed since the run started (useTick re-renders the live
+  // tray every second, so the figure ages honestly; 'updated' is a node
+  // commit time, not "now" — a held run's elapsed must keep counting).
+  const start = parseTime(r.started)
+  return start ? fmtDur(Math.max(0, Date.now() - start)) : ''
+}
+
+const trayBarPct = r => (r?.nodes_done != null && r?.nodes_total != null && r.nodes_total > 0)
+  ? `${Math.floor((r.nodes_done / r.nodes_total) * 100)}%` : '0%'
+
+/** Per-run chip (design row anatomy). lane_key and token totals have NO
+ *  read-model surface today (the door's lane ledger and per-run token rollup
+ *  are not exposed on /runs): the chips render ONLY when the run record
+ *  carries the field — an absent fact is never fabricated (the rail's '?'
+ *  law). The current-node label derives from the nodes map when present.
+ *  #230: rows are RUNNING-ONLY — no finished band, no ack × (terminal runs
+ *  leave the tray; there is nothing to dismiss). */
+export function RunTrayRunRow({ run, open, onToggleRow, onOpenPane }) {
+  const r = run || {}
+  const tone = NODE_TONE[runStatusOf(r)] || NODE_TONE.pending
+  const nodes = r.nodes || null
+  const nodeIds = nodes ? Object.keys(nodes) : []
+  const current = nodeIds.find(n => nodes[n]?.status === 'running')
+    || nodeIds.find(n => nodes[n]?.status === 'held') || null
+  const ti = r.tokens_in, to = r.tokens_out
+  const gate = r.status === 'held' && r.held_gate ? r.held_gate : null
+  // div (never <button>): GateActions carries SDK Buttons (F6 law).
+  // Key 'rr-<id>' rides the ROOT div (the RunTray call-site keys the
+  // component element 'rrc-<id>'): the acceptance spec locates the clickable
+  // thick row by key and calls its onClick directly.
+  return jsxs('div', {
+    style: {
+      display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.6875rem',
+      padding: '3px 8px', cursor: 'pointer', borderRadius: 6,
+      // Every row reads its own NODE_TONE border — the colour lives HERE,
+      // not on the slim collapsed row.
+      border: `1px solid ${tone.borderColor}`
+    },
+    onClick: e => { e?.stopPropagation?.(); onToggleRow?.(r.id) },
+    children: [
+      jsx('span', { style: { color: tone.color }, children: statusLabel(r.status) }, 'chip'),
+      jsx('span', { style: { fontWeight: 600 }, children: r.name || r.id || 'workflow' }, 'name'),
+      r.lane_key ? jsx('span', { style: { opacity: 0.7 }, children: r.lane_key }, 'lane') : null,
+      // Node dots are MiniGraph's visual language at row density; the x/y
+      // count rides the read model's counts, '?' when absent — never 0/N.
+      // The mini bar (key 'bar') beside it SPEAKS the ratio as its width.
+      jsx('span', { style: { fontVariantNumeric: 'tabular-nums', opacity: 0.8 }, children: pillProgress(r) }, 'xy'),
+      jsx('span', {
+        'aria-hidden': true,
+        style: { width: trayBarPct(r), minWidth: 24, height: 4, borderRadius: 2, background: tone.color, opacity: 0.6 }
+      }, 'bar'),
+      current ? jsx('span', { style: { opacity: 0.7 }, children: `→ ${current}` }, 'current') : null,
+      trayElapsed(r) ? jsx('span', { style: { opacity: 0.6 }, children: trayElapsed(r) }, 'elapsed') : null,
+      (ti != null || to != null)
+        ? jsx('span', { title: 'tokens in ▸ out', style: { opacity: 0.7 }, children: `${kfmt(ti ?? 0)}▸${kfmt(to ?? 0)}` }, 'tokens')
+        : null,
+      gate
+        ? jsx('div', {
+            onClick: e => e?.stopPropagation?.(),
+            children: jsx(GateActions, { runId: r.id, gate, owner: r.owner || {} }, 'gate')
+          }, 'gate')
+        : null,
+      jsx('button', {
+        type: 'button', title: 'Open in the Workflows pane',
+        style: { cursor: 'pointer', background: 'none', border: 'none', padding: '0 2px', fontSize: '0.6875rem' },
+        onClick: e => { e?.stopPropagation?.(); onOpenPane?.(r.id) },
+        children: 'open ↗'
+      }, 'open')
+    ]
+  }, `rr-${r.id}`)
+}
+
+/** Accordion body: the SHARED MiniGraph (#28 visual language, same
+ *  runQuery-fed pattern as RailPanel) for the one opened row only. Its own
+ *  component so the runQuery hook runs only while a row is open. */
+function TrayPanel({ runId }) {
+  const { data } = useQuery(runQuery(runId))
+  if (!data) return null
+  return jsx('div', {
+    style: {
+      maxWidth: '100%', maxHeight: 160, overflowY: 'auto',
+      border: '1px solid var(--ui-stroke-secondary)', borderRadius: 8,
+      background: 'var(--ui-sidebar-surface-background, var(--card))',
+      padding: '4px 6px'
+    },
+    children: jsx(MiniGraph, { detail: data })
+  }, 'tray-panel')
+}
+
+/** The tray family root — collapsed RunTrayRow + drop-down RunTrayRunRow
+ *  list (max ~40% viewport, internal scroll). #230 RUNNING-ONLY: the ledger
+ *  is trayRunModel (status ∉ TERMINAL), so zero live rows renders NOTHING
+ *  (terminal-only ledgers included — no recap linger, no ack ledger). Hooks
+ *  run UNCONDITIONALLY (the parent SessionStrip owns the hook order; this
+ *  component's hooks never sit behind a return). The collapse affordances
+ *  ride SessionStrip's wiring (Esc onKeyDown, click-away via trayRef); row
+ *  handlers stopPropagation so tray clicks never look like click-away. */
+export function RunTray({ runs, sid, trayOpen, trayRef, onToggleHeader, onToggleRow, onOpenPane, trayEnabled }) {
+  // sid blank = the mount owner pre-scoped under the focus-degraded law
+  // (SessionStrip): trust the given live set (running-only still applies).
+  const scoped = sid
+    ? trayScoping(runs, sid)
+    : (runs || []).filter(r => r && !TERMINAL.has(runStatusOf(r)))
+  const model = trayRunModel(scoped)
+  // est-z717: the settings gate rides as a PROP from the mount owner (the
+  // $trayGate atom value resolved by SessionStrip via useValue — F2 law,
+  // never an atom .get inside a component). Default OFF: only literal true
+  // shows the tray; the PillRail below is never gated.
+  const show = trayShouldShow(model, trayEnabled)
+  useTick(show)
+  if (!show) return null
+  // The accordion only ever renders while the TRAY itself is expanded — a
+  // stale openRun from a collapsed tray never leaks a MiniGraph into the
+  // collapsed state.
+  const openRun = trayOpen && trayOpen.expanded && trayOpen.openRun ? trayOpen.openRun : null
+  return jsxs('div', {
+    ref: trayRef,
+    style: { display: 'flex', flexDirection: 'column', gap: 2 },
+    children: [
+      jsx(RunTrayRow, {
+        runs: scoped,
+        expanded: !!(trayOpen && trayOpen.expanded),
+        onExpand: () => onToggleHeader?.()
+      }, 'row'),
+      trayOpen && trayOpen.expanded
+        ? jsx(ScrollArea, {
+            className: 'min-h-0',
+            children: jsxs('div', {
+              style: { display: 'flex', flexDirection: 'column', gap: 2, maxHeight: '40vh', overflowY: 'auto' },
+              children: model.rows.map(r => [
+                jsx(RunTrayRunRow, {
+                  run: r.run, open: openRun === r.id,
+                  onToggleRow, onOpenPane
+                }, `rrc-${r.id}`),
+                openRun === r.id ? jsx(TrayPanel, { runId: r.id }, `tp-${r.id}`) : null
+              ])
+            })
+          }, 'drop')
+        : null
+    ]
+  }, 'run-tray')
+}
+
 export function SessionStrip() {
   // KEY PAIRING (measured 2026-09-26 against this desktop): run.json.owner.session_id
   // carries the GATEWAY runtime id (`20260923_143041_27e8d2` — state.db sessions.id),
@@ -901,24 +1273,53 @@ export function SessionStrip() {
   const { data } = useQuery(listQuery())
   const foldOpen = useValue($stripFold)
   const railOpen = useValue($railOpen)
-  const owned = ownedRuns(data?.runs || [], runtimeSid || '', storedSid || '')
-  const pairKey = runtimeSid || storedSid || ''
+  const trayState = useValue($trayOpen)
+  const owned0 = ownedRuns(data?.runs || [], runtimeSid || '', storedSid || '')
+  // #230 focus-degradation law: the tray accumulates by the run's OWN
+  // ownership stamp. On packaged apps / SDK shapes where neither focused-chat
+  // atom answers (both read null/blank) an owned live run would render
+  // nothing forever — fall back to the first LIVE run's own
+  // owner.session_id so the pictured density still ships. Honest absence is
+  // preserved: a blank ledger, an all-terminal ledger, or blank-owner
+  // (cron) runs still derive nothing and the strip stays hidden.
+  const degradedSid = runtimeSid || storedSid ? ''
+    : ((data?.runs || []).find(r => r && !TERMINAL.has(runStatusOf(r)) && r?.owner?.session_id)
+        ?.owner?.session_id || '')
+  const owned = (owned0.length || !degradedSid)
+    ? owned0
+    : ownedRuns(data?.runs || [], degradedSid, '')
+  const pairKey = runtimeSid || storedSid || degradedSid
   const expanded = railOpen && railOpen.sid === pairKey ? railOpen.runId : null
+  const trayExpanded = !!(trayState && trayState.expanded)
   const railRef = useRef(null)
+  const trayRef = useRef(null)
+  // est-z717 settings gate (in-memory atom, hook order unconditional): null =
+  // unanswered => HIDDEN (default OFF); register()'s bootstrap fills it from
+  // GET /settings. PillRail stays mounted regardless (always-on surface).
+  const trayGate = useValue($trayGate)
   // Hooks run UNCONDITIONALLY (fixed order across renders); the bodies guard
   // themselves. Switching focused chat collapses the expanded panel.
   useEffect(() => { $railOpen.set(null) }, [pairKey])
-  // Click-away collapse (item 4), armed only while a panel is open.
-  // window-level listener (no DOM-node listeners — SDK-only law); clicks that
-  // land inside the rail are excluded by the railRef.contains check.
+  // Switching chat likewise collapses the tray to hidden state (in-memory
+  // atom law: a session switch never resurrects an expanded tray).
+  useEffect(() => { $trayOpen.set(null) }, [pairKey])
+  // Click-away collapse (item 4 + #22 tray), armed while EITHER the rail
+  // panel or the tray is expanded. ONE window-level listener (the plugin's
+  // listener budget is 1 — test_tab_polish_48); clicks landing inside the
+  // open surface are excluded by its contains check (the tray's own row
+  // handlers additionally stopPropagation, so tray clicks never look like
+  // click-away).
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded && !trayExpanded) return
     const onDocClick = e => {
-      if (railRef.current && !railRef.current.contains(e.target)) $railOpen.set(null)
+      if (expanded && railRef.current && railRef.current.contains(e.target)) return
+      if (trayExpanded && trayRef.current && trayRef.current.contains(e.target)) return
+      if (expanded) $railOpen.set(null)
+      if (trayExpanded) $trayOpen.set(null)
     }
     window.addEventListener('click', onDocClick)
     return () => window.removeEventListener('click', onDocClick)
-  }, [expanded])
+  }, [expanded, trayExpanded])
   if (!pairKey || !owned.length) return null
   const { active, terminalFold, terminalTotal } = splitRuns(owned)
   const openRun = id => { $selRun.set(id); host.navigate('/workflows') }
@@ -930,8 +1331,9 @@ export function SessionStrip() {
     // forbids global keydown listeners (test_fanout_expand). The pill label is
     // tabIndex:0 (F7), so a pill click/Tab moves focus into the strip and
     // Escape lands on this handler. Nothing else intercepts keys; ⌘K stays
-    // app-owned.
-    onKeyDown: e => { if (e.key === 'Escape' && expanded) $railOpen.set(null) },
+    // app-owned. The tray collapses FIRST (Esc collapses to collapsed-row
+    // state); with the tray already collapsed, Esc collapses the rail panel.
+    onKeyDown: e => { if (e.key === 'Escape') { if (trayExpanded) $trayOpen.set(null); else if (expanded) $railOpen.set(null) } },
     children: [
       // Expanded panel sits ABOVE the pills: the strip stacks bottom-anchored
       // (composer.underside grows upward over the thread).
@@ -940,8 +1342,27 @@ export function SessionStrip() {
       // railModel filters TERMINAL and caps at 3 itself, so the +N overflow
       // stays visible (passing splitRuns' capped `active` pinned overflow to 0
       // and silently lost the affordance — review #28 F1).
+      // #230 running-only tray: the collapsed RunTrayRow is the slim
+      // '[chevron] N running workflows' row stacking as the SIBLING tray row
+      // above the chat window (same composer registration, native tray family
+      // — task-list/subagents/queued-messages). The tray takes over the
+      // live-run glance + gate-release surface from PillRail, so the rail
+      // renders below it WITHOUT duplicating GateActions (suppressGates — one
+      // release surface per held run; test_run_tray locks exactly one
+      // GateActions in the strip). Handlers close over this render's
+      // trayState (F2 law: no atom .get in handlers, open state rides props).
+      jsx(RunTray, {
+        runs: owned, sid: pairKey, trayOpen: trayState, trayRef, trayEnabled: trayGate,
+        onToggleHeader: () => $trayOpen.set(trayState && trayState.expanded ? null : toggleTray(trayState, null)),
+        onToggleRow: id => $trayOpen.set(toggleTray(trayState, id)),
+        onOpenPane: openRun
+      }, 'run-tray'),
       jsx(PillRail, {
+        // The rail yields its gate controls ONLY while the tray actually
+        // renders them (enabled + expanded with live rows); disabled,
+        // unanswered settings, or a collapsed tray keep the rail release.
         runs: owned, sid: pairKey, railOpen,
+        suppressGates: trayExpanded && trayShouldShow(trayRunModel(trayScoping(owned, pairKey)), trayGate),
         onPill: id => $railOpen.set(toggleRail(railOpen, pairKey, id)),
       }),
       terminalTotal
@@ -949,7 +1370,10 @@ export function SessionStrip() {
             type: 'button', className: 'text-[0.6875rem] text-(--ui-text-tertiary)',
             style: { cursor: 'pointer', background: 'none', border: 'none', padding: 0, textAlign: 'left' },
             onClick: () => $stripFold.set(folded ? pairKey : null),
-            children: [`▸ ${terminalTotal} finished`]
+            // WF-05 (QA 2026-10-27): the chevron answers the CURRENT state —
+            // ▸ points right while collapsed, ▾ opens downward when expanded
+            // (the fold's own disclosure vocabulary, one glyph one truth).
+            children: [`${folded ? '▸' : '▾'} ${terminalTotal} finished`]
           })
         : null,
       !folded
@@ -960,7 +1384,20 @@ export function SessionStrip() {
               style: { cursor: 'pointer', background: 'none', border: 'none', padding: 0 },
               onClick: () => openRun(r.id),
               children: `${r.name || r.id} · ${statusLabel(r.status)} · ${ago(r.updated) || 'unknown'}`
-            }, r.id))
+            }, r.id)),
+            // WF-04 (QA 2026-10-27): the fold lists at most 5 but the label
+            // counts ALL N — the hidden rows keep an explicit affordance to
+            // the pane that lists every one (label N, rendered K used to
+            // silently lose N−K finished runs).
+            terminalTotal > terminalFold.length
+              ? jsx('button', {
+                  type: 'button', className: 'text-left text-[0.6875rem] text-(--ui-text-tertiary)',
+                  title: 'Open the Workflows pane — every finished run is listed there',
+                  style: { cursor: 'pointer', background: 'none', border: 'none', padding: 0 },
+                  onClick: () => host.navigate('/workflows'),
+                  children: `+${terminalTotal - terminalFold.length} more`
+                }, 'fold-more')
+              : null
           )
         : null
     ]
@@ -1095,7 +1532,10 @@ export function NodeCard({ runId, def, st, gate, selected, owner, events, hovere
                 'mt-1 flex items-center gap-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
                 jsx('span', { children: statusLabel(status) }),
                 fc ? jsx('span', { children: fanSummary(fc) }) : null,
-                dur ? jsx('span', { children: dur }) : null,
+                // WF-06 (QA 2026-10-27): the card's elapsed is the NODE clock
+                // (record ms — the child wall this node billed), a different
+                // source than the header's run clock; the word labels it.
+                dur ? jsx('span', { children: `node ${dur}` }) : null,
                 def.optional ? jsx('span', { children: 'opt' }) : null,
                 // F2 desktop (RATIFY): the delegation badge — ONLY when the node
                 // def carries `profile` (read model passes def through verbatim;
@@ -1131,6 +1571,11 @@ const EDGE_TONE = {
   skipped: 'var(--ui-text-tertiary)'
 }
 
+// #133: wall-meter word tones (Vitals). Declared here, right after EDGE_TONE:
+// a top-level const here reads EDGE_TONE at module-eval time, so it must not
+// sit above the palette (TDZ). The words are the run_state meter vocab verbatim.
+const METER_TONE = { 'on-track': EDGE_TONE.running, 'near-wall': EDGE_TONE.held, 'over-p95': EDGE_TONE.failed }
+
 // ONE tone vocabulary for every reader (issue #48): the rail pill (pillModel),
 // the canvas NodeCard, the mini-DAG pill, the edges and the timeline all read
 // this table — colours come from EDGE_TONE (the single literal palette), so a
@@ -1161,6 +1606,9 @@ export const NODE_TONE = {
 // The ask vocabulary says 'waiting', the read model says 'pending' — the SAME
 // entry, not a twin: one table, one voice.
 NODE_TONE.waiting = NODE_TONE.pending
+// WF-02 (QA 2026-10-27): cancelled is never a failure — the SAME neutral, calm
+// entry as skipped (stop != failure, the #7 law; a resume re-drives it).
+NODE_TONE.cancelled = NODE_TONE.skipped
 
 // Hoisted animation CSS (#48): ONE <style>, injected once by PolishStyles,
 // deduped by React 19 via the stable href — BUMP THE NUMBER per CSS edit.
@@ -1231,9 +1679,10 @@ function edgeTone(upState, downState) {
 }
 
 // #48: the timeline reads the ONE tone table's colour column too — the same
-// decision tree as before, no parallel palette.
+// decision tree as before, no parallel palette. WF-02 (QA 2026-10-27):
+// cancelled reads neutral like skipped/stopped, never the failed red.
 const timelineTone = sp => sp.status === 'pending' ? NODE_TONE.pending.color
-  : sp.status === 'skipped' || sp.status === 'stopped' ? NODE_TONE.skipped.color
+  : sp.status === 'skipped' || sp.status === 'stopped' || sp.status === 'cancelled' ? NODE_TONE.skipped.color
   : sp.kind === 'gate' && sp.status === 'held' ? NODE_TONE.held.color
     : sp.status === 'failed' ? NODE_TONE.failed.color
       : sp.status === 'done' ? NODE_TONE.done.color
@@ -1739,14 +2188,17 @@ function Timeline({ detail }) {
   // a row selects the node so the wide Report panel shows it.
   return box(
     'flex w-60 shrink-0 flex-col gap-1.5 overflow-y-auto border-l border-(--ui-stroke-secondary) px-3 py-2',
+    // WF-06 (QA 2026-10-27): the axis total is the RUN wall measured on the
+    // event spine — named so it can't be confused with the header's clock.
     box('mb-1 flex items-center justify-between text-[0.6875rem] text-(--ui-text-tertiary)',
-      jsx('span', { children: 'timeline' }), jsx('span', { children: fmtDur(total) })),
+      jsx('span', { children: 'timeline' }), jsx('span', { title: 'run wall span (first → last event)', children: fmtDur(total) })),
     ...rows.map(sp => {
       const end = sp.end || (live ? Date.now() : last)
       const tone = timelineTone(sp)
       const active = sel && sel.runId === detail.id && sel.nodeId === sp.id
       // read-once: the node row can vanish between the guard and the Vitals deref
-      const nmetrics = (detail.nodes || {})[sp.id]?.metrics || null
+      const nstate = (detail.nodes || {})[sp.id] || null
+      const nmetrics = nstate?.metrics || null
       return jsxs('button', {
         type: 'button',
         onClick: () => { $selNode.set(active ? null : { runId: detail.id, nodeId: sp.id }); $fanItem.set(null); $fanExpanded.set(null) },
@@ -1755,7 +2207,9 @@ function Timeline({ detail }) {
         children: [
           box('flex items-center justify-between gap-2',
             box('min-w-0 flex-1 truncate text-(--ui-text-secondary)', sp.id),
-            box('shrink-0 text-(--ui-text-tertiary)', fmtDur(end - sp.start))),
+            // WF-06: each row duration is the CHILD wall for that node
+            // (node.started → node.finished on the event spine).
+            jsx('span', { className: 'shrink-0 text-(--ui-text-tertiary)', title: 'child wall (node.started → node.finished)', children: fmtDur(end - sp.start) })),
           jsx('div', {
             className: 'relative h-2 w-full rounded-sm bg-(--ui-stroke-secondary)/40',
             children: jsx('div', {
@@ -1764,7 +2218,7 @@ function Timeline({ detail }) {
             })
           }),
           nmetrics
-            ? jsx('div', { style: { display: 'flex', justifyContent: 'flex-end' }, children: jsx(Vitals, { m: nmetrics, live: !sp.end && live, size: 'xs' }) })
+            ? jsx('div', { style: { display: 'flex', justifyContent: 'flex-end' }, children: jsx(Vitals, { m: nmetrics, live: !sp.end && live, size: 'xs', wall: !sp.end && live ? nstate?.wall : null }) })
             : null
         ]
       }, sp.id)
@@ -1783,12 +2237,21 @@ const UNKNOWN = 'unknown'
 const TAIL_BYTES = 16384          // the contract's chosen constant, mirrored
 const defaultTabFor = st =>
   st === 'running' || st === 'failed' || st === 'partial' ? 'Log' : st === 'done' ? 'Output' : 'Prompt'
+
+// WF-03 (QA 2026-10-27): the backend node_facts substitutes the literal string
+// 'unknown' for every absent fact. unk stays the sentinel producer (the O2
+// contract — absent reads `unknown`, never a fabricated 0); the NodePanel
+// section renderers below HIDE sentinel-valued sections instead of printing
+// the raw word (factKnown guards them). The tab bodies keep their ratified
+// honest sentences ('prompt: unknown (not persisted)' etc.).
 const unk = v => v == null || v === '' ? UNKNOWN : v
 const factText = v => typeof v === 'string' ? v : v == null ? UNKNOWN : (() => { try { return JSON.stringify(v, null, 2) } catch { return String(v) } })()
-const logBase = p => { const s = String(p ?? ''); const i = s.lastIndexOf('/'); return i < 0 ? (s || UNKNOWN) : s.slice(i + 1) }
+// WF-03 (QA 2026-10-27): logBase/attemptNo are DISPLAY helpers of the panel
+// log-head — an absent path/attempt reads an em-dash, never the raw word.
+const logBase = p => { const s = String(p ?? ''); const i = s.lastIndexOf('/'); return i < 0 ? (s || '—') : s.slice(i + 1) || '—' }
 const attemptNo = facts => {
   const m = /(\d+)\.log$/.exec(String(facts?.log_path ?? ''))
-  return m ? m[1] : UNKNOWN
+  return m ? m[1] : '—'
 }
 
 function useNodeLogTail(runId, nodeId, facts, tab, open, live) {
@@ -1806,6 +2269,13 @@ function useNodeLogTail(runId, nodeId, facts, tab, open, live) {
 }
 
 function NodePanel({ detail }) {
+  // WF-03 (QA 2026-10-27): the backend node_facts substitutes the literal
+  // string 'unknown' for absent facts. On screen that raw sentinel reads like
+  // a broken sensor, so every FACTS section HIDES itself when its fact is not
+  // known (unk stays the sentinel producer for the data layer; the tab bodies
+  // keep their ratified honest sentences). Declared inside the panel so the
+  // existing source-grab harnesses keep the whole truth local.
+  const factKnown = v => v != null && v !== '' && v !== UNKNOWN
   const sel = useValue($selNode)
   const fanItem = useValue($fanItem)
   const open = !!sel && sel.runId === detail.id && !!detail.graph
@@ -1823,10 +2293,16 @@ function NodePanel({ detail }) {
   // are absent, the fanItems row is the only truth and every other fact reads
   // `unknown`. Node-level facts arrive merged flat onto nodes[id] (the _view
   // merge of wfcommon.node_facts), so `shown` IS the record read.
-  const ITEM_FACTS = ['status', 'error_class', 'error', 'attempts', 'attempts_log', 'final', 'harvest', 'output', 'ms', 'started', 'log_path', 'prompt_path', 'efp', 'skey', 'steer']
+  // est-zmpx8: 'refusal' rides the closed set (wfcommon.FACT_KEYS carries it since
+  // #584), so the synthesized fan-item shape stays key-complete; an item whose row
+  // carries no stamp keeps a null there — the section below hides it, never prints
+  // a fabricated one.
+  const ITEM_FACTS = ['status', 'error_class', 'refusal', 'error', 'attempts', 'attempts_log', 'final', 'harvest', 'output', 'ms', 'started', 'log_path', 'prompt_path', 'efp', 'skey', 'steer']
   const facts = picked
     ? (shown.item_records && shown.item_records[picked.index])
       || Object.fromEntries(ITEM_FACTS.map(k => k === 'status' ? [k, picked.status]
+        : k === 'error_class' ? [k, picked.errorClass ?? null]
+        : k === 'refusal' ? [k, picked.refusal ?? null]
         : k === 'error' ? [k, picked.error ?? null]
         : k === 'output' ? [k, picked.output ?? null]
         : k === 'ms' ? [k, picked.ms ?? null] : [k, null]))
@@ -1847,7 +2323,9 @@ function NodePanel({ detail }) {
         className: 'overflow-auto whitespace-pre-wrap break-words rounded border border-(--ui-stroke-secondary) p-2 text-[0.6875rem]',
         children: text }))
     : null
-  // FACTS (left column). Absent facts read `unknown`; structured facts print as JSON.
+  // FACTS (left column). WF-03 (QA 2026-10-27): a sentinel-valued or absent fact HIDES
+  // its section instead of printing the raw word 'unknown' — hidden is honest absence,
+  // never a fabricated value; structured facts print as JSON.
   const chip = (text, onClick, on) => jsx('button', {
     type: 'button', onClick,
     style: {
@@ -1860,33 +2338,52 @@ function NodePanel({ detail }) {
   const inputChips = box('flex flex-wrap gap-1',
     ...(def.after || []).map(a => chip(a, () => { $selNode.set({ runId: detail.id, nodeId: a }); $fanItem.set(null) }, false)),
     ...(Array.isArray(def.inputs) ? def.inputs : []).map(s => chip(String(s), undefined, false)))
+  const budgetBits = [['max_turns', def.max_turns], ['timeout', def.timeout], ['run_budget', def.run_budget], ['shape', def.shape]]
+    .filter(([, v]) => factKnown(v))
+  // WF-02: a cancelled class keeps the error text but loses the red tone.
+  const cancelledClass = (facts && facts.error_class) === 'cancelled'
+    || (picked && picked.errorClass) === 'cancelled'
+    || shown.error_class === 'cancelled'
+  const steerTrip = facts?.steer
+    ? `queued ${unk(facts.steer.queued)} · baked ${unk(facts.steer.baked)} · consumed ${unk(facts.steer.consumed)}`
+    : null
   const left = box(
     'flex min-w-0 flex-col gap-3',
-    def.type === 'gate'
-      ? sect('question', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)', unk(def.question)))
-      : sect('goal', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)', unk(def.goal))),
+    factKnown(def.question) || factKnown(def.goal)
+      ? sect(def.type === 'gate' ? 'question' : 'goal',
+          box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)', unk(def.type === 'gate' ? def.question : def.goal)))
+      : null,
     def.context ? sect('context', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)', def.context)) : null,
     sect('inputs', inputChips),
-    sect('schema required', box('flex flex-wrap gap-1',
-      ...(def.schema?.required?.length ? def.schema.required.map(k => chip(String(k), undefined, false))
-        : [box('text-xs text-(--ui-text-tertiary)', UNKNOWN)]))),
-    sect('budgets', box('flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary)',
-      jsx('span', { children: `max_turns: ${unk(def.max_turns)}` }),
-      jsx('span', { children: `timeout: ${unk(def.timeout)}` }),
-      jsx('span', { children: `run_budget: ${unk(def.run_budget)}` }),
-      jsx('span', { children: `shape: ${unk(def.shape)}` }))),
-    sect('blocked_by', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)',
-      Array.isArray(shown.blocked_by) && shown.blocked_by.length ? shown.blocked_by.join(', ') : UNKNOWN)),
+    def.schema?.required?.length
+      ? sect('schema required', box('flex flex-wrap gap-1', ...def.schema.required.map(k => chip(String(k), undefined, false))))
+      : null,
+    budgetBits.length
+      ? sect('budgets', box('flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary)',
+          ...budgetBits.map(([k, v]) => jsx('span', { children: `${k}: ${unk(v)}` }))))
+      : null,
+    Array.isArray(shown.blocked_by) && shown.blocked_by.length
+      ? sect('blocked_by', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)', shown.blocked_by.join(', ')))
+      : null,
     shown.parked ? sect('parked', box('text-xs text-(--ui-text-secondary)', factText(shown.parked))) : null,
-    pre('error', facts && facts.error !== UNKNOWN ? facts.error : shown.error, EDGE_TONE.failed),
-    sect('attempts_log', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)',
-      Array.isArray(facts?.attempts_log) && facts.attempts_log.length
-        ? facts.attempts_log.map(a => `#${a.attempt} ${unk(a.error_class)}`).join(' · ') : UNKNOWN)),
-    sect('efp', box('text-xs text-(--ui-text-secondary)',
-      `${unk(facts?.efp)}${shown.stale_of_amend ? ' · stale of amend' : ''}`)),
-    sect('steer', box('text-xs text-(--ui-text-secondary)',
-      facts?.steer ? `queued ${facts.steer.queued ?? UNKNOWN} · baked ${facts.steer.baked ?? UNKNOWN} · consumed ${facts.steer.consumed ?? UNKNOWN}` : UNKNOWN)),
-    sect('skey', box('text-xs select-text text-(--ui-text-tertiary)', unk(facts?.skey))),
+    pre('error', facts && facts.error !== UNKNOWN ? facts.error : shown.error !== UNKNOWN ? shown.error : null, cancelledClass ? undefined : EDGE_TONE.failed),
+    // est-zmpx8 (the #584 residual): the refusal stamp — the machine-readable class
+    // of a REFUSAL (wf.py `_window_spent_record` → wfcommon.FACT_KEYS `refusal`) —
+    // renders verbatim beside the death facts. Same WF-03 discipline as error_class
+    // above: a sentinel/absent stamp hides its section, so rule 8 holds both ways —
+    // honest absence on screen, never a fabricated value.
+    factKnown(facts?.refusal ?? shown.refusal)
+      ? sect('refusal', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)',
+          unk(facts?.refusal ?? shown.refusal)))
+      : null,
+    Array.isArray(facts?.attempts_log) && facts.attempts_log.length
+      ? sect('attempts_log', box('text-xs whitespace-pre-wrap text-(--ui-text-secondary)',
+          facts.attempts_log.map(a => `#${a.attempt} ${unk(a.error_class)}`).join(' · ')))
+      : null,
+    factKnown(facts?.efp) ? sect('efp', box('text-xs text-(--ui-text-secondary)',
+      `${facts.efp}${shown.stale_of_amend ? ' · stale of amend' : ''}`)) : null,
+    steerTrip ? sect('steer', box('text-xs text-(--ui-text-secondary)', steerTrip)) : null,
+    factKnown(facts?.skey) ? sect('skey', box('text-xs select-text text-(--ui-text-tertiary)', facts.skey)) : null,
     fc
       ? box('flex flex-col gap-2',
           label(`items · ${fanSummary(fc)}`),
@@ -1947,11 +2444,18 @@ function NodePanel({ detail }) {
       // F2 desktop (RATIFY): delegation badge — ONLY when the def carries
       // `profile`; a no-team def yields null and the panel is byte-identical.
       def.profile ? jsx('span', { title: `as @${def.profile}`, className: 'text-[0.6875rem] text-(--ui-text-tertiary)', children: `as @${def.profile}` }) : null,
-      jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-tertiary)', children: unk(facts?.error_class ?? shown.error_class) }),
+      // WF-03: the header never prints a raw sentinel — an unknown error_class
+      // hides its chip; the model·provider·reasoning line renders only the
+      // parts the record actually carries.
+      factKnown(facts?.error_class ?? shown.error_class)
+        ? jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-tertiary)', children: unk(facts?.error_class ?? shown.error_class) })
+        : null,
       (facts?.attempts ?? shown.attempts) > 1 ? jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-tertiary)', children: `↻${facts.attempts}` }) : null,
-      box('min-w-0 truncate text-[0.6875rem] text-(--ui-text-tertiary)',
-        `${unk(def.model)} · ${unk(def.provider)} · ${unk(def.reasoning)}`),
-      shown.metrics ? jsx(Vitals, { m: shown.metrics, live, cost: true }) : null,
+      factKnown(def.model) || factKnown(def.provider) || factKnown(def.reasoning)
+        ? box('min-w-0 truncate text-[0.6875rem] text-(--ui-text-tertiary)',
+            [def.model, def.provider, def.reasoning].filter(factKnown).join(' · '))
+        : null,
+      shown.metrics ? jsx(Vitals, { m: shown.metrics, live, cost: true, wall: live ? shown.wall : null }) : null,
       jsx(Button, { size: 'xs', variant: 'ghost', 'aria-label': 'Close', onClick: () => { $selNode.set(null); $fanItem.set(null) }, children: '×' })
     ),
     jsx('div', {
@@ -2003,7 +2507,10 @@ export function WorkflowsPage() {
                   // honest 'unknown' included (deep review #156 A2 — one law,
                   // both surfaces; never a fabricated name).
                   jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', title: 'launched by this agent', children: `@${originLabel(d.owner, d.owner_profile)}` }),
-                  hdr.elapsed ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: hdr.elapsedLabel }) : null,
+                  // WF-06 (QA 2026-10-27): the record header shows the RUN
+                  // wall — the word keeps it distinct from the node cards'
+                  // node clocks and the timeline's child spans.
+                  hdr.elapsed ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: `run ${hdr.elapsedLabel}` }) : null,
                   d.metrics ? jsx(Vitals, { m: d.metrics, live: false, size: 'xs', cost: true }) : null,
                   d.metrics?.live ? jsx('span', { className: 'text-(--ui-text-tertiary)', style: { fontSize: 10 }, children: `${d.metrics?.live} live` }) : null,
                   d.held_gate ? jsx(Badge, { variant: 'outline', children: 'gate held' }) : null
@@ -2085,10 +2592,14 @@ export function WorkflowsPane() {
   // it's a fact about the row, not an ownership gate.
   const { running, rest } = paneModel(runs, null)
   // The census counts are the backend's full-census numbers (wfcommon
-  // run_summary); absent means unknown, never a fabricated zero.
+  // run_summary); absent means unknown, never a fabricated zero. WF-07
+  // (QA 2026-10-27): run_summary answers the full-census count at the TOP
+  // LEVEL ({total, counts}) — counts carries no total key, so the census
+  // reads data.total first (counts.total stays the fallback for legacy
+  // payloads; 'runs ?' on a payload that answers a number was the bug).
   const counts = data?.counts
   const census = counts
-    ? `runs ${counts.total ?? '?'} · running ${counts.running ?? 0} · held ${counts.held ?? 0} · failed ${counts.failed ?? 0}`
+    ? `runs ${data?.total ?? counts.total ?? '?'} · running ${counts.running ?? 0} · held ${counts.held ?? 0} · failed ${counts.failed ?? 0}`
     : 'runs unknown'
   // Agent-first pane law (owner, est-wk7l round): THE REST renders EVERY row —
   // no pane-level cap, no fold. paneModel is uncapped and the consumer must
@@ -2125,6 +2636,13 @@ export default {
   register(ctx) {
     ctxRest = (path, opts) => ctx.rest(path, opts)   // keep the api() error wrapper — never reassign api
 
+    // est-z717 tray settings gate: ONE bootstrap read of the door's owner
+    // settings (GET /settings -> {tray}) resolved into $trayGate. FAIL-CLOSED
+    // by construction: until the answer arrives $trayGate stays null and the
+    // tray hides; a backend error leaves it null (hidden) forever — the
+    // default-OFF law (the native tray SDK area #133724 is unlanded).
+    api('/settings').then(s => { $trayGate.set(s?.tray === true) }).catch(() => {})
+
     ctx.register({
       id: 'directive',
       area: TRANSCRIPT_DIRECTIVE_AREA,
@@ -2154,13 +2672,20 @@ export default {
       render: () => jsx(WorkflowsPane, {})
     })
 
-    // Feature-detected composer slot (issue #22 item 3): `composer.underside` is
-    // the floating strip BELOW the composer dock on core >= v2026.7.30 —
-    // bottom-anchored, grows upward over the thread, and it is NOT inside the
-    // composer-fade div, so it does not dim when the thread scrolls up
-    // (composer/index.tsx:1558-1560). COMPOSER_AREAS is an SDK const map, so the
-    // key EXISTS ONLY on cores that mount the area — missing key ⇒ undefined ⇒
-    // ?? falls back to today's composer.top on older shells. One mount, never both.
-    ctx.register({ id: 'session-strip', area: COMPOSER_AREAS.underside ?? COMPOSER_AREAS.top, render: () => jsx(SessionStrip, {}) })
+    // Feature-detected composer slot (#22 item 3, chain head added by #230 item 0):
+    // sessionStripArea = COMPOSER_AREAS.tray ?? COMPOSER_AREAS.underside ??
+    // COMPOSER_AREAS.top. `composer.tray` is the tray accumulation slot (subagents
+    // / background scripts / task lists) — NOT SDK-exposed as of
+    // hermes-agent@8b66a51036 (the native bar is the internal ComposerStatusStack,
+    // composer/index.tsx:1344), so the ask is filed upstream and the head is
+    // inert until core adds the key; the day it lands the strip rides the real
+    // tray with zero plugin change. `composer.underside` is the floating strip
+    // BELOW the composer dock on core >= v2026.7.30 — bottom-anchored, grows
+    // upward over the thread, and it is NOT inside the composer-fade div, so it
+    // does not dim when the thread scrolls up (composer/index.tsx:1558-1560).
+    // COMPOSER_AREAS is an SDK const map, so a key EXISTS ONLY on cores that
+    // mount the area — missing key ⇒ undefined ⇒ ?? falls back to today's
+    // composer.top on older shells. One mount, never both.
+    ctx.register({ id: 'session-strip', area: sessionStripArea(COMPOSER_AREAS), render: () => jsx(SessionStrip, {}) })
   }
 }

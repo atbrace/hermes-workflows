@@ -79,10 +79,57 @@ INCLUDE_FILES = (
     "README.md",
     "SKILL.md",
     "__init__.py",
+    "card_ledger.py",  # imported by __init__.py at bind time (hook-led card ledger)
+    "gate_index.py",  # PR-3: imported by __init__.py at bind time
+    "docs/admission-gates.md",
+    "orphan_watch.py",  # PR-4: imported by __init__.py at bind time — a packaged plugin without it dies at import
     "card_enforcement.py",  # #157: imported by __init__.py at bind time — a packaged plugin without it dies at import
+    # P1 (PR #432): wf.py spec-loads this by file path (_outbound_bridge) — absent from the ZIP, a
+    # packaged install silently loses the outbound bridge (bridge resolves None) and the shipped
+    # tests/test_hooks_outbound_bridge.py (tests glob) crashes at the unpacked root: the exact
+    # est-4vnq finding-4 shape. Stdlib-only, so the ZIP side stays honest.
+    "hooks_outbound.py",
+    # P3 (est-w86l0 lane, #430): __init__.py spec-loads this by file path when the
+    # `subagent_accounting` token is allowed — absent from the ZIP the module simply
+    # fails to load and the lane dies silently (est-4vnq finding-4 pack law).
+    "subagent_accounting.py",
+    # P5 (est-431 lane, #431): __init__.py spec-loads this by file path when the
+    # `approval` token is allowed — absent from the ZIP the armed P5 bridge is a
+    # permanent silent no-op (est-4vnq finding-4, the sibling shape verbatim).
+    "approval_bridge.py",
+    # #566 debt (est-hf4wq): wf.py imports this at runtime (_park_watch_mod —
+    # guarded import, degrades to None by design when absent) — absent from the
+    # ZIP, the parked-hold watchdog #566 just shipped is a SILENT NO-OP on every
+    # packaged install (the est-4vnq finding-4 pack law). Stdlib-only.
+    "park_watch.py",
+    # #571 (est-ip975 PR-2/3): the shipped tests/test_tick_bridge.py imports this
+    # at top level (flat root layout) — absent from the ZIP the watchdog-tick
+    # lifecycle module is a ModuleNotFoundError at the unpacked root, the #105
+    # dead-package shape (est-4vnq finding-4 pack law; the sibling of
+    # park_watch.py shipped by 8763ea1). Stdlib-only.
+    "cron_bridge.py",
+    "docs/native-hooks.md",  # the p3/p5 switch board: an unshipped doc is invisible to ZIP installs
     "dashboard/manifest.json",
+    "dashboard/index.js",  # hidden API plugin still needs the web host's script/registration contract
     "dashboard/plugin_api.py",
     "desktop/plugin.js",
+    # est-k75i: the tool-result-card proposal doc ships with the package (the
+    # mandatory new-file pack-surface gate). Pinned by tests/test_packaging.py's
+    # ZIP-membership assertion — an unshipped doc is invisible to every install.
+    "docs/card-toolresult-hook.md",
+    # #51 (est-6cym): the PACKAGED curated starter set ships with the plugin —
+    # the door's `_packaged_general_root()` resolves next to __init__.py, and
+    # tests/test_door_general_51.py (shipped via the tests glob) asserts the
+    # set loads from that address. Unshipped = every fresh install loses the
+    # cold-shelf `from: general/<name>` fallback AND the suite dies (the exact
+    # est-4vnq finding-4 shape). Explicit listing, per pack.py's no-wholesale law.
+    "library/general/README.md",
+    "library/general/pr-review-light.json",
+    "library/general/issue-triage.json",
+    "library/general/test-first-feature-slice.json",
+    "library/general/fan-out-audit-census.json",
+    "library/general/report-and-verify.json",
+    "docs/orphan-held.md",
     "examples/basics/approve-publish.json",
     "examples/review/blind-council.workflow.json",
     "examples/basics/branch-on-verdict.json",
@@ -103,20 +150,135 @@ INCLUDE_FILES = (
     "examples/basics/smoke.json",
     "plugin.yaml",
     "CHANGELOG.md",
+    "scripts/graph_diagram.py",
+    "scripts/diagram_readme.py",
     "scripts/pack.py",
+    "scripts/pr_tag_audit.py",  # est-4vnq: tests/test_pr_tag_audit.py executes it; the shipped suite must not die on a missing helper
+    # est-zee7e: tests/test_pin_delta_check_133387.py (shipped via the
+    # tests/test_*.py glob) exec-modules this at import from the package root —
+    # the est-4vnq finding-4 shape; the gate script ships beside its test.
+    "scripts/pin_delta_check.py",
+    # est-h0huv: tests/test_wofify.py (shipped via the tests/test_*.py glob)
+    # subprocess-executes this CLI end to end — the est-4vnq shape; the tool
+    # ships beside its test.
+    "scripts/wofify.py",
+    # est-5p7x (PR #165 CI blocker, run 37440782151): tests/test_diagram_law.py
+    # (shipped via the tests/test_*.py glob) subprocess-executes BOTH generators
+    # from the package root — the exact est-4vnq finding-4 shape. The merge ref
+    # gained these files from main (#232/#236 diagram law) while pack.py never
+    # declared them, so the no-silent-middle contract REDed there while the head
+    # tree (predating the files) stayed vacuously green. Stdlib-only, like the
+    # graph helpers above, so the ZIP side stays honest.
+    "scripts/diagram_readme.py",
+    "scripts/graph_diagram.py",
+    # est-2ek.1.866 (PR #323 CI red, run 37842073930 admission introduced=1):
+    # tests/test_self_review_422_1866.py exec-modules this at import
+    # (spec_from_file_location) — the exact est-4vnq finding-4 shape. Stdlib-only,
+    # so the ZIP side stays honest.
+    "scripts/drift_check.py",  # #125: on-demand offline CLI and its shipped acceptance test
+    "scripts/argv_residency.py",
+    "scripts/pr_formal_review.py",
+    # est-clrlx (PR #547): shipped test tests/test_release_merge_gate_clrlx.py
+    # exec-modules the gate script — the est-4vnq finding-4 shape; the tool ships
+    # beside its test.
+    "scripts/release_merge_gate.py",
     "scripts/suite.py",
     "tests/fake",
+    # B1 and its gitpin snapshot this fixture before generating the child copy.
+    "tests/fake-b1",
     "tests/fake_hermes.py",
     "tests/wf_test_isolation.py",
+    "tests/wf_test_markers.py",  # est-jue3: shared parseable-content marker waits, imported by the shipped tests (est-4vnq finding-4 shape: an unshipped helper kills the suite)
+    # est-fi21a (#538 peer miss): the est-z2heo autouse sandbox floor ships.
+    # tests/test_*.py glob never matches it, so the ZIP carried a pytest-capable
+    # suite WITHOUT the env floor: `pytest` at an unpacked root pinned no sandbox,
+    # script-style modules pinned env at import, and the bare proof test refuses
+    # that Class C shape for exactly the operator-state-write incident it names.
+    # Shipped, the conftest binds the floor at import and turns every merge-gate
+    # script into a floored subprocess item — the suite is safe at an unpacked
+    # root. ZIP membership is pinned by tests/test_packaging.py.
+    "tests/conftest.py",
+    "tests/fake_runner.py",  # shared fake-runner helper for door-scan fixtures — same unshipped-helper shape as wf_test_markers above
     "tests/fixtures/mac-source.txt",
+    "tests/fixtures/seat_acquire_driver.py",   # est-g2xx: seat-semaphore driver
+    # est-2ek.1.762: the spawn-isolation law's shared helpers — SHIPPED because
+    # the shipped tests exec-load them by file path from the package root
+    # (test_suite_runs_root_762 imports runs_root_probe; the pinned spawned-
+    # runner tests load wf_spawn_isolation_762), the exact est-4vnq finding-4
+    # shape: a shipped test that executes an unpackaged helper dies there.
+    "tests/fixtures/runs_root_probe.py",
+    "tests/fixtures/wf_spawn_isolation_762.py",
     "tests/test_fanout_ui.mjs",
     "wf.py",
-    "wf_dialect.py",
     "wfcommon.py",
+    # est-imp1z (WF-GRAFT-2): the pure output classifier wf.py spec-loads by file
+    # path (exit-0-is-not-success settle gate + node_outcome token parse; the
+    # kind=transient hand-off feeds the sibling bead est-9ceqc at the same seam)
+    # — absent from the ZIP, the runner dies at import at the same seam as the
+    # wfcommon include. Mandatory new-file pack-surface decision, explicit per
+    # the no-wholesale law.
+    "outcome.py",
 )
-INCLUDE_PATTERNS = ("tests/test_*.py", "tests/test_*.mjs", "references/*.md",
-                    "tests/fixtures/dialect/*")   # #33: the corpus test_dialect_js_33 asserts against
-EXECUTABLE_FILES = {"scripts/pack.py", "tests/fake"}
+INCLUDE_PATTERNS = ("tests/test_*.py", "tests/test_*.mjs", "references/*.md")
+EXECUTABLE_FILES = {"scripts/pack.py", "tests/fake", "tests/fake-b1"}
+# Checkout-only tests stay in repository CI, not the release's test glob.
+SOURCE_ONLY_TESTS = {
+    "tests/test_diagram_law.py": "needs diagrams/README.md and the source-only renderer",
+    "tests/test_example_census_fanout.py": "imports source-only scripts/make_public.py",
+    "tests/test_example_issue_to_pr.py": "imports source-only scripts/make_public.py",
+    "tests/test_example_release_lifecycle.py": "imports source-only scripts/make_public.py",
+    "tests/test_lane_recover_8edcc9bf.py": "executes source-only scripts/lane_recover.py",
+    "tests/test_example_exchange_run.py": "reads source-only scripts/scrub-list.txt",
+    "tests/test_lane_recover_legacy_amend_237r4.py": "loads source-only scripts/lane_recover.py",
+    "tests/test_respawn_hardening_723.py": "loads source-only scripts/lane_recover.py",
+    "tests/test_crash_no_exit_respawn_718.py": "loads source-only scripts/lane_recover.py",
+    "tests/test_lane_recover_cli_237r3.py": "executes source-only scripts/lane_recover.py",
+    "tests/test_plugin_resolution_live_not_old.py": "loads source-only scripts/lane_recover.py",
+    "tests/test_scrub_yml_166b.py": "executes source-only scripts/make_public.py",
+    "tests/test_stuck_node_finalize_733.py": "executes source-only scripts/lane_recover.py (main's #235)",
+    # #248 r3 (rebase onto main's #298): executes source-only make_public.py + reads scripts/scrub-list.txt
+    "tests/test_personal_path_scrub_867.py": "executes source-only scripts/make_public.py, reads scripts/scrub-list.txt",
+    # est-xwvu9 (upstream #133387 accepted ask): the post-exit hook is NOT shipped;
+    # this test executes the source-only scripts/post_exit_hook.py kept for our own
+    # distribution path only.
+    "tests/test_post_exit_hook.py": "executes source-only scripts/post_exit_hook.py (stripped from the shipped build, est-xwvu9)",
+    # #477 (est-xl5n5): the gate-lint refusal seam — the test executes source-only
+    # scripts/make_public.py (the #298 rule, same shape as test_scrub_yml_166b).
+    "tests/test_gate_lint_477.py": "executes source-only scripts/make_public.py + gate_lint.py (#477 refuse seam)",
+    "tests/test_admission_ledger_rows_104.py": "loads source-only scripts/admission_ledger.py, reads the estate receipts ledger (issue #104 item-3)",
+    # est-iypbd (#580) suite-arrival: both scrub pins execute the source-only
+    # scripts/make_public.py — same shape as test_scrub_yml_166b / #867.
+    "tests/test_scrub_nul_readme_580.py": "executes source-only scripts/make_public.py (NUL-README pin, est-iypbd)",
+    "tests/test_scrub_surface_1w0hoy.py": "executes source-only scripts/make_public.py (surface audit pin, est-iypbd)",
+}
+
+# Source-only SCRIPTS: repository/estate CI tooling that never travels in the
+# release ZIP. Declared here so the pack-list contract's no-silent-middle half
+# (tests/test_packaging.py) has a reason-of-record: the shipped surface must
+# not name estate-private tooling.
+SOURCE_ONLY_SCRIPTS = {
+    "scripts/make_public.py": "the publish auditor itself (names the forbidden vocabulary by role)",
+    "scripts/lane_recover.py": "estate lane recovery tooling (source-only tests execute it)",
+    "scripts/post_exit_hook.py": "stripped from the shipped build (est-xwvu9); own distribution path only",
+    # est-a5obt (PR #414): estate wave-generator speaking bd-store vocabulary
+    # and takeover law at an estate-private store — same class as make_public.py.
+    "scripts/horde_gen.py": "estate horde generator (bd-store takeover tooling; not release surface)",
+    # est-d2eyc (PR #467, SH-07): estate shelf census over the shelf/ library,
+    # run-dir roots, and seat profiles — estate governance tooling, not release surface.
+    "scripts/shelf-census.py": "estate shelf census (launch attribution/deadweight/consumer scan; not release surface)",
+    # ci-P1 (NEXTGEN-CI (e)): estate-ci observe instruments — the timing
+    # manifest / burn registry / md-input census and the preflight observer
+    # speak estate CI vocabulary (gh, the estate-ci contract repo); not
+    # release surface.
+    "scripts/timing_observe.py": "estate CI timing-manifest generator (gh log parsing; not release surface)",
+    "scripts/registry_observe.py": "estate CI burn-token registry census (not release surface)",
+    "scripts/md_inputs_observe.py": "estate CI admission md-input census (not release surface)",
+    "scripts/ci_preflight_observe.py": "estate-ci P1 observe preflight runner (fetches the contract at its pin; not release surface)",
+    # #477 (est-xl5n5): the gate-lint lives beside the publish auditor it guards;
+    # make_public.py imports it at the refuse seam, so it travels with make_public.
+    "scripts/gate_lint.py": "publish-door gate lint (#477); refuse seam of source-only make_public.py, not release surface",
+    "scripts/admission_ledger.py": "estate consent/dissent ledger normalizer for receipts/workflow-mechanic/ (issue #104 item-3; not release surface)",
+}
 
 
 def collect_sources() -> list[tuple[str, bytes]]:
@@ -127,6 +289,8 @@ def collect_sources() -> list[tuple[str, bytes]]:
             raise RuntimeError(f"include pattern matched no files: {pattern}")
         paths.update(path.relative_to(ROOT) for path in matches)
 
+    paths.difference_update(Path(name) for name in SOURCE_ONLY_TESTS)
+    paths.difference_update(Path(name) for name in SOURCE_ONLY_SCRIPTS)
     sources: list[tuple[str, bytes]] = []
     for rel in sorted(paths, key=lambda p: p.as_posix()):
         path = ROOT / rel

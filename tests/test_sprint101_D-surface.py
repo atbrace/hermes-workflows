@@ -11,6 +11,11 @@ with it. What remains:
     watching session gets the line in the payload; emitting it is the agent's
     job, not the backend's).
  4. The hook machine's symbols are gone from the shipped door module.
+ 5. STRUCTURAL LAW (P1): ALL hook registrations flow through the plugin's
+    register(), gated by the config allow-list (settings.enabled_hooks); the
+    expected count comes FROM CONFIG (door._hook_allowlist()), never a hardcoded
+    1 — the shipped default surface (unset config) is #157's card-enforcement
+    hook, and narrowing/failing the allow-list moves the registered count.
 
 Run: /opt/hermes/.venv/bin/python3 tests/test_sprint101_D-surface.py
 """
@@ -19,6 +24,9 @@ import importlib.util, json, os, shutil, sys
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 ROOT = BUILD.parent
 HOME = ROOT / "home-s101d"
 # #71: HERMES_HOME alone does NOT sandbox the shelf — the context-local home
@@ -75,9 +83,9 @@ try:
     src = (ROOT / "__init__.py").read_text(encoding="utf-8")
     check("no card_rule key remains in __init__.py", '"card_rule"' not in src)
     # O1 copy-exact hint (papercut #70): the hint names the paste line verbatim.
-    check("hint is the copy-exact paste line",
-          out.get("hint", "").startswith("PASTE this line alone in your reply")
-          and CARD(rid) in out.get("hint", ""), repr(out.get("hint"))[:200])
+    check("hint makes cards optional",
+          "desktop cards are optional" in out.get("hint", "")
+          and CARD(rid) in out.get("lifecycle_notice", ""), repr(out.get("hint"))[:200])
 
     # ---- 2: any reading session gets the card in the payload -----------------
     os.environ["HERMES_SESSION_ID"] = "watcher"
@@ -95,11 +103,86 @@ try:
                 "_visible_cards", "_LAUNCHED", "_HELD", "_HELD_TTL_SECONDS",
                 "_LAUNCH_LOCK", "_VISIBLE_CARD_RE", "_CARD_ATTR_RE"):
         check(f"symbol {sym} no longer exists on the door", not hasattr(door, sym))
-    # #157 re-armed exactly ONE hook (the card-enforcement last-resort shipper);
-    # the O1 law still holds for the deleted auto-card machine: no other hook.
-    check("exactly one register_hook call remains, the #157 card-enforcement hook",
-          src.count("register_hook") == 1
-          and 'register_hook("transform_llm_output"' in src)
+    # ---- 5: STRUCTURAL LAW (P1): hook registrations flow through register()
+    # gated by the config allow-list; the count comes FROM CONFIG, never a
+    # hardcoded number. The card ledger's three hooks (post_tool_call records
+    # launches, pre_llm_call reminds, transform_llm_output ships) are the literal
+    # sites; PR-3's flag-gated admission/witness pair and PR-4's default-on orphan-held
+    # observers (orphan_watch.HOOKS) ride the ONE variable-named loop over the surface.
+    import re as _re
+    _reg_src = src[src.index("def register(ctx):"):]
+    _sites = _re.findall(r'ctx\.register_hook\(\s*["\']([A-Za-z0-9_]+)["\']', _reg_src)
+    _surface = dict(door._hook_surface())
+    _GATED_ADDITIONS = {"subagent_stop"}  # P3 config-gated lane: a literal site of its own, gated by its own allow-list, pinned by tests/test_subagent_accounting_p3.py
+    check("every ctx.register_hook site lives in register() and names a surface or gated-addition hook",
+          len(_sites) >= 1 and all(n in _surface or n in _GATED_ADDITIONS for n in _sites), str(_sites))
+    check("the literal sites are the card ledger's three hooks (plus sanctioned config-gated additions)",
+          sorted(n for n in _sites if n not in _GATED_ADDITIONS)
+          == sorted(door._CARD_HOOKS) == sorted(["post_tool_call", "pre_llm_call", "transform_llm_output"]),
+          str(_sites))
+    check("the gate is one allow-list read and every site is membership-gated",
+          "_hooks = _hook_allowlist()" in _reg_src
+          and all(_re.search(rf'if "{n}" in _hooks:\s*\n\s*ctx\.register_hook\("{n}"', _reg_src)
+                  for n in _sites if n not in _GATED_ADDITIONS))
+    _loops = _re.findall(r'if _hook in _hooks:\s*\n\s*try:\s*\n\s*ctx\.register_hook\(_hook, _fn\)', _reg_src)
+    check("the PR-3 + PR-4 variable-named loop site is membership-gated too, and no other site exists",
+          len(_loops) == 1
+          and _reg_src.count("ctx.register_hook(") == len(_sites) + _reg_src.count("ctx.register_hook(_hook, _fn)"),
+          f"literal={_sites} loop={len(_loops)}")
+    _orphan_names = list(door._orphan_watch.HOOKS)
+    check("PR-4 orphan observers are on the surface (default-on, byte-identical when the allow-list is unset) and reach register() only via the gated loop",
+          len(_orphan_names) >= 1 and all(n in _surface for n in _orphan_names)
+          and all(_surface[n] is door._orphan_watch.HOOKS[n] for n in _orphan_names)
+          and "_orphan_watch.HOOKS" not in _reg_src and "ctx.register_hook(_hn" not in _reg_src,
+          str(_orphan_names))
+
+    class _StubCtx:
+        def __init__(self):
+            self.hooks = []
+        def register_skill(self, *a, **k):
+            pass
+        def register_tool(self, *a, **k):
+            pass
+        def register_command(self, *a, **k):
+            pass
+        def register_hook(self, name, fn):
+            self.hooks.append(name)
+
+    _prev_ctx = door._CTX
+    _prev_reader = door._common._OWNER_SETTING_READER
+    try:
+        _c1 = _StubCtx(); door.register(_c1)
+        check("registered set == the config allow-list (count from config, unset -> shipped surface)",
+              _c1.hooks == door._hook_allowlist() == [h for h, _f in door._hook_surface()])
+        door._common.set_owner_setting_reader(
+            lambda k: [] if k == "enabled_hooks" else _prev_reader(k))
+        _c2 = _StubCtx(); door.register(_c2)
+        check("allow-list [] registers zero hooks — the count FOLLOWED config", _c2.hooks == [])
+        door._common.set_owner_setting_reader(
+            lambda k: ["no_such_hook"] if k == "enabled_hooks" else _prev_reader(k))
+        _c3 = _StubCtx(); door.register(_c3)
+        check("allow-list of a non-surface name registers zero hooks (intersect, no widening)",
+              _c3.hooks == [] and door._hook_allowlist() == [])
+        door._common.set_owner_setting_reader(
+            lambda k: ["post_tool_call", "pre_gateway_dispatch", "on_session_end", "no_such_hook"]
+            if k == "enabled_hooks" else _prev_reader(k))
+        _c4 = _StubCtx(); door.register(_c4)
+        check("allow-list subset registers exactly the intersection (literal site + loop sites, PR-3 and PR-4 names)",
+              sorted(_c4.hooks) == ["on_session_end", "post_tool_call", "pre_gateway_dispatch"])
+        door._common.set_owner_setting_reader(
+            lambda k: "not-a-list" if k == "enabled_hooks" else _prev_reader(k))
+        check("malformed allow-list fails CLOSED (zero hooks)", door._hook_allowlist() == [])
+    finally:
+        door._common.set_owner_setting_reader(_prev_reader)
+        door._CTX = _prev_ctx
+
+    # P5 structural law: the only registrations added beyond the door are the config-gated
+    # approval pair in approval_bridge.py (default OFF).
+    _ab_src = (ROOT / "approval_bridge.py").read_text(encoding="utf-8")
+    check("the only added registrations are the config-gated approval pair in approval_bridge.py",
+          _ab_src.count("register_hook") == 2
+          and 'ctx.register_hook("pre_approval_request"' in _ab_src
+          and 'ctx.register_hook("post_approval_response"' in _ab_src)
 finally:
     door._spawn_runner = _orig_spawn
     shutil.rmtree(HOME, ignore_errors=True)

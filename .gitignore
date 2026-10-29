@@ -6,6 +6,14 @@ tests/.suite-home/
 *.log
 artifacts/
 home-40/
+# archify render-side output (html ~740KB each + finalize machine receipts):
+# candidates + png are the committed truth; regenerate html locally on demand
+examples/diagrams/*.html
+examples/diagrams/*.browser-check.json
+examples/diagrams/*.delivery.json
+examples/diagrams/*.finalize.json
+examples/diagrams/*.finalize-summary.json
+# graphify is OPTIONAL local navigation: generate anywhere, never commit.
 # graphify-out retired from tracking (sys-h36sko): a local `graphify update .`
 # stays local
 graphify-out/
@@ -20,3 +28,15 @@ ci-out*/
 .wt/
 *-ci-out*/
 tests/tb-parity-*/
+tests/probe_*/
+
+# transient scratch from routing tests + rerun-shim (never committable; SCRUB_LIST pairs)
+.routing-test-*/
+.wf-rerun-*/
+# fanout/ci-parity job scripts are copies of ue/ci-template.sh written into lanes;
+# committed copies were litter (est-rmsro) — only the generator is tracked
+ci/*.sh
+!ci/ci-parity.sh
+
+# NFS silly-rename phantoms (f9439b2): keep out of every listing
+.nfs*

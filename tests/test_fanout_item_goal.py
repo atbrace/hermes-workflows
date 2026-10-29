@@ -32,6 +32,9 @@ import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 ROOT = BUILD.parent
 HOME  = BUILD / "home-goal"
 RUNS  = HOME / "workflows"
@@ -80,7 +83,7 @@ def verbatim_graph(items):
     # items own the payload; the guard must never touch it.
     return fan_graph(items, tmpl="{item.goal}")
 
-env = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(BUILD / "fake-goal.log"),
+env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(BUILD / "fake-goal.log"),
            PYTHONUNBUFFERED="1")
 
 def mk(run_id, graph):

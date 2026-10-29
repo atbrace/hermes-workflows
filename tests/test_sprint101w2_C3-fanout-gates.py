@@ -15,9 +15,12 @@ import json, os, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 HOME = BUILD / "home-c3"
 RUNS = HOME / "workflows"
-env = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(BUILD / "fake-c3.log"),
+env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(BUILD / "fake-c3.log"),
            FAKE_PROMPT_LOG=str(BUILD / "prompt-c3.log"))
 FAKE = str(BUILD / "fake-c3")
 sys.path.insert(0, str(BUILD.parent))
@@ -144,7 +147,8 @@ check("a2d7f664 silent straggler reason names 'no output on disk at quorum momen
       "no output on disk at quorum moment" in (silent.get("error") or ""),
       json.dumps(silent)[:260])
 check("a2d7f664 silent straggler snapshot carries log_bytes=0/work_files=0",
-      silent.get("cancel_evidence") == {"log_bytes": 0, "work_files": 0},
+      silent.get("cancel_evidence") == {"log_bytes": 0, "work_files": 0,
+                                        "agent_visible_output": False},
       json.dumps(silent.get("cancel_evidence")))
 check("a2d7f664 flushed straggler reason names 'had output at quorum moment' with measurements",
       "had output at quorum moment" in (flushed.get("error") or "")

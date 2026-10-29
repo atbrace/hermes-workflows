@@ -1,14 +1,1408 @@
 # Changelog
 
-## Unreleased
+## 1.4.4 — 2026-10-29
+
+Patch release: 40 commits on main since v1.4.3. Retry discipline hardened end to
+end: every spawn gates on the persisted lifetime attempt ledger (#579), the spent-cap
+refusal bypasses the `fallback_models` ladder and now rides `node_facts`/door status
+and the desktop fact sheet (#583, #584, #587), with a work-metered retry ladder and
+validated concurrency knobs (#582) and a persisted, restart-honored transient-retry
+window (#539). The parked-hold watchdog ships: persisted `park_watch` strikes +
+time-box (#566), pack fix so it rides the ZIP (#576), self-tearing singleton tick
+(#571). Runner/door truth: amend re-binds from the persisted launch binding
+(88379dc, est-qohvi), handoff promises only observed effect (43b80cf, est-2fwge),
+release/stop handoff truth (#548), capture-boundary clips and assembled-inputs
+budget (#568, #574), always-settle spawn laws (#567), capped fan-out partial-commit
+gate (#529), bead-close edges on skip/on_exit (#525, #517, @atbrace), wake
+tri-state sender + at-most-once markers (#565) with trailing re-check (#564),
+hold-vs-wall admission refusal (#481), `wf.py validate [--json]` (#479, #474),
+door advisory semantic lints (#559, @atbrace takeover of #520), consent/dissent
+ledger rows + old-form normalizer (#556), per-node telemetry sidecar (#569),
+persisted-argv residency guard (#570), QA wave WF-02..09 (#586), and the
+`_CardText.__reduce__` deepcopy fix after post-tool compression (#588, @atbrace).
+Infra/pack: `tests/conftest.py` ships in the release ZIP (#562), pr-compliance C1
+scopes to the diff and honors C2 first (#561), lane parity mirrors derive
+HERMES_PIN/python-version at run time (#572), core repinned v0.22.0 with the
+private-import contract test running in CI (7777102, est-i3pro), private-core
+imports pinned as a reasoned allow-list that degrades, never raises (#557, #558),
+squash-dropped watchdog entry restored (#578), hint-cap net-zero trim (#560),
+canary walls retimed (#581), amend re-bind law narrowed in docs (#575).
+
+### Carried ship fragments
+
 
 Ops/chore:
+- fix(read model) est-t7yod (the #583 peer-review residual): the est-mqp1f
+  machine-readable `refusal` stamp now reaches the read model. The producer
+  (#583, merged as 60722b1) commits `refusal: lifetime_cap_spent` on a spent-cap
+  boot, but `wfcommon.FACT_KEYS` and the door's `node_facts` passthrough
+  whitelist didn't carry the key — `workflow status` surfaced the
+  `transport_exhausted` class and the "spawn refused" prose but not WHICH
+  exhaustion verdict is final, so an operator still had to grep the message.
+  `refusal` joins the FACT_KEYS core rows (rendered `unknown` on every
+  non-refusal death, the rule-8 law, not an append-only key) and the door's
+  failed/partial `node_facts` whitelist beside `error_class`, extending the
+  A2 closed-key-set pin in `tests/test_status_next.py` (whose new leg reads
+  `refusal=unknown` on the child_exit death); the operations doc names the
+  stamp. Pins: `tests/test_refusal_facts_t7yod.py` S1-S4 — FACT_KEYS row,
+  verbatim `node_facts` surface, door `act_status` leg on a refusal-stamped
+  record (`node_facts shows refusal=lifetime_cap_spent on a spent-cap boot`),
+  unknown law + row preservation — RED at 60722b1 (S1-S3 fail: no row, no
+  surface, no door key), GREEN over the two whitelist rows. Golden re-baked
+  for the one sanctioned delta: the `retry-partial` door payload's
+  `node_facts` gains `refusal: unknown`.
+- fix(retry) est-mqp1f (the #579 review residual): the #164 `fallback_models`
+  ladder no longer walks rungs over a spent-cap boot, and a rung death can no
+  longer re-break the est-ja41 record-vs-ledger agreement. The est-9qhpf
+  lifetime-bound refusal commits `transport_exhausted` BEFORE the boot spawns
+  anything — the same class #164 enters on — so a node declaring
+  `fallback_models` billed rung spawns past a bound that exists to stop
+  billing, and the rung-death `attempts` recompute (boot-local `spawn`+1
+  against the MERGED ledger) could stamp fewer attempts than the record's own
+  ledger carries. Cures: the refusal record now carries a machine-readable
+  `refusal: lifetime_cap_spent` stamp and the ladder bypasses on it (refusal
+  is final); the rung-death merge may only RAISE `attempts`, never drop below
+  the ledger it carries. AGENTS.md §3d hint states the spent-cap refusal
+  explicitly. Pins: `tests/test_plugin_asks_164_fallback.py` (7)(8A)(8B)(8C)
+  — RED at 36c14b4 (`spawned ['m1','m2']`, record `attempts=2` vs 3-entry
+  ledger), GREEN over the cures.
+- feat(knobs): #580 take-over (from atbrace) lands the knob family with three
+  cures on the banked rebase, per keep-both LAW v2 (both sides' CHANGELOG rows
+  stand; the diff vs 9bc5bcc is additions-only, asserted at commit). B2 — the
+  top-level `retry` ladder knob joins the SHARED `STRUCTURAL_GRAPH_KEYS` table
+  with `GRAPH_KEY_MIN_VERSION` floor `1.4.4`: the shelf refused a shelved
+  library entry carrying `retry` (`fails to validate standalone: graph:
+  unknown graph key`) while direct submission accepted it — the door-only
+  `extra_keys=("retry",)` was second-class membership. B3 —
+  `retry.resume_floor_s` is a FINITE positive law: `1e309` (valid JSON that
+  round-trips to +inf) and `NaN` are refused at admission naming the field, and
+  a persisted non-finite floor normalizes to the default 30 s at the runner's
+  own read — an inf floor can no longer mint an infinite spawn wall. B1 — the
+  knob family is LAUNCH-FROZEN: `amend` never re-bakes (grammar.md line 7's
+  promise made code; the stale re-bake comment and `_old_meta` removed), and an
+  amend on a run whose launch baked knobs answers `knobs_frozen` naming the
+  values that stay in effect. Tests: `tests/test_concurrency_retry_knobs_24.py`
+  amend leg rewritten to the frozen law (the stale leg FAILED at the takeover
+  merge with `knobs_provenance concurrency=author` — proof the cure is live),
+  `plugin_version` appended to the LEGACY exact-keys set (the est-2ek.1.166 run
+  stamp is sanctioned metadata, not a knob), wall-budget legs retimed to the
+  measured floor +3 s (fares [4,2] exact, ~4 s host reap overhead; worst
+  observed 15.7 s), plus new legs for non-finite refusal, `knobs_frozen`,
+  shelf-parity and overflow-floor normalization (RED at 2856aff, GREEN over the
+  cures), and `tests/test_scrub_nul_readme_580.py` pinning the adversary-R9
+  NUL-prefixed-README class (GREEN-ON-ARRIVAL — main's `make_public.py:143-148`
+  cure predates the take-over; the pin exists so the class cannot silently
+  re-open). Suite cures riding the same commit: the dead `.graphifyignore` row
+  in `scripts/pack.py` (file retired by M02 `394d7ef`), a feature-token regex
+  GUARD row for the pr-feed.yml channel routing id (`.github/` untouched), and
+  `cron_bridge.py` now ships in the ZIP (its shipped test died ModuleNotFound
+  at the unpacked root — the #105 dead-package shape, red at main 9bc5bcc
+  itself; sibling of `8763ea1` shipping `park_watch.py`). The two new scrub
+  pins join `SOURCE_ONLY_TESTS` in `tests/test_package_source_only_756.py`:
+  they execute the source-only `make_public.py`, the `test_scrub_yml_166b`
+  shape, so the ZIP's derived sweep keeps every shipped test runnable. The
+  knobs suite carries the `#762` launch-env pin token for the spawn legs
+  (audit-level; children still resolve under the pinned `HERMES_HOME`, so
+  the golden-solo zero-key leg is untouched).
+
+- fix(knobs): width receipts fail OPEN, never crash — the #24 tracker keys
+  (`meta["_width"]` / `meta["_width_flush"]`) are runner-private installs from
+  `main()`; in-process drivers that hand bare meta dicts to `run_agent_node`
+  / fan-out legs (`test_error_classes_exhaustive_vb65.py`,
+  `test_budget_fanout_gates_ps8i9.py` G1-G3) crashed `KeyError: '_width'`
+  over the take-over. Consumer sites now go through `_width_track(meta)` /
+  `_width_flush(meta, run)` with no-op fallbacks: observation-only, exactly
+  the base-9bc5bcc behavior for un-installed metas; a runner that installed
+  the tracker receipts byte-identically. RED over the take-over (lane), GREEN
+  at 9bc5bcc and over this cure.
+
 - chore(graphify): M02 (sys-h36sko) — retired the committed knowledge graph and
   its whole governance stack: `graphify-out/` (5.2 MB generated),
   `scripts/graph_check.py`/`graph_path_ban.py`/`graph_regen.py`, the graph CI job
   + graphifyy install, the single-writer path ban, and the tests whose only
   subject was those artifacts. `graphify` stays a local-only convenience.
   `scripts/graph_diagram.py` + `examples/diagrams/` untouched (different job).
+
+- feat(wake): the wake sender is TRI-STATE. `_wake_deliver()` returns
+  True/False/None = delivered / try-later / nowhere-ever (no reachable API
+  server configured, e.g. a headless host), the `wake.jsonl` row mirrors the
+  outcome (`delivered: true/false/null`), and the at-most-once marker rule
+  settles a transition instance only on True-or-None. A nowhere-ever
+  transition stops re-driving one ledger row per respawn instead of re-POSTing
+  a delivery that can never land; a headless no-op never stamps delivered, so
+  a later redrive with an endpoint still fires. Ledger parse settles only on
+  an explicit `delivered` key — legacy rows without one stay open. New test:
+  tests/test_wake_tristate_7rudf.py (hermetic — tmp run dirs + empty HERMES_HOME,
+  the live cron store and runs root are never touched; red at ddc30ec, green
+  after; includes the restart-redrive not-double-noticing case).
+
+- feat(park-watch): parked work gets a persisted blocked-since clock and a
+  system floor. Every human-gate hold (with or without `hold_timeout`) and
+  every machine-probe park now ticks a watchdog whose state lives in the
+  gate's own persisted mirror (`held.json` / `parked.json`), so a runner
+  restart replays the elapsed window instead of buying a fresh park. N
+  consecutive dispatcher-failure strikes (a probe that cannot launch; an
+  owner wake that comes back undelivered) or the time-box (default 6 h)
+  settle the park failed loudly: event `gate.watchdog_settled`, plus the
+  run's one-shot `run.failed` wake, instead of polling forever. A probe that ran
+  and honestly reported not-ready never strikes; a clean wake clears the
+  clock. Tunable via owner setting `park_watch` (`{timeout_s, strikes}`;
+  `false` disables). Tests: tests/test_park_watchdog.py.
+  (est-hf4wq, peer atbrace:hw-36y)
+
+- feat(watchdog): the watchdog tick body lands on PR-1's lifecycle and the
+  door starts using it (est-ip975 PR-2, riding #534). Every accepted launch arms
+  the singleton at the door's post-flock tail via `cron_bridge.ensure_tick`
+  (find-by-name, create-once;
+  a core-less host or a partial-tree copy degrades to a fail-open
+  `armed: false` and never fails the launch); the tick (`wf.py tick`, reached
+  by PR-1's shim) re-drives every dead-runner run in the resolved root
+  through the door's ONE respawn bridge (`_respawn_runner`, flock admission
+  makes a raced spawn a harmless loser), stays armed while any run is active,
+  and the tick body ITSELF removes the job when the active set drains - idle
+  cost is exactly zero wakes. Revival scope mirrors `act_wait`
+  (pending/interrupted; verdicts are never revived).
+  Tests: tests/test_runner_watchdog_ip975.py (arm, revive-in-one-tick,
+  drain-self-delete, double-arm idempotence, core-less fail-open; fake
+  `cron.jobs` injected at cron_bridge's seam, the live store never touched).
+
+- feat(audit): persisted launch locations are checked at submit and before each
+  machine-gate probe. PATH targets, interpreter script operands, and symlink
+  targets must exist under stable install roots. Cron shim creation and the
+  source-only post-exit hook refuse nonresident scripts before writing launch
+  orders. `scripts/argv_residency.py` audits home scripts, cron stores, workflow
+  gates, and post-exit registrations without executing or changing them.
+  `--guard` uses the same exit code and stays silent when clean. Dynamic shell
+  paths report unresolved. `WF_ARGV_STABLE_ROOTS` declares custom install roots.
+  Provenance atbrace:hw-cxk. Regression tests use temporary fixtures only.
+- fix(runner): fan-out item records clipped at the capture boundary + certify
+  parity (est-rucmf, residual of wf#568). `commit_item_record` persisted the
+  canonical per-item record through a raw merge + tmp/replace, bypassing the
+  est-x92v7 persist choke — oversized fan-out item outputs reached disk
+  UNCLIPPED while the aggregate record was clipped. The commit now runs the
+  record through `_clip_record` (bearer redaction first, then head/tail clip
+  at `WORKFLOW_OUTPUT_CLIP`, same marker, knob read fresh: identical to the
+  `save_node` edge). Naive clip-parity would have broken the 765 certification
+  law (a raw >clip aggregate claim can never be byte-equal to a clipped
+  record), so `item_records_certified` normalizes the claim through the
+  identical transform before the byte-for-byte compare: idempotent on clipped
+  records, identity under the ceiling — under-clip equality stays byte-for-byte
+  and forged divergences are still refused. Tests:
+  tests/test_item_record_clip_rucmf.py (C1 oversized commit at the default and
+  an overridden ceiling, C2 certify round-trip over the clip boundary,
+  C2b forged >clip claim still refused, C3 redaction upstream of the clip).
+
+- fix(amend): the amend response's continuation promise is gated on observed
+  effect, not the raw handoff mode string (est-gexk5 restart leg — same law
+  that hardened release/stop in #548). `consumed` is believed only when
+  restart.request is observed gone; a live handoff is named as expected-but-
+  unobserved with a re-drive pointer; a run that terminalized without
+  consuming the marker is reported inert, residue named. The old else-branch
+  promised hot-reload for live AND terminal-inert runs alike. New probe:
+  tests/test_amend_handoff_truth_83v.py (T2 red at base, green after).
+
+- fix(consolidate): the bead close-effect gate now rides the partner-consolidation
+  edge in `wf.py` — an unreadable bead store refuses the consolidate-partner step
+  (typed failed, ledger holds) instead of a silent pass, and the case is pinned by
+  tests/test_consolidate_effect_gate_5e1.py. Grammar path list names the partner.
+
+- feat(validate): three advisory semantic lints ride the `validate`
+  action's existing never-fatal `warnings` channel. (1) a `when` operand
+  `out.<head>.<field>` whose head declares an object schema that does not
+  declare that field — the validator is forgiving and the runner commits
+  agent output raw, so the branch is dead unless the child emits the
+  undeclared key against its own schema; the door flags the suspect read
+  while the graph is still text; (2) a machine-gate probe whose
+  `wait.until_argv[0]` is missing on the validating host (a path with `/`
+  is existence-checked, not exec-bit — false-negative only) — the park
+  would re-run it every tick and FileNotFoundError-loop until `timeout_s`,
+  and a host check is explicitly
+  host-dependent, hence advisory never fatal; (3) `fanout.quorum` below the
+  literal item count — the stragglers cancel at the quorum moment, possibly
+  mid-flight (a race wants this, a coverage fan-out does not). Rows share the
+  pinned `{node, field, msg}` shape beside the s12/max_turns advisories; `ok`
+  is untouched — every graph that validated green before still does.
+  New tests/test_validate_semantic_warnings_udg.py.
+
+- test(contract): pin private core imports as a reasoned allow-list
+  (#456 item 1, est-i3d1b). New `tests/test_private_core_imports.py` runs
+  upstream's own `private_import_findings()` (hermes-agent >= v0.22.0
+  admission lint) against this repo and compares the result against a
+  13-row `(file, target)` allow-list — one row per surviving private
+  core import, each citing the soft guard + observed fallback at its
+  call site. New or vanished couplings go RED; empty/unparseable findings
+  are RED, never a silent pass; cores without the lint (today's CI pin)
+  SKIP with a reason and exit 0. Live drift finding: 13 sites at main,
+  not the issue table's 12 — `cron_bridge.py`'s `cron.jobs` landed via
+  #534 after the issue snapshot, exactly the silent growth this probe
+  exists to catch. #456's AGENTS.md 4c rule-7 pointer line is carried in
+  the test docstring instead: AGENTS.md has 44 chars of headroom under
+  its own 32,000-char hint-cap gate (`test_docs_hint_cap_73c`) and the
+  line broke it — collision stated in the PR body.
+
+- test(contract): #456 item2 (est-v367p) — `tests/test_private_core_imports_softguard.py`
+  re-runs the issue's R2 probe on every suite pass. Each allow-listed private-core
+  import site is exercised in a FRESH subprocess in both block shapes the probe used
+  (absent: `sys.modules[m] = None`; renamed: module present, symbol gone — dotted
+  fake parents installed in both modes so the block itself is what raises,
+  host-independent) and each asserts the table's exact fallback: `_route_efforts` and
+  `_resolve_child_reasoning` degrade onto the `wfcommon.reasoning_levels()` table,
+  `_nearest_effort` and `_ping_retry_after` to `None`, `_alias_provider_pair` to
+  `(None, None)`, `_session_env` to the `os.environ` value, `_filter_child_toolsets`
+  to verbatim name pass-through, `_yaml_load` to the ruamel/PyYAML chain (honest
+  raise where the host has neither — documented leg), and the `_import_call_llm`
+  callers to liveness `unknown` / `False` (`_ping_subprocess` is stubbed before the
+  call, so no leg can touch the network). The `_PING_SUBPROCESS` string-exec site —
+  invisible to the lint, inside the same coupling family — is pinned twice: source
+  (import present, inner guard intact) and runtime (prints
+  `{"unavailable": true}`, exit 0). Twelve source pins assert every table import
+  still sits inside its guarded function — function names are keys, line numbers
+  are not (the issue's cites already drifted once). Engine edits: none, per the
+  issue's plan; the test stands alone even before item1's lint-side allow-list
+  (`tests/test_private_core_imports.py`) lands. 40 checks ALL PASS.
+
+- fix(door): release/stop handoff truth — the sibling sweep of the #518 amend fix
+  (est-gexk5, found on the #518 R8 adversary review). `_resume_after_action` answers
+  `"consumed"` for a terminal run though nothing was consumed (the est-3acn branch);
+  `act_release` and `act_stop` trusted the mode string and printed
+  "the live runner commits/consumes it at its boundary" over runs with no live
+  runner at all (the est-3acn partial keeps held gates uncommitted). Both verbs now
+  recheck their own consumed predicate after the call — response truth equals
+  observed effect, the exact law #518 applied at the amend site — and split the
+  copy four ways: respawned / committed (predicate observed true) / expected-but-
+  NOT-observed (`live`: the dying runner lands interrupted, so the
+  resubmit-on-interrupted re-drive is named — it is satisfiable there) / terminal
+  false-consume (durable but inert: NO live-runner promise and NO re-drive promise,
+  because a terminal run never reads interrupted and `wait` respawns only
+  running/pending/interrupted). The wake-delivery-optional law (test P01) is
+  carried on every copy that can wake; the terminal copy says outright that no wake
+  arrives. Tests: `tests/test_handoff_truth_release_stop_gexk5.py` — red-first at
+  base like #518's T2-T4 (R2/S2 lie legs + R4/S4 missing-hedge legs + R3/S3
+  wording legs RED at `b9fc0b2`; respawn/refusal/already pins GREEN at base),
+  30 checks ALL PASS at head; `test_agent_experience_p01` re-pinned through the
+  new live copy unchanged.
+
+
+
+- feat(cli): `wf.py validate [--json] <graph.json>` — the documented graph-lint
+  entrypoint now exists on argv (issue #474: three fix crews reached for it and found
+  no subcommand, falling back to importing `act_validate` or the tool). It is argv for
+  `action=validate`, NOT a second validator: the runner spec-loads the sibling door and
+  calls `act_validate` verbatim, so defaults fill, defect collection, model/route policy
+  and the advisory warnings channel are the same code path, byte-for-byte (pinned by
+  deep-equality in `tests/test_validate_argv_474.py`). No run dir, no liveness ping, no
+  writes. Exit 0 on `ok:true`, 1 on a red verdict (the `errors[]` rows print), 2 on a
+  usage/IO fault — a CI lane can gate on the number alone. No `--plugin-dir` flag: the
+  runner already binds its own siblings by path.
+
+- feat(validate): hold-vs-wall admission law (#475, est-xtopx). A `hold_timeout`
+  longer than every lane the graph can build is a structurally guaranteed
+  mid-collection death (receipt: owners lane 10800 shepherding gates that hold
+  to the 86400 ceiling). The door now resolves every lane's wall statically
+  (node timeout > shape preset > graph defaults > DEFAULT_SHAPE preset — the
+  same precedence `apply_graph_defaults` bakes) and REFUSES a gate that can out
+  its graph's max lane wall while it has after-consumers (admission-only, R10:
+  persisted graphs and respawns are never stranded). The softer relation — a
+  gate that can hold past ONE consumer's own wall while the graph survives the
+  max-wall law — rides the save/validate/run warnings channel naming both
+  numbers (dict rows, s12-union law #421). Graph-level `defaults` now reach the
+  shared validator through a new `defaults=` kwarg on `validate_graph_errors`.
+  Grammar in `references/grammar.md` (Gates); pins in
+  `tests/test_wall_invariant_475.py`.
+
+- chore(bead_close): per-item `close-pending` escape folded into TOKEN-FREE
+  fan-out decls (est-nbe2y, pre-existing from est-13z1; found reviewing #486).
+  The node-scoped whole-blob search let ONE lane's honest `close-pending` —
+  or the phrase appearing in any non-committing row — exempt the whole
+  aggregate from store read-back while sibling done/partial lanes served the
+  very claim the gate exists to verify: the 13z1 false-green shape at fan-out
+  scale. The escape is now per item: any committing item without its own
+  pending token forces the (still single, node-scoped) probe, and only an
+  ALL-pending aggregate commits pristine with zero probes. The single-probe
+  shape is kept (singular receipt key, item rows untouched, one probe) —
+  `test_f` stands; pins in `tests/test_bead_close_fanout_485.py` (j, k) and
+  `references/grammar.md` (bead_close).
+
+- fix(runner): the RunBudget-capped fan-out `partial` (the est-3acn harvest
+  path) is a commit edge — the lane, effect and bead-close gates now run over
+  its record before save (est-13z1/#56 law; est-ps8i9, adversarial R8 sweep of
+  PR #525 @8fd158ca — the census row the #525 entry's edge list missed). The
+  budget elif committed `{status: partial, output:{items, all_results}}`
+  straight to `save_node` inside its own branch (`merged_rec` is assigned only
+  in the else), so a fan-out declaring `{effects}` or `{bead_close id:{item}}`
+  that the cap cuts mid-run banked harvested item outputs with ZERO store
+  read-back and ZERO receipt proof: the est-13z1 lying-done class at the THIRD
+  commit edge, PRE-EXISTING on main (est-3acn era), not introduced by #525.
+  The record now runs the same boundary chain as the aggregate edge —
+  `_lane_gate`, then `_effect_gate`, then `_bead_close_gate` (per-item
+  read-back included) — and an unproven claim DEMOTES it to the gate's own
+  typed `failed` (the harvest still rides the demoted record's output — the
+  demote kills the claim, never the work). That demote line NAMES THE CAP TOO
+  (est-6ig3s, review of this entry's own branch): `node.failed` keeps the
+  gate's verdict in `error_class` and adds `harvested`,
+  `budget_cause: budget_exhausted` and `harvested_items`, because the demote
+  otherwise swallowed the one event that named the node-level budget cause and
+  an event-only reader read `effect_receipt` where the truth was "an unproven
+  claim on a capped fan-out that banked N items" (the legibility est-60ca
+  closed on the solo path). The honest commit keeps `node.finished
+  harvested=True error_class=budget_exhausted` and mints none of the cause kv
+  — the golden pins that key set. The zero-harvest commit stays `failed` and
+  ungated: nothing is asserted there. A
+  demoted budget commit also forfeits est-3acn's graceful closure — a capped
+  run whose capped commit cannot be proven must not close gracefully over the
+  lie (the demote classes are proven-fails, outside both ladders). Honest
+  degradation is asserted as the golden control: no gate key = today's
+  byte-identical record and events, ZERO probe argv (exact pre-fix error
+  string and key set pinned). Run-the-gates over reject-at-door: refusing
+  `budget` + `effects`/`bead_close` on fan-outs at the door would price
+  cap-protection out of the close-the-queue lanes — the exact lanes the
+  read-back gates exist for — to paper over a gate the runner simply never
+  ran. New test: tests/test_budget_fanout_gates_ps8i9.py (red at 8fd158ca on
+  legs A/C/G — one failing-if-broken leg per gate key on that branch, lane
+  gate included; honest legs B/D/E/F green BEFORE and AFTER). Its event-shape
+  asserts A5/C6/G3 + the golden key-set pin E4 carry the est-6ig3s contract:
+  red at 103284a on A5/C6/G3 (the demote line carried no cause), green after,
+  E4 green across the whole sitting — the honest event never grows a key.
+
+- fix(runner): `budget_ledger.json` is now MERGE-ON-WRITE (est-y938s, P3 from
+  the PR #529 review — the second row on that same review, est-6ig3s above).
+  The loop's terminal hook rewrote the ledger whole at every budget closure,
+  so the persisted cause was always the LAST occurrence: a run capped first at
+  a fan-out and re-expressed at a downstream node lost the first cause from
+  the ledger. The re-expression is reachable, not hypothetical — a capped
+  fan-out whose boundary-gate demote (est-ps8i9) forfeits the graceful closure
+  leaves a record classed by the GATE, so the hook's re-scan arrives with a
+  narrower set than an earlier closure wrote. The write moves out of the hook
+  into `wf.close_budget_ledger`, the ONE writer: top-level `cause`/`at` now
+  name the FIRST closure (the run's first budget death),
+  `exhausted_nodes`/`never_launched` are first-seen-order unions, and
+  `occurrences[]` is the cause chain in close order — one row per DISTINCT
+  closure, so a benign resume re-passing the hook (the est-3acn resume law: a
+  later pass sees the same file) mints no duplicate row. A pre-fix legacy
+  ledger (no occurrences[]) is absorbed as the chain's first occurrence; the
+  run_state read view is untouched (same top-level keys, now first-cause
+  semantics). Test: tests/test_run_budget_3acn.py grows leg E (two cap
+  occurrences with the real stub meter — a capped fan-out, then a downstream
+  run-scope refusal after a demote narrows the re-scan — asserting ledger
+  CONTENT, not existence; red at 80e4004 on E0, green after).
+
+- fix(runner): the `bead_close` gate now rides the two remaining done-commit
+  edges — the `on_skip:"pass"` skip-pass commit and the `on_exit` terminal
+  postmortem commit (est-13z1 law; est-ikeon, the R8 sibling sweep of PR #523).
+  The commit-edge census applies BOTH boundary gates (`_effect_gate`, then
+  `_bead_close_gate`) on the agent-solo, fan-out aggregate and echo paths; these
+  two rode the effect gate alone. The door admits the combo (`on_skip` validates
+  as enum + `when`-presence, `bead_close` by shape only), so an agent
+  `{bead_close, when: false, on_skip: "pass"}` with NO effects booked
+  `done {agent:"skipped"}` with ZERO store read-back — the 13z1 lying-done at
+  the skip edge — and the terminal postmortem booked its `done` on the child's
+  prose. PRE-EXISTING on main, not introduced by #523, which stays
+  owner-scoped to the #56 axis and certified at head 47879ee: this lands as a
+  stacked follow-up, forward-only. Each edge now reads the estate store itself
+  and an unproven close DEMOTES the commit to typed `failed`
+  (`error_class:"bead_close"`, `error: bead_close_unproven: ...`, the measured
+  row rides the record, never retried). The skip edge reuses the gate-agnostic
+  demote branch #523 landed; the `on_exit` demote moves the node record and
+  `on_exit_receipt.md`, never the run verdict — `write_runner_exit` stamps that
+  before `_run_on_exit` runs (#129), asserted not assumed. Honest degradation
+  holds: no `bead_close` key = today's behavior byte-identical, not one probe
+  argv spent. Join/consolidate/gate commit edges stay exempt — their closed key
+  sets carry neither gate key, so the door refuses the declaration before a
+  runner must honour one. New test: tests/test_skip_pass_bead_close_ikeon.py
+  (red at 47879ee on the four close-claim cases a/b/d/e, green on the two
+  honest-degradation controls c/f; 6/6 green after).
+
+## 1.4.3 — 2026-10-26
+
+Patch release: 6 merged PRs since v1.4.2 — the grammar-doc seat-cap trap named where authors read it, with the direction-biting mutation test (#527, @atbrace), the `[SILENT]` verdict honored plus per-node wake tiers (WF-GRAFT-1, #533), the autouse test-sandbox conftest with env floor, resolver wrap and merge-gate subprocess items (WF-GRAFT-6, #538), held gates presented via core's public injection route with flag-gated hooks declared upstream-compatible (#141665 points 2–3, #546), the lint gate requiring option strings to appear verbatim in doc text (#477, #552), and the per-item `precheck_argv` custody probe before fan-out spawn (#453, #554). The seat-cap sentence in `references/grammar.md` now states the engine's ceiling law — `max_seats` lowers within range from the host ceiling (`WORKFLOW_MAX_SEATS` / `.env` / config), never raises it — and `tests/test_grammar_hw-bgb.py` (10 checks) refuses a mutation probe carrying the backwards sentence.
+
+### Merged PRs
+
+- docs(grammar): name the fan-out seat-cap trap and the max_seats remedy (#527)
+- feat(wake): honor the [SILENT] verdict + per-node wake tiers (WF-GRAFT-1, est-1f7cn) (#533)
+- test(sandbox): autouse test-sandbox conftest — env floor, resolver wrap, merge-gate subprocess items (WF-GRAFT-6) (#538)
+- fix(p5): present held gates via core's public injection route; declare flag-gated hooks (#141665 points 2-3) (#546)
+- feat(lint): gate option strings must appear verbatim in doc text (#477) (#552)
+- feat(fanout): per-item precheck_argv custody probe before spawn (#453) (#554)
+
+### Contributors by PR
+
+- #554 — @jacobhausler.
+- #552 — @jacobhausler.
+- #546 — @jacobhausler.
+- #538 — @jacobhausler.
+- #533 — @jacobhausler.
+- #527 — @atbrace.
+
+## 1.4.2 — 2026-10-26
+
+Patch release: 4 merged PRs since v1.4.1 — the ra-release merge step now ships a machine gate (est-clrlx, #547): the release lane issues its squash-merge only through `scripts/release_merge_gate.py`, which refuses (exit 1, zero writes) unless the newest review marker carries `verdict=merge` at the exact current head from a non-author peer; CI-green alone is no longer merge authority. Plus the lane-declaration invariant for ra-work worktree verbs (#549), the W1/B3 wall-pin retiming against the v0.22.5 cold config-import floor (#550), and the §3b front-door skipped-head sentinel exception docs (#551).
+
+### Merged PRs
+
+- docs(agents): name the #473 skipped-head sentinel exception in the §3b front-door law (est-1tlcg) (#551)
+- test(159c): retime W1/B3 wall pins against the v0.22.5 cold config-import floor (drift fix) (#550)
+- test(h951x): lane-declaration invariant for ra-work worktree verbs (#549)
+- feat(release): gate the ra-release merge step on an exact-head peer receipt (est-clrlx) (#547)
+
+### Contributors by PR
+
+- #551 — @jacobhausler.
+- #550 — @jacobhausler.
+- #549 — @jacobhausler.
+- #547 — @jacobhausler.
+
+## 1.4.1 — 2026-10-25
+
+Patch release: 37 merged PRs since v1.4.0 — the door-UX version handshake (name the door + grammar-layer/nearest-key refusal hints, #511), outcome truth beyond exit-0 (output classifier + `node_outcome` self-report, #537), exhaustive fail-closed resolution (#536) and the `on_skip:pass` effect gate (#523), per-item `bead_close` receipts (#486) and `{run.X}` admission validation (#484), the name-keyed cron tick lifecycle (#534), 8-lane sharded `gates` CI fan-out (#502), author-tunable retry caps (#497), `run.failed`/`run.done` wake payload pointers (#507), the queue-executor starter (#514), quota stamps by route identity (#505), the skip-sentinel and truncated-inputs fixes (#480 #482), `maxItems` joining the admitted schema subset (#478), and the observe instruments + hint-cap doc folds. (The `## 1.4.0` section below is restored verbatim from the tag: its bump commit landed off `main`, so this file never recorded it.)
+
+### Merged PRs
+
+- docs(runner): state the turn/accounting contract; pin it with a test (#387 option (b)) (#543)
+- docs(agents): fold §4b′ and the §4d pointers out — back under the 32,000-char hint cap (unblocks CI) (#542)
+- fix(1n7gx): collapse-to-one law — name a total order at every pick-one-row site (#540)
+- feat(outcome): exit-0-is-not-success — pure output classifier + node_outcome self-report token (WF-GRAFT-2, est-imp1z) (#537)
+- fix(wf): exhaustive fail-closed resolution — dead-end fails run, abort outranks (est-f1w4u) (#536)
+- test(px11): anchor the RLIMIT_AS ceiling on the live set, not allocator residue (#535)
+- feat(cron): name-keyed singleton tick job lifecycle (est-ip975 PR-1 of 3) (#534)
+- fix(watchdog): straggler disc formats a missing launch stamp as 'q', never :.3f (est-waf8y D1) (#532)
+- test(fixtures): shared fake-runner helper for door-scan fixtures (#530)
+- docs(agents): fold AGENTS.md under the 32k hint cap via references/example-tour.md (#528)
+- ci-P1 observe instruments: budget, timing, registry, md_inputs, observe preflight, run_attempt ledger fields (#526)
+- chore(hygiene): gitignore agent scratch dirs (.routing-test/, .wf-rerun/) (#524)
+- fix(runner): gate the on_skip:pass done-commit through _effect_gate (#523)
+- fix(door): retired from:<name> pin in the graph slot names the from argument instead of a JSON parse error (#519)
+- docs(changelog): record the shelf-save doc law entry (#516)
+- test(door): move the quota-gate regression to its door-prefixed name (#515)
+- feat(library): general/queue-executor — sixth starter (execute-the-queue verb) (#514)
+- chore(ue): mill CI-parity assets (cluster gate script + in-lane template + design record) (#513)
+- chore(retry): hw-23c fallout — law comments say tunable; _retry_bake at door parity (est-mcwq6) (#512)
+- feat(door): name the door version + grammar-layer + nearest-key hints on graph refusals (#509) (#511)
+- docs(readme): concurrency blurb names the launch-time run-arg channel (est-1awgu) (#510)
+- feat(runner): run.failed/run.done wake payloads carry run_dir + failed_node_logs pointers (#507)
+- feat(door): launch-time concurrency override args on the run verb (#498) (#506)
+- fix(door,runner): quota cost gate and stamps obey the route-identity contract (#499) (#505)
+- ci: fan the serial suite out to 8 matrix lanes behind the same gates check (#502)
+- feat(retry): author-tunable per-node retry caps + door-wired run-level retry knobs (#497)
+- fix(engine): derive the completeness truth in the status read (#496)
+- chore(bead_close): single-source _RE_BC_ITEM_TOKEN in wfcommon; wf.py binds off the private instance (#493)
+- chore(bead_close): pin per-item receipts empty-array asymmetry + say per-item probe cost in grammar (est-fxh6v) (#492)
+- chore(tests): behavior pins in test_i — drop SOURCE-text def-name greps (est-luk28) (#490)
+- docs(grammar): scope bead_close unrenderable clause to .id (actor not enforced in code) (#489)
+- fix(contract): between-turns wake is the delivery default — stop teaching the wait loop (#487)
+- feat(bead_close): per-item {FIELD} interpolation on fan-out nodes with per-item close receipts (#486)
+- validate: refuse malformed {run.X} refs at admission (estate-2026-10-19 class) (#484)
+- fix(inputs): #476 truncated input blocks carry a standard read-the-full-record advisement (#482)
+- fix(inputs): #473 explicit ref to a skipped head resolves to a labelled skip-sentinel block (#480)
+- feat(door): maxItems joins the admitted schema subset; enum widens to boolean/integer (#472, est-v2fr6) (#478)
+
+### Contributors by PR
+
+- #543 — @jacobhausler.
+- #542 — @jacobhausler.
+- #540 — @jacobhausler.
+- #537 — @jacobhausler.
+- #536 — @jacobhausler.
+- #535 — @jacobhausler.
+- #534 — @jacobhausler.
+- #532 — @jacobhausler.
+- #530 — @atbrace.
+- #528 — @atbrace.
+- #526 — @jacobhausler.
+- #524 — @jacobhausler.
+- #523 — @jacobhausler.
+- #519 — @atbrace.
+- #516 — @atbrace.
+- #515 — @atbrace.
+- #514 — @jacobhausler.
+- #513 — @atbrace.
+- #512 — @jacobhausler.
+- #511 — @jacobhausler.
+- #510 — @jacobhausler.
+- #507 — @jacobhausler.
+- #506 — @atbrace.
+- #505 — @atbrace.
+- #502 — @jacobhausler.
+- #497 — @atbrace.
+- #496 — @atbrace.
+- #493 — @jacobhausler.
+- #492 — @jacobhausler.
+- #490 — @jacobhausler.
+- #489 — @jacobhausler.
+- #487 — @jacobhausler.
+- #486 — @jacobhausler.
+- #484 — @jacobhausler.
+- #482 — @jacobhausler.
+- #480 — @jacobhausler.
+- #478 — @jacobhausler.
+
+### Notes
+
+
+- feat(cron): `cron_bridge.py` — the self-terminating watchdog tick's lifecycle
+  (est-ip975, PR-1 of 3; dormant module, no caller yet). One core cron job
+  keyed BY NAME (`hermes-workflows-tick`, `no_agent=True`, prompt None):
+  `ensure_tick()` is find-then-create (double-arm idempotent — re-arming can
+  never accumulate rows), `teardown_tick()` DELETES (never disables; jobs never
+  accumulate), `tick_schedule()` resolves WF_TICK_SCHEDULE env > config
+  `workflows.tick_schedule` > `every 2m`, and `write_shim()` mints the
+  executable bash shim under `<HERMES_HOME>/scripts/` the core scheduler
+  requires (it runs job scripts argument-free and only inside that dir). Host
+  imports ride the guarded `_jobs()` seam: no core cron degrades to a silent
+  no-op, never a raise. New test: tests/test_tick_bridge.py (hermetic — fake
+  jobs module at the seam + tmp HERMES_HOME, the live cron store is never
+  touched; red before the module, green after).
+- fix(door): a `from:<name>` string handed to the `graph` slot — the retired
+  library pin — is no longer fed to `json.loads` and refused as
+  "graph is not valid JSON: Expecting value...", which names the wrong
+  offender and no remedy. The refusal now names the pin as such and carries a
+  `hint` pointing at the live seam: `run` with `from="<name>"` (the name is
+  quoted back). Malformed-JSON refusals are unchanged.
+  Tests: tests/test_graph_legacy_pin_hw_sl0.py.
+- docs(runner): turn/accounting contract (issue #387,
+  option-(b) ruling 2026-10-11; est-lw1eh). `references/budgets.md` now says
+  plainly that `max_turns` is billed per API call — `api_calls == turns`, ONE
+  counter, no reserve-final-turns seam and no reset knob (the knob variants
+  were declined by the ruling, behavior unchanged) — that a cap death is typed
+  (`error_class: cap_exhausted`, run clock `exhaustion_reason: turn_cap`,
+  door `stop_reason.class`) and re-drivable on `retry.bounded`, and what an
+  author does instead of reserving: size caps with the answer calls counted in,
+  split the node, write-first. Pinned in `references/grammar.md` beside the
+  `retry` law with a pointer to budgets.md as the single source.
+  Tests: tests/test_turn_accounting_contract_lw1eh.py (engine-driven with the
+  fake budget_lane: argv `--max-turns <cap>` on every spawn, typed death with
+  the cap named, recorded `api_calls` reaching the cap, `turn_cap` on the run
+  clock, exactly one `node.retry` bounded re-drive, and the below-cap `done`
+  twin carrying no cap evidence anywhere).
+
+- feat(runner): capture-boundary output clip + oversized-input budget
+  (est-x92v7, peer row atbrace:hw-s53 #6). `save_node` is the persist choke:
+  every string a node record persists passes bearer redaction FIRST, then a
+  head/tail clip at `WORKFLOW_OUTPUT_CLIP` chars (default 100000); the
+  retention marker names the dropped count, the total, and the ceiling, and
+  re-persisting a clipped record is a no-op. `build_inputs` caps the assembled
+  `## Inputs` section at `WORKFLOW_INPUTS_BUDGET` chars (default 200000) and
+  refuses loudly through the typed `inputs` spawn failure past it - never a
+  silent truncate. An invalid knob value warns on stderr and the default
+  stands. Tests: tests/test_output_clip_x92v7.py (O1 oversized capture, O2
+  marker round-trip, O3 config override, I1 budget refusal, R1 redaction
+  upstream of the clip).
+
+- fix(wf): exhaustive fail-closed resolution (WF-GRAFT-4, est-f1w4u). A
+  settled router no longer closes the run done: a fork (done/partial, >=2
+  direct consumers) whose EVERY direct consumer sits terminal-skipped on an
+  UNTAKEN edge (when-false, prune cascade, gate skip) commits the run FAILED
+  naming the fork (`run.blocked error_class=dead_end` + WORKFLOW_FAILED),
+  never a silent idle; a consumer skipped via the on_fail catch is a TAKEN
+  edge (author-tolerated) and never counts. A persisted run-dir `abort.json`
+  {node, source, reason, at} (atomic, first flag wins, survives a runner
+  restart) forces the failed verdict and outranks every done branch: sources
+  are the new `on_fail:"abort"` keyword (handled before the fallback-agent
+  lookup; the failed status STANDS — never converted to skipped) and a
+  zero-item fan-out with no `on_fail:"<agent-id>"` else-arm (flag set
+  alongside `fanout_empty`, even under `on_fail:"skip"`). The flag is checked
+  first at every quiescent boundary — before the on_fail-catch opportunity
+  and before finalize-done — and a flagged run spawns nothing new (in-flight
+  waves drain, never killed). Tests: tests/test_fail_closed_f1w4u.py.
+- feat(telemetry): CLI-spawned children now report their own per-node counters.
+  The runner pins `HERMES_WF_TELEMETRY` (the join key: the session-key prefix)
+  into every agent spawn; inside a child carrying that pin and `HERMES_WF_RUN_DIR`,
+  the plugin registers `post_api_request` + `post_tool_call` and rewrites one
+  small JSON sidecar atomically per event (`<run>/telemetry/<key>.json`:
+  api_calls, tool_calls, input/output/total tokens). The runner folds and
+  consumes the sidecar at the settle seam (`_stamp_served`), the fact rides the
+  committed node record (solo and per fan-out item) and surfaces through
+  `node_facts`; absent, corrupt, or un-writable telemetry never blocks a settle
+  and reads absent, never a zero. Processes without the pins (gateway, door,
+  interactive) register nothing and pay nothing. Closes the documented P3 blind
+  spot (CLI children never fire `subagent_stop`). Tests:
+  tests/test_node_telemetry_sidecar_wqml6.py (gate, atomic write, corrupt and
+  missing sidecars, settle join, read model, end-to-end via the fake child).
+
+- feat(runner,door): WF-GRAFT-1 — wake-noise control: honor the Hermes `[SILENT]`
+  verdict, and a `wake_tier` ladder over every node (est-1f7cn, PR #533; adapted from
+  itechmeat/hermes-workflows `notifications.py:29-45`, `engine.py:934-936`,
+  `schema/nodes.ts:100-112`, audit est-ll0nn rank 1). The failure prevented: a
+  scheduled graph whose lap finds NOTHING still cost the owner a full agent turn,
+  because the run-result wake always pushes and the only typed suppression in the
+  grammar was `fanout.stragglers` — the honest way to be quiet was to delete the
+  watcher. Now a `run.done` whose DECLARED verdict (the graph's top-level `result:`
+  node, read from the run's committed `graph.json`, efp-valid via `node_rec`) carries
+  `[SILENT]` POSTs nothing and records exactly ONE probe row
+  (`suppressed:"silent_marker"`, `delivered:false`) that no re-drive re-writes and
+  nothing retries; and `wake_tier` (`full`|`quiet`|`silent`; graph top level as the
+  default, per-node on agent/gate, door-validated by value with the set named) quiets
+  the notices whose SUBJECT is that node — `quiet` its fan-out straggler observation,
+  `silent` also its own gate hold, which the author then owns polling. The floor is
+  law, not a default: no tier governs `run.done`/`run.failed`/`run.partial`, a
+  malformed tier reads as `full` (over-wake, never swallow), the operator outbound
+  mirror never consults either reason, and a marker in ANY other node's output
+  changes nothing — binding `[SILENT]` to the declared verdict is what keeps a lane's
+  prose from speaking for the run. Suppressed notices print
+  `WORKFLOW_WAKE_SUPPRESSED` and stay legible in `wake.jsonl`: a suppression, not a
+  hole. Pin: tests/test_wake_silent_tiers_1f7cn.py (33 checks, incl. an in-test
+  mutation proof and an external probe severing the `notify()` seam: 8 FAILs / rc=1).
+  A graph carrying neither key wakes byte-identically.
+
+- feat(wake): wake-burst coalescer with a trailing re-check on the
+  fanout.stragglers wake class (est-zmizd, ported shape atbrace:hjs-epl /
+  iw-recon hooks.py:50-179, SYNTHESIS.md #12). A burst inside one 2 s window
+  advances exactly twice: the leading wake plus one trailing re-check that
+  names the LAST suppressed key, never once (the audited peer flaw DROPS the
+  suppressed tail) and never N. A suppressed wake records a pending re-check
+  in `wake-debounce/<event>.json` under the run dir (cross-process, durable);
+  the runner drains due re-checks at the wave boundary and finalize() force-
+  flushes every pending tail before the terminal wake, so the final event of
+  any burst always lands. The re-check re-enters notify(): a delivered
+  instance costs zero POSTs via ledger dedupe. Fail-open law adopted: any
+  marker-store error fires the wake: a double wake is harmless, a lost
+  transition is not. Terminal and gate wakes are outside the coalescer.
+  Tests: tests/test_wake_debounce_trailing_zmizd.py (29 checks: burst
+  collapse, trailing-key, quiet path, fail-open, end-to-end POST count).
+
+- feat(retry): the transient ladder's backoff window and attempt count persist
+  per node (est-9ceqc, grafted from the converged atbrace:hw-r0a mechanism).
+  SHIPPED SCOPE (corrected by est-9qhpf — the merged PR#539 squash subject and
+  body describe a DEFERRED design whose machinery — `retry_state.json`, a
+  `retry_policy` run arg, `wave_boundary_defers`, `_retry_drain` — exists
+  nowhere in this codebase and never shipped): the runner writes
+  `{deadline, attempts, log}` to `retry-window.json` in the run dir before
+  each backoff sleep and clears the key once the node settles anything but
+  the transient death; a runner killed mid-backoff resumes IN THE NODE'S OWN
+  THREAD by waiting the deadline out (polled, stop-aware — never serializing
+  a sibling) before its first spawn for that node, and the in-boot ladder
+  seeds its attempt counter from the persisted count. The default transient
+  schedule is exponential (base 2 s, ceiling 30 s); an explicit two-element
+  `retry_backoff: [a, b]` keeps the fixed schedule. The seed alone did NOT
+  gate the first spawn of a re-drive against a spent cap — that bound is the
+  fix below, not this feature.
+  Tests: tests/test_persisted_retry_window_9ceqc.py. Law: full text in
+  references/transient-retry-window.md (AGENTS.md carries the one-line
+  hint-surface form; the 32k hint cap forced the fold).
+
+- fix(retry): the persisted lifetime attempts gate EVERY spawn, including the
+  first spawn of a re-drive (est-9qhpf, B1 of the PR#539 deep re-review at
+  head 3e5c40f2). The window seed only ever bounded the IN-BOOT ladder: a
+  runner SIGKILLed while the lifetime-Nth spawn (the grant that spent the
+  cap) was in flight resumed past the deadline and spawned N+1 against the
+  bound, and that settled death committed the mislabeled error_class=transport
+  attempts=1 attempts_log=[] — the est-ja41 record-vs-ledger agreement broken
+  across the restart seam. Now `_honor_retry_window` consults the node's
+  transient cap at the same read: a first spawn for a key with persisted
+  attempts >= cap NEVER spawns (once per boot per key, so a single fresh boot
+  still runs the full 1 + cap ladder and ADOPT-NOT-RESPAWN still attaches to
+  live work), and the boot commits transport_exhausted with the SEEDED
+  lifetime count and the persisted ledger — the pre-sleep save now carries
+  the attempts_log entries (`log`) alongside `{deadline, attempts}`. A legacy
+  window without the ledger still refuses at the count and commits the true
+  class and count. New test: tests/test_lifetime_bound_redrive_9qhpf.py
+  (SIGKILL exactly at the kill-during-third-spawn seam — the shipped
+  SIGKILL test pinned only mid-first-sleep — plus refusal-record and
+  persistence units; RED at 31dbf6a as TOTAL_SPAWNS=4 / transport@1 / log
+  empty, GREEN after).
+
+- fix(watchdog): the fanout.stragglers disc formats a missing launch stamp as
+  the `'q'` literal, never through `:.3f` (est-waf8y, est-c0jo1 passport D1).
+  An open item queued behind a saturated fan-out cap has no launch stamp; the
+  disc line formatted the string default with a float spec — `ValueError`
+  inside the straggler watchdog on every poll after the verdict, so the wake
+  NEVER fired for a mixed cohort (>=1 launched straggler + >=1 queued-behind
+  open item) while the ledger filled with fake `item.commit.error` rows. Only
+  stamped items are formatted now (the same launched rule as
+  `straggler_verdict`: `get() is not None`); the latch law is untouched —
+  same cohort state -> same disc, a launch-stamp overwrite (retry, or a
+  queued item finally launching) flips it -> re-arm.
+  tests/test_fanout_stragglers_nxr.py gains case C (saturated lane cap via
+  `item_concurrency=2`; the first wake's payload must name the mixed cohort)
+  and pins its launch-all precondition against the GLOBAL seat semaphore via
+  the door's per-run `max_seats:0` opt-out — the passport's run1 EXACTLY-ONE
+  flake was seat contention splitting the wave and the latch re-arming
+  honestly on the second launch wave (est-waf8y D2); the run2 boundary flake
+  was already superseded by the >= floor_s assertion of #469.
+
+- test(fixtures): shared fake-runner helper (tests/fake_runner.py) for door-scan fixtures — the argv guard tail, absolute-path rule, and live seat child now live once; test_wfpid_owner_8/test_daemonize_8 refactored onto it; helper ships in the pack list.
+- docs(agents): AGENTS.md folded under core's 32,000-char subdirectory-hint cap — the §3c template catalog, the §3b 1.0.1 settings variant, and the §5 runtime map are relocated to references/example-tour.md (deduplicated, one copy per paragraph, per-fold headings); tests/test_docs_hint_cap_73c.py pins the cap, fold pointers, fence parity, and fold-not-clone (the over-cap file silently dropped §3e/§4 on every mid-run hint load).
+- feat(ci): P1 observe instruments for the estate-ci contract (NEXTGEN-CI
+  (b)/(c)/(d)/(e) P1; spec ledger estate run 20261021-195954). OBSERVE mode
+  only — zero behavior change on the merge path. Adds: `tests/budget.json`
+  at the interim (b) hw numbers (330 / 44 / 3650, basis field says recut at
+  observe week); `scripts/timing_observe.py`, a manifest generator that
+  parses THIS workflow's own `gh run view --log` (per-case `NAME: rc`
+  completion deltas per lane) and writes `tests/timing.json` with EXACTLY
+  {case, wall_s, timeout_s} — the generator may only decrease weights, a
+  raise requires `--cite-run` (S3 addendum); first run at green main run
+  39696694242: 344/344 cases parsed (merged-TOTAL validated), sum wall
+  1876.7 s -> 13 lanes at lane_cap 150, committed. `scripts/registry_observe.py`
+  + `tests/registry.json`: burn-token-keyed census (path or header token,
+  grep law in the script), rows {case, tier:1, burn, order_group, after};
+  bootstrap guard-last `after:["ALL_OTHERS_IN_LANE"]` on
+  test_suite_runs_root_762 + test_fakeb1_gitpin_954r (S1).
+  `scripts/md_inputs_observe.py` + `tests/md_inputs.txt`: .md inputs
+  referenced by test sources (admission deny-consumer, S4b).
+  `.github/workflows/estate-ci-observe.yml` + `scripts/ci_preflight_observe.py`:
+  `# ci-contract: estate-ci@v1` pin line and an OBSERVE preflight job that
+  fetches the contract's own preflight script at the pinned tag and runs it
+  verbatim against this checkout — never required, never reds, writes no
+  status; the honest P1 observation is `PREFLIGHT FAIL
+  ci.yml:DUPLICATE-EMITTER` until the P2 cutover renames the legacy `gates`
+  job (one-emitter law). Ledger attempt fields: `scripts/suite.py` stamps
+  `run_attempt` additively into done.json when the runner exports
+  GITHUB_RUN_ATTEMPT (marker shape unchanged otherwise; --merge untouched —
+  test_shard_merge_speed's exact-key assert widened to the additive law;
+  pack.py SOURCE_ONLY_SCRIPTS declares the four new estate-CI scripts).
+  `contract-call` carries job-level `permissions` mirroring the contract's
+  declared block (contents read; actions/pull-requests/statuses write) —
+  GitHub startup-fails an under-permissioned reusable-call job, and
+  `if: false` guarantees the grant rides a job that never runs.
+- fix(runner): the `on_skip:"pass"` done-commit on agent nodes now rides the
+  `_effect_gate` boundary (#56 law, est-0lxnh). The skip site committed
+  `done` with `{agent:"skipped"}` UNGATED, so an agent declaring `effects`
+  with a false `when` booked a zero-receipt done and the ledger ended
+  `run.done` over a postcondition that was never written — the fifth bypass
+  of the receipt law, PRE-EXISTING on main, found by adversarial probe P2
+  (replayed live at ac5c11ad: rc=0, status=done, `effect_receipts` absent).
+  The commit now runs through the same `_effect_gate` as the echo boundary:
+  unproven rows DEMOTE it to typed `failed` (`error_class:"effect_receipt"`,
+  `error: effect_receipt_unproven: ...`, measured rows ride the record,
+  never retried) and the run never reaches `run.done` over them. Honest
+  degradation holds: a node declaring no `effects` passes through untouched —
+  every existing `on_skip:"pass"` graph is byte-identical. Not folded into
+  #517 (the probe read it; the defect pre-dates it). New test:
+  tests/test_skip_pass_effects_0lxnh.py (red at base, green after).
+- feat(door): #509 — door UX on unknown-key refusals. Every `graph_invalid`
+  refusal banner now names the door's own version (`[door X.Y.Z]`, plus the
+  machine field `door_version`), a refused top-level key that belongs to a
+  KNOWN GRAMMAR LAYER is named with its floor (e.g. `params` requires plugin
+  >=1.4.0, this door 1.3.9 → see the requires_plugin handshake), when the
+  plugin.yaml on disk and the loaded code diverge the banner carries an
+  explicit RELOAD BOUNDARY note (the wave-9 shelf audit's three round-trips
+  were spent rediscovering exactly that split), and a near-miss key gets
+  difflib's nearest accepted key(s) as a possible typo. The legacy refusal
+  prefix stays byte-identical; hints append. New release law (AGENTS 4d): a
+  new top-level graph key must add its row to `GRAPH_KEY_MIN_VERSION`, and a
+  release must re-pin `CODE_VERSION` beside plugin.yaml — both enforced by
+  tests/test_door_ux_509.py. No semantics change: refusals refuse exactly as
+  before, only the text and an extra field are richer.
+- feat(runner): run.failed/run.done wake payloads carry run-dir/log pointers
+  (#501). The wake text for those two events additionally rides `run_dir="<path>"`
+  and, on run.failed, `failed_node_logs=["<log_path>", ...]` — the efp-valid
+  committed failed-node records' recorded `log_path` fields, resolved at the
+  notify point under the same validity law the wake identity already uses
+  (`node_rec`; graph falls back to the run's own `graph.json`). A pointer that
+  cannot be resolved is ABSENT, never fabricated: pre-spawn refusals carry no
+  log, a stale record is not a fact, and an unreadable graph omits the field
+  whole. The fixed template bodies stay verbatim — the pointers ride as inert,
+  runner-computed, JSON-quoted, redacted protocol fields beside `run_id`/`event`,
+  so authority law (no caller-authored owner text) is untouched and
+  delivery/identity/dedupe behavior is unchanged (the discriminant never reads
+  them). Other events' text is byte-identical.
+- chore(ci): the `gates` check is now a fan-in over 8 matrix lanes instead of
+  one 30-minute serial job. Measured wall census over the last full passes:
+  serial suite 28.7-32.0 min (97% of CI time; median case 1.1 s, top-25 cases
+  54% of the wall). `suite.py --shard I/8` slices the SAME sorted case list by
+  position — serial-within-lane is untouched — and `suite.py --merge` fuses the
+  lane ledgers back into the identical `exits.json`/`admission.json` contract,
+  refusing any lane that is missing, interrupted (new `done.json` completion
+  marker), empty, or overlapping: #112's zero-discovery law extended from the
+  suite to its lanes. `concurrency.cancel-in-progress` joins the workflow, so a
+  re-push replaces the stale pass instead of queueing a second one. Expected
+  PR wall: ~7-9 min from ~31 at unchanged coverage.
+- feat(retry): author-tunable retry. A node (or graph `defaults`) may now carry
+  `retry: {transient: N, bounded: K}` — integer caps 0..8 on the two auto-retry
+  ladders (defaults 2/1 = the previous hardcoded law; 0 disables that ladder
+  for the node). Every pass re-enters the existing guards whole (class, tool
+  progress, stop, per-run budget draw, #61 quarantine, #102). Alongside it the
+  door finally wires the knobs the runner has always read from run.json meta:
+  the run verb accepts `retry_backoff [a, b]` and `retry_budget N` and bakes
+  them (absent args => run.json byte-identical). Motivation (estate ledger):
+  council seats dying once on transport failed whole fan-outs where one bounded
+  re-drive would have healed the seat.
+- feat(door): optional `concurrency` / `item_concurrency` launch-time args on
+  the `run` verb (#498). A caller that must not edit the graph (`from=` library
+  launch, re-run under a different seat budget) could not set run width at all:
+  the keys were graph-only, a run arg of that name was silently dropped, and a
+  co-declared graph key won without a word. The door now injects the args into
+  the graph channel before validation — same shape law, owner clamp and
+  submit-time bake as graph keys, same fingerprint exemption — and refuses arg+
+  graph co-declaration at submit naming the key (one channel per key). Absent
+  args leave `run.json` byte-identical (no-cap stability law).
+- docs(skill): SKILL.md now states the shelf-save semantics the code already
+  implements: `save(run_id)` shelves the run's door-baked `graph.json`
+  (defaults and shape budgets concrete, provenance `source: null` unless
+  passed), so its `source_digest` — sha256 over the canonical `nodes`, budgets
+  included — never equals the author file's digest; a `graph`/`graph_path`
+  save shelves author bytes and the digests match, and a composite run refuses
+  `save(run_id)`. Also names where the graph-bound runner verdict lives:
+  `graph_fingerprint` rides `runner_exit.json`, not `run.json`. Pinned by
+  `tests/test_skill_shelf_save_4ut.py`.
+
+- fix(engine): the status payload now carries the completeness truth as a
+  derived field. `completed` (bool) rides every `status` read, derived in the
+  same fold as `status` and `failed_nodes` — true only for a terminal
+  done-verdict with zero failed nodes — so a green-looking ledger line can
+  never hide a failed or unfinished node: the
+  `completed:true`-with-failed-triage shape measured on the estate ledger
+  reads false through the read model. `status` itself is untouched (the
+  sys-1603 leaf-fail law keeps its meaning: done = no work left, not
+  finished-green), the on-disk `runner_exit.json` key set is unchanged, and
+  no second stored copy of the fact can drift from its law.
+
+- fix(contract): between-turns wake is the delivery DEFAULT; the wait loop was
+  demoted to what it always mechanically was — optional blocking observation and
+  the revive verb. Operator-facing truth audit (host ledger, ~40 runs): the
+  owner-session wake self-post lands (verified injected as a user turn in the
+  owner session dump), yet SKILL.md ordered agents to sit in the `wait` loop
+  ("ending your turn right after run is how runs stall") and every door hint
+  called wake "optional" — so agents blocked the originating session while
+  delegate_task's children re-entered. Changes: `run` hint states the wake
+  contract and says END YOUR TURN; `release`/`amend` hints stop pointing at
+  blocking first; the action schema marks `wait` OPTIONAL; derived `next` rows
+  for a live run carry a `wake` note when (and only when) run.json stamps an
+  owner.session_id; SKILL.md Smallest-working-graph, next-law and delivery
+  bullets rewritten async-first (fail-open honesty kept: `wake.jsonl` ledger,
+  status-on-resume after a host restart). Follow-up issue: wake retry + silent
+  `interrupted` class.
+
+- feat(bead_close): per-item `{FIELD}` interpolation on fan-out nodes (#485,
+  estate excavation E-9/E-11). A fan-out bead-worker lane — one item = one
+  estate bead — can now declare `bead_close.id` (and `.actor`) as ITEM
+  TEMPLATES: bare `{FIELD}` tokens (the exact law fan-out goals pay; `{item}`
+  and `{index}` resolve too) render per item at the commit edge and EVERY
+  committing item is read back from the store at its own rendered id. The
+  measured row rides each item's record inside `all_results` as
+  `bead_close_receipt`; the full indexed enumeration rides the node record
+  under the plural `bead_close_receipts`. The `close-pending` honest escape
+  is per item; unrenderable templates (empty / whitespace / surviving braces)
+  fail that item typed and are never probed. The door refuses the tokens on
+  any non-fan-out node, and a token-free declaration keeps the node-scoped
+  single-probe shape byte-identical. Tests: `tests/test_bead_close_fanout_485.py`.
+
+- feat(door): `maxItems` joins the admitted schema subset as `minItems`' mirror
+  and `enum` widens onto `boolean`/`integer` (#472, est-v2fr6). Fan-out rosters
+  (arena candidates 2-6, swarm items 2-8) and bug-fix gate-keys
+  (`reproduced: enum[true,false]`) can now self-enforce instead of degrading to
+  prose. `wf.validate()` enforces the cap (`"{path}: expected at most N
+  item(s)"`) and typed membership — bool never satisfies an integer enum, an
+  integral float may hit its integer rung; an unsatisfiable `minItems >
+  maxItems` pair is refused at the door; the unsupported-keyword refusal names
+  the supported set AND the `description`-prose fallback for still-unenforceable
+  constraints (integer bounds, patterns). Tests:
+  `tests/test_schema_max_472.py` (+ re-pinned #96/#107 canaries).
+
+- docs(v1.4.0): revitalization pass — README drift fixes (`/wf <name>` returns
+  a run instruction, `/wf gates` behind `admission_gates`, `library name:` /
+  `amend patch` forms documented), four spec-backed showcase diagrams under
+  `docs/pr-diagrams/` with `docs/showcase.md` glosses; removed
+  `docs/event-driven-wake.md` (unreferenced pattern essay; history in git).
+  (est-7m6wv)
+- feat(spawn): marker-gated creation-override flag strip (est-yq2xq). On seats
+  whose gateway freezes the session route at create, `--continue <skey>
+  --create-if-missing` + any creation override is refused (child dies rc=2,
+  whole waves die). The runner now strips the frozen-route flag pairs
+  (`--max-turns`, `--run-budget`, `--reasoning`, `-t`, `-m`, `--provider`)
+  when `WF_OMIT_POLICY_FLAGS=1` or the marker
+  `<hermes_home>/workflows/omit-policy-flags.on` exists — children ride seat
+  defaults and per-node pinning is unavailable while on; delete the marker /
+  unset the env to return byte-identical stock argv. This replaces the
+  estate-side monkey-patch that every plugin update wiped. Contract in
+  `references/operations.md`.
+- `tests/test_mechanic_admission_gate_104.py`: the issue-#104 admission gate as
+  an executable check — L1 drives a mechanic-shaped probe graph through the
+  real runner with the recording fake door and asserts deny-default
+  auto-release on `hold_timeout`, arm self-no-op, and audit-shape gate skips
+  with zero arm spawns; L2 pins the blind-holdout ledger (run.json.status
+  blinded, sealed-key digests, battery counts as measured ints); L3 becomes
+  binding on any vendoring PR via `WF_MECHANIC_CANDIDATE` (engine validation
+  in admission mode, deny-named defaults, single-gate arm dependencies).
+  Battle cards in `references/mechanic-battle-cards.md`; ledger in
+  `receipts/workflow-mechanic/admission-104.json` (est-t3m6).
+
+- `scripts/wofify.py`: the WOFification authoring-time seam — `inventory`
+  (path-shape census of a way-of-working repo), `scaffold` (never-clobber pack
+  skeleton), `validate` (pack graphs compiled and measured by the door's own
+  validator; card sidecars skipped; zero graphs is never green), `shelf`
+  (adoption script with sha256 drift refusal). Not a door action, like the
+  vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
+  (est-h0huv).
+
+## [1.4.0] - 2026-10-19
+
+- docs(v1.4.0): revitalization pass — README drift fixes (`/wf <name>` returns
+  a run instruction, `/wf gates` behind `admission_gates`, `library name:` /
+  `amend patch` forms documented), four spec-backed showcase diagrams under
+  `docs/pr-diagrams/` with `docs/showcase.md` glosses; removed
+  `docs/event-driven-wake.md` (unreferenced pattern essay; history in git).
+  (est-7m6wv)
+- feat(spawn): marker-gated creation-override flag strip (est-yq2xq). On seats
+  whose gateway freezes the session route at create, `--continue <skey>
+  --create-if-missing` + any creation override is refused (child dies rc=2,
+  whole waves die). The runner now strips the frozen-route flag pairs
+  (`--max-turns`, `--run-budget`, `--reasoning`, `-t`, `-m`, `--provider`)
+  when `WF_OMIT_POLICY_FLAGS=1` or the marker
+  `<hermes_home>/workflows/omit-policy-flags.on` exists — children ride seat
+  defaults and per-node pinning is unavailable while on; delete the marker /
+  unset the env to return byte-identical stock argv. This replaces the
+  estate-side monkey-patch that every plugin update wiped. Contract in
+  `references/operations.md`.
+- `tests/test_mechanic_admission_gate_104.py`: the issue-#104 admission gate as
+  an executable check — L1 drives a mechanic-shaped probe graph through the
+  real runner with the recording fake door and asserts deny-default
+  auto-release on `hold_timeout`, arm self-no-op, and audit-shape gate skips
+  with zero arm spawns; L2 pins the blind-holdout ledger (run.json.status
+  blinded, sealed-key digests, battery counts as measured ints); L3 becomes
+  binding on any vendoring PR via `WF_MECHANIC_CANDIDATE` (engine validation
+  in admission mode, deny-named defaults, single-gate arm dependencies).
+  Battle cards in `references/mechanic-battle-cards.md`; ledger in
+  `receipts/workflow-mechanic/admission-104.json` (est-t3m6).
+
+- `scripts/wofify.py`: the WOFification authoring-time seam — `inventory`
+  (path-shape census of a way-of-working repo), `scaffold` (never-clobber pack
+  skeleton), `validate` (pack graphs compiled and measured by the door's own
+  validator; card sidecars skipped; zero graphs is never green), `shelf`
+  (adoption script with sha256 drift refusal). Not a door action, like the
+  vaporized `wf_dialect.py` it mirrors; contract in `references/wofification.md`
+  (est-h0huv).
+
+
+## 1.3.9 — 2026-10-17
+
+Patch release: 43 merged PRs since v1.3.8 — runner hardening (zombie-reap
+settle, attempt history, launcher pins, workdir grant), seat admission
+(FIFO queue, pool-recorded cap), wake catch-all, node-targeted kill, token
+run-budget cap, the session workflow tray and the public starter library.
+
+### Merged PRs (all via the maintainer account)
+
+- fix(door): no placeholder mints a phantom run_context; s12 warn rows on validate; library show (est-kg3y) (#421)
+- test(ratelimit): spawn-proportional W1 wall bound + per-pid fixture (est-qp8dj) (#420)
+- fix(process-tree): report unreadable quiescence as unknown (est-cbbc) (#384)
+- docs: harden amend, read-model and lane rules from estate operation history (#426)
+- fix(post-exit): write launching receipt before first launch attempt (est-fdulo b) (#434)
+- feat(gates): zero-turn gate answers on the admission lane (+dispatch witness observer) (#429)
+- feat(library): continuous discovery-time structural admission (est-2ek.1.828) (#415)
+- fix(wf): harvested max_turns partial reaches the bounded layer-2 re-drive; per-node harvest_policy clamp (est-ggqs, #256 claim 1) (#422)
+- feat(library): curated public library/general/ starter set + door packaged fallback (#51) (#423)
+- feat(validate): warn on below-shape turn budgets and document lane exits (#256) (#381)
+- feat(door): s12 advisory nudge for single-char/vowel-only node ids (est-6ihr6) (#405)
+- feat(seats): FIFO queue admission + validated operator cap knobs (est-2ek.1.856/857) (#324)
+- fix(#44): child-probe tri-state runner.lock liveness + safe heal of the wedged runner.lock (N30 re-port; supersedes #271) (#439)
+- feat(runner): declared bead_close read-back gate at the commit edge (est-13z1) (#360)
+- feat(cards): hook-led card ledger replaces the per-turn runs-root scan (lane 2, est-w86l0) (#440)
+- fix(scrub): re-anchor stale est-13z1/est-q2nwx guards by feature token (main red at ee5018d) (#442)
+- feat(orphan-held): session-lifecycle observers name runs whose owner died at a gate (lane 4, est-w86l0) (#441)
+- fix: distinguish external signal death from quorum cancellation (#380)
+- feat(hooks): p1 / outbound (config-gated, default-off) (#432)
+- test(833): seat_wait pass-through assertion is wall-clock-tick immune (est-b9dtf) (#444)
+- fix(toolsets): refuse declared-empty selection at graph load; warned fail-closed at the seam (#427) (#446)
+- feat(seats): pool-recorded cap arbitrates admission; two-runner combined cap (est-mg5o2) (#425)
+- feat(desktop): session workflow tray above the composer (#233)
+- fix(door): explicit-provider seat alias pings the alias target id (est-55z04) (#437)
+- fix(read-model): supersede stale fan-out spawn facts after aggregate done (est-zvc7u) (#376)
+- feat(validator): admit agent when/on_skip through the bounded grammar (#132 slice 2) (#383)
+- perf(fingerprint): memoize the efp DAG walk — one def_hash per node, not per path (#433)
+- fix(runner): timed-out attempt's corpus+log survive verbatim into next attempt (est-hls8y) (#436)
+- feat(workflow): node-targeted lane kill — action=kill (est-cl7t) (#438)
+- fix(runner): run_child grants the child workdir on HERMES_WRITE_SAFE_ROOT_EXTRA, a channel core cannot replace (est-2mhl) (#445)
+- feat(wake): class-coverage registry + catch-all waker (est-jbcrw) (#449)
+- fix(seats): seat cap authoritative at spawn — stale inherited WORKFLOW_MAX_SEATS loses to the fresh .env read (est-mg5o2) (#451)
+- fix(read-model): live runner's foreign-pid-namespace child reads running, not pending (est-2ek.1.818) (#297)
+- feat(pin-delta): fail-closed host-effects gate for the vendor/catalog re-pin lane (est-zee7e) (#329)
+- fix(runner): park's attempts history survives the transport ladder (est-ja41) (#353)
+- fix(pack): the release ZIP runs the tests it ships — ship fake-b1, git-free fallback for the 954r pin (est-1nkx) (#358)
+- fix(policy): forbid equivalent Anthropic route spellings (est-e0yqy) (#375)
+- scripts: horde_gen.py — wave-generator successor, W19 defect fixes 2-5 (est-a5obt) (#414)
+- fix(runner): zombie/empty-tree counts as reaped before the #61 fail-close; drained-during-check never dead-letters (#448) (#450)
+- fix(runner): recover missing installation launcher pins (#379)
+- fix(amend): name every RUNNING node an amend resets (#366) (#390)
+- feat(drift): offline checkout probe (#125 item 3, est-b994) (#382)
+- feat(run-budget): tokens-only pre-dispatch cap + graceful budget_exhausted partial (est-3acn) (#435)
+
+### Notes
+
+- **Wake-router class coverage + catch-all (est-jbcrw, dead-landing census
+  verdict 4):** `notify()` can no longer return silently for an event outside
+  `_WAKE_TEMPLATES`. A closed registry `_WAKE_EVENTS` names every event a call
+  site may pass; an unmapped class wakes on a fixed runner-authored catch-all
+  body (AUTHORITY LAW r5 unchanged — the text table is still the only author,
+  the key rides only as the Idempotency-Key), the probe row is typed
+  `catchall`, and the runner prints `WORKFLOW_WAKE_UNMAPPED_EVENT` on stdout so
+  a class gap is loud in the field. The old fail-silent rule let scripted wakes
+  for unmapped classes rot (5 dead rows attributed in the census). Pinned by
+  `tests/test_wake_catchall_jbcrw.py`.
+
+- **Zombie-reap settle at the #61 gate (#448):** a spawn caught mid-reap no
+  longer reads as a live descendant. The commit-edge quiesce honors its own
+  dead-or-empty contract (`proof == ""` returns the record untouched — a
+  banked-complete node commits through harvest-on-death instead of dead-lettering
+  under a manufactured `left_live_descendants`; the nightly #427 lane lost a
+  complete answer to exactly this race, where the guard quoted the live tree as
+  `[]`). Every stuck verdict now rides a bounded settle (2 re-checks x 0.5 s,
+  waitpid first): a /proc row that vanishes with an ESRCH re-ask, or an empty
+  `ps` row, is reaped-class death; fail-closed stands only for pids still
+  non-zombie live after the settle, and the g255 unknown-state law is untouched.
+- **Operator scar-laws port (docs-only):** fifteen generalizable lessons from a
+  retiring usage skill fold into the docs they belong to, one hardened line
+  each — twelve authoring and recovery laws in `references/operator-playbook.md`
+  (machine-gate probe polarity, error-but-launched dedupe, amend re-queue
+  fingerprint law, cold-start re-runs, index-not-proof premises, no
+  maker-authored green, seat-wait disposition, census-never-quorum, closed
+  verdict enums, decorative-gate ban, control-plane credential containment,
+  parser-first recount diagnosis), two run-lifecycle laws in
+  `references/operations.md` (frozen launch meta, ephemeral run dirs), and the
+  launch-agnostic reusable-graph law in `references/grammar.md`. No engine
+  change.
+
+Desktop:
+- feat(desktop): est-z717 — the live-run TRAY is an opt-in surface: it
+  renders ONLY when `plugins.entries.hermes-workflows.settings.tray` is
+  literal `true` (GET /settings, `wfcommon.owner_setting` — fail-closed
+  default OFF while the native tray SDK area hermes-agent#133724 is
+  unlanded; when it lands, default-on rides that mount). The PillRail stays
+  the always-on surface, untouched by the gate. Door side: `_owner_stamp()`
+  honors the estate-shape law — an estate/dispatcher launcher sets
+  `WF_OWNER_SESSION=''` to stamp a NULL owner (pane-only, blank-owner honest
+  absent — a lane never impersonates the dispatcher's chat); a non-empty
+  override stamps that session with ui/platform null; unset keeps interactive
+  chats byte-identical. Zero-directive capture pinned end-to-end: a door
+  run-create under `HERMES_SESSION_ID` joins that chat's rail with NO
+  `::workflow` output. Tests: `tests/test_settings_route_z717.py`,
+  `tests/test_owner_session_override_z717.py`,
+  `tests/test_z717_zero_directive_capture.mjs`, gate pins in
+  `test_run_tray`/`test_session_tray`.
+
+- feat(desktop): session workflow tray above the composer (#230) — the
+  running-only accumulator stacks beside the pill rail on the
+  feature-detected composer mount (tray ?? underside ?? top). Collapsed
+  default is ONE slim row `[chevron] N running workflows` (pictured density,
+  inline styles over the CSS-var tone table, in-memory `$trayOpen` atom);
+  expand-in-place renders one THICK row per live run (name, status dot,
+  nodes done/total + mini progress bar, current node, gate-question snippet
+  while held, wall-clock elapsed); a row click accordion-opens the SHARED
+  MiniGraph for THAT run and `open ↗` escalates to the pane. Terminal runs
+  leave the tray at once — no ack ledger, no 60 s recap. The pill rail stays
+  mounted with `suppressGates` (exactly ONE GateActions per held run). When
+  neither focused-chat atom answers, the tray derives its sid from the first
+  live run's own owner stamp (honest absence preserved). Mirror
+  `desktop/src/components/runtray.mjs` grew real bodies; the parity test is
+  the leash. Spec: `tests/test_session_tray.mjs` (red-on-base, green-on-head).
+
+## 1.3.8 — 2026-10-14
+
+Patch release for P01/P02 (#418), preserving the v1.3.7 runner, patch/diff,
+card-hook safety and retired baseline/navigation behavior.
+
+- **Factual workflow guidance:** launch, wait and completion messages describe
+  observed state without granting new authority. Cards and curation are optional;
+  waiting can resume interrupted work. Static validation remains distinct from
+  route-probing launch dry runs.
+- **Read-only execution clocks:** a shared snapshot and bounded ledger index
+  project observed timing into status and dashboard responses using existing
+  spawn/item records. Missing evidence and dynamic totals stay explicitly unknown.
+- **Best-effort boundary:** equal-timestamp PID reuse is not complete attempt
+  provenance. No new scheduling, cancellation, authorization or persisted producer
+  contract is introduced.
+- Regression coverage includes malformed/missing evidence, stale identity,
+  fractional timestamps, retries and fan-out joins. S01 is not included.
+
+## 1.3.7 — 2026-10-14
+
+Patch line, sixteen merged PRs since v1.3.6 — the runner's deepest hardening
+wave yet (zombie hygiene, typed silent-death receipts, fail-safe wall events),
+a door amend/diff surface, effect-gated publication, and two audit-mandated
+regimes retired. Every `git log v1.3.6..HEAD` row re-derives from the merge
+commits; authorship of record is listed under **Attribution** below.
+
+**Runner and engine**
+
+- Continuous zombie hygiene for the subreaper pool (#283, @atbrace)
+- External jobs are registered and silent deaths reap typed receipts (#394)
+- Once-only graph `on_exit` postmortem (#129 → #391)
+- `resume_hint`: dead-attempt artifact inventory on every re-run path (#130 → #284)
+- Read model: fail-safe wall events and one snapshot per poll (#385)
+- Null-quorum fan-out death now names the real cause (#410)
+- Publication nodes gate `run.done` on external-effect receipts (#56 → #403)
+
+**Door and graph**
+
+- Patch surface for amend plus `action=diff` confirm surface (est-2del → #412)
+- PR-owned source deletions permitted without graph rewrites (est-i24i → #378)
+- Regen normalizes `.graphify_root` to contract `'.'` (est-0an45 → #409)
+
+**Hardening and tests**
+
+- Card-hook abandon-safety and cheap `register()` for the upstream v0.21.5
+  plugin contract (#304)
+- Behavioral error-class coverage and dead-fixture cleanup (est-pbwn → #377)
+
+**Retirements (audit)**
+
+- The mandatory all-green `ci-baseline` registry is retired (audit M01 → #351);
+  admission now compares against exits measured on the merge-base
+- The committed code-navigation regime is retired (audit M02 → #319, @atbrace)
+
+Routine graph refreshes ride along (#408, #404).
+
+Attribution — all sixteen merges are `Author: agent` trailers on the squash
+commits; the GitHub actor of record for every one is the org owner account,
+with @atbrace co-authoring the two peer-estate PRs (#283, #319).
+
+- #283 — @atbrace.
+- #319 — @atbrace.
+
+## 1.3.6 — 2026-10-11
+
+Patch line, four merged PRs since v1.3.5 — #396 (the ponytail truth pass over
+the docs and the comments), #399 (the child-prompt line the upstream catalog
+review asked for), #354 (the stale-graph spawn guard), #395 (the compliance
+standard's C8 teeth). The docs are the contract agents code against, and
+every rotted pointer is an agent lap burned on a wrong map:
+
+- **Node-type count corrected** — README and `references/grammar.md` said three
+  (`agent|gate|echo`); `join` is the shipped fourth since the 1.3.0 wave (#396).
+- **`reasoning` runtime-subset law updated to est-flah** — a relay's own enum-400
+  list triggers ONE logged clamp to the nearest supported level (never escalates)
+  and a re-drive; `provider_400` stands only when nothing clamps (#396).
+- **Grammar made complete** — `defaults` and the agent-field lists gain
+  `fallback_models` and `tier`; the `when` literal set gains `None`; the door's
+  run/amend description matches `DEFAULTS_KEYS` (#396).
+- **Dead pointers swept** — five line cites into core re-pointed (runtime_provider,
+  api_error_summary, main.py marker, GRAPH_MAX_BYTES, steer-var bake/reader sites),
+  the GRAPH_REPORT census pointer aimed at its `## Summary` block, four rot-prone
+  line cites replaced by symbol names, a dead doc anchor and a duplicated
+  `{runs,total,counts}` removed (#396).
+- **Child prompt carries no repackaging instruction** (#399, upstream catalog
+  ask 2) — `WORK_DIR_NOTE` no longer tells `-q` children to write refused
+  inline-interpreter payloads into script files; the refusal is core's
+  (`approvals.single_query_mode`), now documented in SECURITY.md as the
+  operator's choice. Guard test inverted to assert ABSENCE; golden re-captured,
+  prompts differ ONLY by the deleted sentence.
+- **A queued spawn never launches a stale definition** (#354, est-byft8) — a
+  spawn that queued on the global agent seat and reaches the Popen instant
+  AFTER an amend moved its effective fingerprint is refused typed
+  `stale_graph`; the comparison is the replay-skip efp law itself (a
+  timeout/max_turns-only amend never refuses), the refusal releases its seat
+  ticket, and the wave boundary re-drives the node under the CURRENT
+  definition — the replay-skip promise held across a queueing window.
+- **pr-compliance v0.3 C8** (#395) — a PR carrying a diagram must now lead its
+  body with a prose `## Problem` (or User story/Why/Context) section, RED
+  without it; the exemplar carrier `docs/pr-diagrams/est-g43qp` draws the
+  broken lane above the fixed lane so the picture alone reviews 90/90.
+- **Comments that lied, told true** — `_typed_error_class` returns `cap_exhausted`
+  (the docstring predated the rename); the rate-limit cap quadruples, it never
+  "doubles-ish"; the settings-cache shape comment matches the stored tuple;
+  `post_exit_hook` docstrings now say the runner stopped dispatching it at the
+  est-xwvu9 strip — tests exercise it, the shipped build never does (#396).
+- **Prompt honesty** — `WORK_DIR_NOTE` drops the single-query repackaging
+  instruction that the engine never honored (catalog review 2, #399).
+
+## 1.3.5 — 2026-10-11
+
+Patch line, sixteen merged PRs since v1.3.3 (supersedes the untagged 1.3.4 prep
+#364 — everything below ships in this single cut):
+
+- **Heartbeat verdict per running node** — the read model now reports each live
+  node's verdict, plus a one-line `run explain` (est-zsws) (#352).
+- **CI diagram-check diff-scoped** — the check now fires only when a PR ADDS the
+  carrier PNG, so body-only PRs stop burning red compliance cycles (#373).
+- **Core-contract drift probe** — a test asserts plugin-registered hooks against
+  core `VALID_HOOKS` (nightly drift probe) (#365).
+- **Chore:** dropped the stale lowercase `.github/pull_request_template.md`
+  shadowing the real template (#368).
+
+- **Unconditional `plugin_version` stamp** — every new `run.json` reports the arming
+  door's own truth (plugin.yaml via `wfcommon.plugin_version()`), not only runs that
+  declared `requires_plugin`; old dirs without the key still load (derive-only, honest
+  absence) (#356).
+- **Agent nodes honor `when` + `on_skip`** — #132 slice 1: a node whose `when` predicate
+  is false skips with its declared `on_skip` outcome instead of running (#355).
+- **Declared effect receipts gate publication-node `run.done`** — a publication node
+  cannot report done without its declared receipts (#346).
+- **Opt-in graph-revision CAS** on door `amend`/`release`/`steer` — stale revisions
+  refuse instead of clobbering (#344).
+- **Security:** the `post_exit_hook` mechanism is stripped from the shipped build
+  (upstream NousResearch/hermes-agent#133387 accepted ask) (#334).
+- **`graph_regen` fix:** shared `\0`-separated `--name-status` parser for the regen
+  diff (est-h3yi) (#314).
+- **Rate-limit-park wall pins** — M2/M3 fanout-respawn wall assertions plus mutation
+  proofs (est-xodi) (#339).
+- **Docs:** portable pre-share validation must pass with `admission=True` (closes
+  est-73vk) (#341); pack card-toolresult-hook ship card + truthful result-contract
+  doc (est-k75i) (#359).
+- **Suite:** the golden seat never wears the launching agent's session identity
+  (#325); graph refresh at 7ae1f6f (#350).
+
+## 1.3.3 — 2026-10-09
+
+Patch line: a child that dies rc=130 carrying the CLI's session-lease notice
+(`Stopped waiting for another Hermes process on this session. Your message was
+not processed.`) is now typed `lease_busy` instead of falling to `unknown` and
+failing the node: the class joins the closed `ERROR_CLASSES` set and
+`_BOUNDED_RETRY_CLASSES`, so the node gets exactly ONE bounded re-drive as a
+FRESH session under the next attempt key (never `--continue` of the still-busy
+session) after `node.retrying error_class=lease_busy`. The Oct-3 field shape:
+two runs where a freshly spawned review child printed the CLI's lease notice
+after ~1800 s of lease waiting and exited 130 — the runner knew only SIGKILL
+deaths, so the collision read as an untyped terminal failure. The tool-progress
+gate is bypassed for this class alone (the notice proves the attempt never
+ran); a rc=130 death without the notice keeps its existing classification,
+and a harvestable fenced answer still outranks the class (#4 law). Pin:
+`tests/test_lease_busy_retry.py`.
+
+## 1.3.2 — 2026-10-09
+
+Patch line, 37 commits since v1.3.1 (merge order #274 → #272 → #275 → #285
+→ #300 → #289 → #294 → #293 → #299 → #290 → #292 → #303 → #280 → #301 → #286
+→ #309 → #311 → #318 → #313 → #315 → #305 → #235 → #281 → #253 → #282 → #307
+→ #296 → #298 → #287 → #312 → #248 → #306 → #327 → #328 → #322 → #291 → #295): the
+wall-meter/read-model wave (per-running-node wall seconds, artifact-mtime
+progress channel, failed_nodes[] surfacing, bank-the-corpse on wall-kill),
+the provider/route-identity fixes (seat-routed provider/model literals,
+alias-pinned ping, billed-model ledger), the door admission hardenings
+(schema minItems/minLength, baked-empty fanout refusal, fsync+verify run
+dir, surviving-template refusal at amend), the shelf-to-launch contract,
+and the graph-level `result:` verdict node. No new tool surface.
+
+Merges since the tag, in brief:
+
+- 851174d #274 — docs(runs): keep find_run docstring to the operative contract
+- 4647aec #272 — test(proctree): parseable-content pid/record waits in sibling fixtures
+- 0a44455 #275 — fix(ci): graph_path_ban sees renames + quoted paths — -z name-status
+- d9a53dc #285 — ci(baseline): ledger row for test_library_tag_read_qeul.py — heals main admission guard
+- b172aab #300 — fix(runner): disclose single-query tool approval limits
+- 10c56d9 #289 — fix(runner): pin child TERMINAL_CWD to its work dir
+- a884eb9 #294 — docs(tool): workflow tool description carries the use/avoid sentence and names delegate_task
+- 7f04d95 #293 — fix(door): refuse a surviving {run.KEY} in gate wait.until_argv at run/amend
+- 6d181fd #299 — fix(suite): isolate inherited workflow identity
+- cde1530 #290 — fix(runner): node record lists every billed model; route hold names final vs mid-session
+- 8073d93 #292 — feat(grammar): optional graph-level result: <node id> — status/wait name the verdict node
+- 8152edb #303 — docs(grammar): scope the result: contract
+- 0d91f80 #280 — wfcommon: reject baked-empty fanout.items:[] at the door
+- aca313d #301 — fix(dashboard): loadable hidden API entry
+- 869c401 #286 — feat(runner): bank-the-corpse on wall-kill — deterministic <node>.corpus/ + node.banked event
+- a11a427 #309 @atbrace — fix(suite): refused invocation invalidates stale green receipts on the --baseline fail path (audit M11)
+- 5801d11 #311 @atbrace — test: drop the self-proving stray-file check from the partial-rescue law test (audit M08)
+- f3801c9 #318 — docs: one owner per check truth — contributor guide halves, skill sheds its second copy (M05/M06)
+- 2f63070 #313 — fix(runner): truthful corpse sizes, protected opens, measured provenance
+- 1d6a66f #315 — docs(wfcommon): cut the dead injectable-hook claim from the tag READ fold
+- 0abd168 #305 — fix: status/next expose global seat back-pressure
+- 8bc661c #235 — feat(#733): dead-on-arrival finalize for stuck running node records
+- bb7e163 #281 — test(parity): dual-surface fold parity contract test, test-only
+- f45b79a #253 — feat(door): est-kg3y — shelf-to-launch contract: library run_context validation + meta.params surfacing + s12
+- dfc388e #282 — read model: artifact-mtime progress channel — run_state publishes {artifact, size, mtime_age_s, last_line} for running nodes
+- f549709 #307 — fix(runner): summary.md lists every node's status + output
+- e48a3e8 #296 — fix: provider-aware route-identity contract
+- 703ccb0 #298 — fix(pack): exclude checkout-only tests from release ZIP
+- 19b43d6 #287 — fix(door): alias-pinned nodes ping and report the alias target id, not the bare alias
+- 3b45625 #312 — fix(door,harvest): admit + enforce schema minItems/minLength, fail closed on blank lists
+- 69ed113 #248 — fix(door): est-2ek.1.199 — fsync+verify the run dir before run_id returns; orphaned-run lane status
+- 7d8e6bb #306 — fix: defaults.context bake is idempotent across a run_context-bound amend
+- 96ee587 #327 — fix(amend): preview flags def drift on RUNNING never-committed nodes (issue #18)
+- 94fd074 #328 — feat(read-model,door,desktop): #133 wall meter — per-running-node wall seconds
+- 92b8f67 #322 @atbrace-hermes — feat(read model): populate failed_nodes[] in run_state + status/wait (sys-5lnm17)
+- 8632839 #291 — fix(door): bake the provider of a seat-routed provider/model literal at submit
+- aeb89ff #295 — fix(runner): wall extension accepts the child's own session row as proof of life (est-2ek.1.595)
+
+## 1.3.1 — 2026-10-07
+
+Patch line, 46 commits since v1.3.0 (merge order #214 → #215 → #218 → #217 → #219
+→ #220 → #223 → #221 → #216 → #213 → #226 → #225 → #228 → #229 → #79 → #166 → #177
+→ #180 → #232 → #236 → #240 → #242 → #247 → #165 → #234 → #244 → #246 → #250 → #249
+→ #237 → #254 → #255 → #251 → #260 → #243 → #258 → #252 → #261 → #262 → #263 → #259
+→ #264 → #267 → #265 → #266 → #269): the respawn/SIGTERM-wave hardening batch (runner spawn detach,
+liveness past buffered child, crashed-no-exit watchdog), the DIAGRAM LAW wave
+(diagrams derive from shipped graph bytes), the hermetic-suite contract sweep
+(isolated WF_RUNS_ROOT everywhere), asks 164–166, the partial-rescue law, and the
+relay-only gate.held wake (upstream 133387 ask 2).
+No new tool surface.
+
+Earlier merges since the tag, in brief:
+- 4e39f23 #214 — fix(runner,door): gw-restart-window reap reason + runner-owned spawn ledger (#8 half, WF bugq b2)
+- 98e209b #215 — docs(contributing): R5 PUBLIC-release-only carve-out (skills house 58ff35f)
+- 399d9ea #218 @atbrace — test(gates): fail closed on missing declared test deps — no silent graph-gate skips
+- 91f4f48 #217 — triage(runner-lifecycle): docs name the serve unit that must restart after enable (est-2ek.1.279)
+- b35f26e #219 — triage(docs-ux-misc): list surfaces name their scanned roots on empty (est-2ek.1.280)
+- 4712d4f #220 — triage(suite-contract): save warns on stale launch-literals in unbound library graphs (est-2ek.1.245 wave-2)
+- 39d50d8 #223 — feat(desktop): collapsible live-run tray above the chat window (#22, est-8ppm)
+- fabcedf #221 — fix(door,runner): artifact-admission guard enforces 1:1 ledger-to-source mapping (#85, est-mmx0)
+- 836bd1e #216 — fix(door): sibling-root scan for status/wait with resolved_version (#58, est-fwdx)
+- 4cbcad3 #213 — fix(door,runner): gate answer never consumed by an un-honored resume + provenance-keyed duplicate-consumer gate (#152, est-pzuz)
+- 4d6233b #226 — chore(graph): refresh at 4cbcad3362d (est-t4w5, closes #224)
+- b161274 #225 — docs(events): event-driven wake pattern — push spine replaces cron polls
+- 141b555 #228 — test(dialect-33): courtesy node gate never holds the refuse verdict — tolerant across node minors (#227, est-exmo)
+- ac9bbb7 #229 — chore(graph): refresh at 141b5555d96 (est-t4w5, closes #224)
+- c648bfe #79 — fix(door): status/wait fold child metrics through the routed channel (est-6b65)
+- 0f17cf6 #166 — fix(runner,scrub): adopted-child malformed_turn class
+- d36760b #177 — docs: close conformance gaps — SECURITY.md + issue templates (est-rdjq)
+- d4e68b4 #180 — docs: point at ratified joint-eng-protocol SSOT (1-line pointer) (est-nztk)
+- 66857e8 #232 — DIAGRAM LAW v1: example diagrams derive from shipped graph bytes (diagrams half of owner split)
+- 8f6a92b #236 — DIAGRAM LAW PR-3: vendored archify + spelled-numeral ban (A3 closes) + QA receipts derive the gates column
+- fa9e900 #240 @atbrace — docs(diagrams): AUSTIN half — cards + derived candidates + receipted shots for 9 examples (PR-2 of owner split)
+- a1a1eec #242 — fix(diagrams): one shared walker — qa receipts can no longer pose as graphs
+- 2d024da #247 — chore(graph): refresh at a1a1eec
+- e68b3d5 #165 — fix(guards): actual-dispatch docs pin, inverse PR-tag audit, packaging pins
+- 045cf62 #234 — chore(receipts): drop stale peer-clean-run receipts
+- d41f004 #244 — fix: amend-preview def drift + b2b exit contract + bounded harvest scan
+- 63b37bc #246 — fix(est-6226): gateway SIGTERM wave — runner spawn detach pin, honest kill attribution
+- 8d42313 #250 @atbrace — test(wake): make wake_101 hermetic against inherited WF_RUNS_ROOT
+- 743afd2 #249 — chore(cleanup): zap-verified dead-code cut, complete (est-2ek.1.730)
+- 14bc40c #237 — fix(respawn): live-plugin resolution + crashed-no-exit watchdog respawn (est-ujtf, est-2ek.1.718, est-c481)
+- 3c0b401 #254 — docs: codify the partial-rescue law — done-set against the CURRENT graph is the only saved state (#134)
+- 6f1f0b9 #255 — fix(runner): heartbeat liveness past buffered child + global seat cap (est-g2xx)
+- 29eb0a6 #251 — fix(library): est-bvg0 — filtered query on empty/tagless shelf returns the promised tag_match_counts diagnosis
+- d3fd5f7 #260 — test(seat): scrub WF_* from child spawn env — test_seat_live hermetic (est-aywd)
+- d0a0017 #243 — fix(133387): machine-gate probes bind to the run that owns the gate; import hygiene (est-vuqr)
+- 8502536 #258 — fix(runner): fanout aggregate derives from committed per-item records with status-compatibility certification (est-2ek.1.765)
+- 66142b7 #252 — fix(library): est-yzoy — corrupt-prev retain protection + empty-result cause naming + erase-path pins (#146)
+- a4dbd51 #261 — feat(plugin-asks): asks 164-166 + toolsets slice — est-rqmn nightly landing
+- 0497444 #262 — fix(asks166): padded version handshake compare + amend-time enforcement (#261 follow-ups)
+- a690c04 #263 — test(integration_080): hermetic runs-root pin — passes cold, not just in serial order (est-hk0z)
+- b413983 #259 — test(suite): pin every spawned-runner test to an isolated WF_RUNS_ROOT (est-2ek.1.762)
+- f2df20a #264 — test(7ps8): realpath dedupe, executed landing-rows accounting, suite temp cleanup
+- d58e9b2 #267 — test(proctree): wait for parseable pid markers, not mere existence (est-gzmm)
+- db26151 #265 — fix(runs): find_run resolves the listed VALID twin, not the torn first-root dir (est-t1kk)
+- 9fc82fe #266 — docs(test): trim routing narration from measured-zero docstring, fix provenance (est-2ek.1.797)
+- f0e6935 #269 — fix(runner): gate.held wake is relay-only — agent relays the human gate, never answers it (upstream 133387 ask 2)
+
+Fixes:
+- fix(runner,door): #44 — the stranded `runner.lock` wedge (Errno 11 forever with the
+  kernel ledger knowing zero holders) no longer makes `wait`-resume permanently
+  impossible. The door's liveness read is now a TRI-STATE CHILD-PROBE
+  (`runner_lock_state` → `free|busy|eacces|wedged`): every flock probe runs in a
+  short-lived child whose death is the release (the door never opens `runner.lock`,
+  so a SIGKILLed prober can never strand the fd — issue ask 1); `busy` is resolved
+  against `/proc/locks` (seam `WF_PROC_LOCKS_PATH`) and the new heartbeated admission
+  lease (`runner.lease {pid,boottime,at}`, written/beat by `wf.py acquire_lock`);
+  EACCES on an existing lock is its own fail-closed state, NEVER free (PR #47 block
+  B1); a lease-less legacy dir stays fail-closed busy (91b9a3de law verbatim).
+  `wedged` = probe EAGAIN + zero ledger rows + proven-dead lease — the exact field
+  shape — and is the ONLY shape `wait` auto-heals. The heal
+  (`wfcommon.heal_wedged_runner_lock`, single safety authority) renames the stranded
+  inode aside under the admission heal-barrier (`runner.lock.heal`, which
+  `acquire_lock` honors before opening the path) and RE-VERIFIES probe+ledger+lease
+  immediately before the rename, so a holder that wakes between check and commit
+  wins (PR #47 block B2); the stranded-replace race closes atomically at admission
+  via an fstat-vs-path inode compare with bounded retry, never by displacing a
+  holder. New escape hatch (issue ask 2): door action `release_lock` +
+  `wf.py release-lock <run_id>` — refuses unless zero live holders are proven.
+  `list`/dashboard census batch the probe into ONE child per call (PR #47 C2 law).
+  Read-model surfaces `runner_lock`/`runner_lock_detail` only on non-ordinary states
+  (golden key sets byte-unchanged for busy/free).
+  Test: `tests/test_lock_wedge_44b.py` (35 contracts: child-probe + kill-the-probe
+  mid-flight, B1 EACCES-never-free + heal-refuses, B2 waking-holder-wins, wedge
+  classification + heal re-acquire + idempotence, door + CLI verbs);
+  `tests/test_cross_container_liveness_91b9a3de.py` re-pinned to the tri-state shape
+  (19 contracts, cross-container law byte-preserved).
+
+Discipline / docs:
+- docs: #134 partial-rescue law (jam-g1, epic #40) — AGENTS.md 3d states the
+  recovery discipline explicitly: the committed `nodes/*.json` done-set parsed
+  against the CURRENT graph is the ONLY saved recovery state (efp re-validation
+  makes amend-via-efp the sanctioned path; a rerun follows the edited graph,
+  contrasting DAGMan's rescue-DAG pattern), and the plugin carries no
+  rescue-snapshot file BY DESIGN — none may be added. No behavior change to
+  wf.py/wfcommon.py. Test: `tests/test_partial_rescue_law_134.py` (4 contracts;
+  pins amended-ancestor demotion of untouched descendants + by-design absence
+  of any graph-snapshot file by name).
 
 Read-model / DX:
 - feat(door,dashboard): est-2ek.1.280 — an EMPTY `list`/`_list_runs` scan now
@@ -19,6 +1413,52 @@ Read-model / DX:
   stale root. Non-empty payloads keep the golden-solo key set
   `{runs, total, counts(, provenance)}` byte-identical (F1 identity law).
   Test: `tests/test_list_root_280.py` (6 contracts, RED first).
+- #58 door sibling-root scan (status/wait): a run dispatched under one home (profile
+  seat) and read from a consumer whose env resolves another (estate shared root,
+  sibling profile) answered `unknown run_id` while its runner and events were alive
+  next door — find_run covers only resolved-root + legacy launch root. The READ verbs
+  now scan the sibling known roots (estate + every profile under it, both directions
+  from the resolved and launch homes) before answering unknown, and the answer from a
+  hit carries a `resolved_via` warning naming the foreign dir. Read-only convenience:
+  foreign-root `wait` never spawns a runner (the owning root does; the root-compare in
+  `_runner_pid_alive` would reject a foreign spawn anyway), and write verbs
+  (amend/release/steer/stop/save) stay fail-closed on the resolved root. Same-root
+  behavior is byte-identical (no `resolved_via` field on a resolved-root read).
+  Test: `tests/test_door_sibling_root_58.py` (5 red at base → all green at head;
+  hermetic two-root sandbox, fake launcher).
+- #est-tmuu — deterministic provider/alias config deaths are never respawned. A
+  node pinning a provider the seat does not define made the CLI exit rc!=0 in
+  ~0.1s (`Unknown provider 'x'. Check 'hermes model' …`); the runner surfaced
+  that death as the transient classes and the Q4 ladder respawned the WHOLE
+  recovery sequence on a deterministic input error, landing
+  `transport_exhausted` with the budget burned (operator-verified report,
+  2026-10-02). The runner now types it `config_input`: a child that dies rc!=0
+  within ~1 s of spawn AND whose capture carries the config-error marker line
+  fails on the FIRST attempt — the class sits outside both retry ladders (the
+  #24 fatal_quota law), the respawn budget is never decremented, and the error
+  names the fix (the node's provider pin or the seat config). The window is the
+  precision guard: the same capture dying late keeps its existing
+  classification; `unknown model` stays `unresolved_model` territory. Pin:
+  `tests/test_config_input_tmuu.py` (fake mode `cfgtypos`).
+- Docs-surface guard hardening (PR #155 follow-up) — four adversary-confirmed
+  blind spots closed, test-first. The drift pin now executes the door and
+  compares ACTUAL `ACTIONS` dispatch keys against the README action table
+  (regex-scanning source stayed green while an unlisted callable lived in the
+  dispatch dict; mutation self-proofs 7a-7d run every pass). `pr_tag_audit.py`
+  gained the INVERSE assertion — an `(open PR #NN)` tag on a row whose action
+  is dispatched fails even while the PR is open — and missing `gh` now exits 2
+  with file:line diagnostics instead of an uncaught traceback. The audit helper
+  joins the pack list beside `graph_path_ban.py`/`graph_regen.py`
+  (`scripts/pack.py`), and `test_packaging.py` pins the
+  exact packed `scripts/` set plus a packed-or-declared-source-only contract,
+  so a helper can never again sit outside the ZIP while its test ships green.
+  Stale doc tags aged in the same commit (red-on-base rule): the #121 tags in
+  CONTRIBUTING.md + references/development.md → `(shipped in v1.2.1)`, the #84
+  tags in README + references/portable.md → `(shipped in v1.3.0)`, and the
+  three #47 tag sites in README rewritten to current truth — #47 closed
+  unmerged, so the `release_lock` row and the `liveness-unknown` run state are
+  removed and wedged-lock recovery describes the shipped kernel-flock
+  admission. `pr_tag_audit.py --repo <owner>/hermes-workflows` exits 0.
 
 ## 1.3.0 — 2026-10-05
 
@@ -155,6 +1595,24 @@ Detailed entries (Unreleased work folded in):
   never eaten. The model's paste stays the primary path; `desktop/plugin.js`
   is untouched (no tool-result render slot exists in the plugin SDK — the
   render-from-record half of #157-A is desktop/core work).
+  Discovery half superseded: the runs-root scan, the dedupe census and the `card_window_minutes`
+  knob are replaced by the hook-led pending ledger (`card_ledger.py`; see references/operations.md).
+
+- #166c — the scrub audit's suffix set covers every shipped text shape: .yml and
+  .txt joined AUDIT_SUFFIXES (the shipped ci.yml exported forbidden lines with
+  '0 scrub hits' under the old set, NUL or not). New text types join the set,
+  never the skip path.
+- est-n58i — the adopted-child death path shares the malformed-turn law: an
+  adopted orphan whose reply IS serialized tool-call markup now classifies
+  `malformed_turn` (verbatim diagnostic carried), not generic `unknown` — the
+  class no longer varies by which path (fresh vs adopted) reached the same
+  death; the bounded ladder still may not re-drive the adopted path (its spend
+  is committed). Pin: `tests/test_malformed_turn_adopted_541.py` drives the
+  REAL runner on both paths and asserts `item.adopted` actually happened.
+  The scrub audit's text-ness is content-based (null-byte sniff, the git
+  heuristic): the shipped `.sig` and extensionless text (`tests/fake-b1`) are
+  audited too — a file name can no longer hide text from the gate; the
+  LICENSE copyright hit is guarded by an anchored exemption.
 - #116 — confidence_substrate: engine-stamped fallback when a pinned confidence
   route is quota-dead. The owner declares a sanctioned fallback substrate once
   (`plugins.entries.hermes-workflows.settings.confidence_substrate`, top-level

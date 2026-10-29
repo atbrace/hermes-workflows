@@ -1,0 +1,142 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "Armed branch on a schema'd verdict \u2014 the split is the `when` grammar on the arm heads, not agent discretion",
+        "Complementary `when` predicates + on_skip:prune: arms are mutually exclusive by grammar",
+        "The dead arm is pruned (skipped, never run) \u2014 join sees only the live arm"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "5 nodes, 1 gates, 2 branches: judge -> ship_it agent + hold gate, each armed with its own `when` -> join",
+        "Replace judge/ship_it/escalate goals with real work; the shape is the lesson",
+        "Derived from this example's bytes by scripts/graph_diagram.py \u2014 same input, same bytes"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "judge",
+      "id": "judge-hold",
+      "to": "hold",
+      "variant": "security"
+    },
+    {
+      "from": "judge",
+      "id": "judge-ship_it",
+      "to": "ship_it",
+      "variant": "security"
+    },
+    {
+      "from": "hold",
+      "id": "hold-escalate",
+      "to": "escalate",
+      "variant": "default"
+    },
+    {
+      "from": "ship_it",
+      "id": "ship_it-join",
+      "to": "join",
+      "variant": "default"
+    },
+    {
+      "from": "escalate",
+      "id": "escalate-join",
+      "to": "join",
+      "variant": "default"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "work",
+      "label": "Agents",
+      "variant": "normal"
+    },
+    {
+      "id": "gates",
+      "label": "Gates",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/branch-on-verdict.html",
+    "quality_profile": "standard",
+    "subtitle": "Two-arm branch on a schema'd verdict in the when-on-agent form: complementary `when` + on_skip:prune carried b",
+    "title": "branch-on-verdict"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "judge",
+      "label": "Judge",
+      "lane": "work",
+      "sublabel": "you are a judge",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "hold",
+      "label": "Hold",
+      "lane": "gates",
+      "sublabel": "judge said hold",
+      "tag": "branch",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "ship_it",
+      "label": "Ship It",
+      "lane": "work",
+      "sublabel": "the ship arm ran",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "escalate",
+      "label": "Escalate",
+      "lane": "work",
+      "sublabel": "the hold arm ran",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "join",
+      "label": "Join",
+      "lane": "work",
+      "sublabel": "you are the join",
+      "type": "backend",
+      "width": 104
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 2
+    },
+    {
+      "fromCol": 3,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 3
+    }
+  ],
+  "schema_version": 2
+}

@@ -15,12 +15,16 @@ import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or Path(__file__).parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "fake").exists():
+    raise SystemExit("WF_TEST_BUILD names a tests/ dir (this test reads fixtures under it); got " + str(BUILD))
+
 HOME = BUILD / "home5"
 RUNS = HOME / "workflows"
 # #71: HERMES_HOME alone does NOT sandbox the shelf — the context-local home
 # override outranks the env in lane processes; WF_RUNS_ROOT is checked first and
 # pins runs/library wherever the door resolves. Without it, saves pollute prod.
 os.environ["HERMES_HOME"] = str(HOME)
+os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
 os.environ["WF_RUNS_ROOT"] = str(HOME / "workflows")
 sys.path.insert(0, str(BUILD.parent))
 import wfcommon as W
@@ -77,7 +81,6 @@ check("S2a run_state totals: held + when_error surfaced",
       st and st["status"] == "held" and (st["held_gate"] or {}).get("when_error"),
       json.dumps({k: st.get(k) for k in ("status", "held_gate")})[:160] if st else "None")
 sys.path.insert(0, str(BUILD.parent / "dashboard"))
-os.environ.setdefault("HERMES_WORKFLOWS_DIR", str(RUNS))
 try:
     import importlib.util as ilu
     spec = ilu.spec_from_file_location("papi", str(BUILD.parent / "dashboard" / "plugin_api.py"))
@@ -144,7 +147,14 @@ def trace(frame, event, arg):
         while f and f.f_code.co_name != "run_child": f = f.f_back
         if f:
             meta = f.f_locals["meta"]
-            assert meta["_procs_lock"].locked(), "spawn section must hold the lock at Popen"
+            # v5.2 (est-i3pro / #563 CI): Popen calls seen on this stack also
+            # include provider-plugin load and _aux_run probes, which run
+            # intentionally under _aux_lock WITHOUT _procs_lock. Those are not
+            # the spawn section — skip them and arm at the first IN-SECTION
+            # Popen (lock held). Guard unchanged: pre-v5.1 the watcher would
+            # set _stop during the armed 5s wait; that still fails here.
+            if not meta["_procs_lock"].locked():
+                return trace
             (r / "stop.request").write_text("1")
             # 5s > the watcher's 2s poll: pre-fix the watcher WOULD set stop here
             obs["set_during_section"] = meta["_stop"].wait(5.0)

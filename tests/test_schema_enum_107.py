@@ -19,10 +19,12 @@ Covers:
      nested inside `properties`, and inside `items`;
   2. door rejects malformed enums with typed {node, field, msg} errors
      (non-list, empty list, non-string members, empty-string member) and
-     REJECTS enum on a non-string-typed schema — the stricter choice, kept
-     consistent with the subset philosophy: the harvest rule admits only a
-     string-membered enum, so an enum it would refuse at harvest must not
-     pass the door ("never accept a constraint that cannot be enforced");
+     REJECTS enum placement outside the admitted closed domains. #472
+     re-pin: the stricter choice survives, widened — placement is admitted
+     on type:'string', 'boolean' and 'integer' (the domains the harvest rule
+     enforces membership on) and still refused on type-less, number-, array-
+     and object-typed schemas; wrong-domain members are rejected too ("never
+     accept a constraint that cannot be enforced");
   3. harvest-time: an out-of-set string value is refused via the same typed
      retry the type violations use, the retry prompt names the allowed set,
      the second attempt with an in-set value commits `done`; a persistent
@@ -112,11 +114,14 @@ errs = enum_err({"type": "string", "enum": ["a", ["b"]]})
 check("nested-list member rejected", errs and "list of non-empty strings" in errs[0]["msg"],
       json.dumps(errs))
 errs = enum_err({"type": "boolean", "enum": ["a", "b"]})
-check("enum on a non-string-typed schema REJECTED (stricter choice: the harvest rule"
-      " only enforces string-membered enums, so the door admits nothing it cannot enforce)",
+check("string members on a boolean enum REJECTED (#472 re-pin: boolean placement is"
+      " admitted now, but members must be booleans — the door admits nothing the"
+      " harvest rule cannot enforce)",
+      errs and "booleans" in errs[0]["msg"], json.dumps(errs))
+check("enum on a number-typed schema REJECTED (the open-domain law survives #472)",
       any(e["node"] == "a" and e["field"] == "schema.enum" and "only legal on" in e["msg"]
-          for e in V(agent_node({"type": "boolean", "enum": ["a", "b"]}))),
-      json.dumps(V(agent_node({"type": "boolean", "enum": ["a", "b"]}))))
+          for e in V(agent_node({"type": "number", "enum": [1, 2]}))),
+      json.dumps(V(agent_node({"type": "number", "enum": [1, 2]}))))
 check("enum on a schema with OMITTED type REJECTED (same enforceability law)",
       any("only legal on" in e["msg"] for e in V(agent_node({"enum": ["a"]}))))
 errs = [e for e in V(agent_node({"type": "object", "properties": {
@@ -132,8 +137,9 @@ check("malformed enum inside items names its dotted path",
 errs = V(agent_node({"type": "object", "patternProperties": {}}))
 kw_err = [e for e in errs if "unsupported schema keyword" in e["msg"]]
 check("patternProperties still refused — the subset stays closed", bool(kw_err), json.dumps(errs))
-check("the supported list names enum now (and only adds enum)",
-      kw_err and kw_err[0]["msg"].endswith("supported: type, required, properties, items, description, enum"),
+check("the supported list names enum now (and only adds enum; #96 added minItems/minLength,"
+      " #472 added maxItems)",
+      kw_err and "supported: type, required, properties, items, description, enum, minItems, minLength, maxItems" in kw_err[0]["msg"],
       kw_err[0]["msg"] if kw_err else "no keyword error")
 
 # ============ 4. prompt-side: enum literals reach the child's prompt ============
@@ -162,7 +168,7 @@ def mk(run_id, nodes, **meta):
     return r
 
 def wf_run(run_id, extra_env=None, timeout=180):
-    env = dict(os.environ, HERMES_HOME=str(HOME), FAKE_LOG=str(HOME / "fake.log"),
+    env = dict(os.environ, HERMES_HOME=str(HOME), WF_RUNS_ROOT=str(RUNS), FAKE_LOG=str(HOME / "fake.log"),
                **(extra_env or {}))
     return subprocess.run([sys.executable, str(BUILD / "wf.py"), "run", run_id],
                           env=env, capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -261,10 +267,13 @@ check("door: legacy grammar untouched (type/required/properties/items/descriptio
       V(agent_node({"type": "object", "required": ["ok"], "description": "x",
                     "properties": {"ok": {"type": "boolean"},
                                    "tags": {"type": "array", "items": {"type": "string"}}}})) == [])
-check("door: legacy unsupported-keyword refusal keeps its exact field naming",
-      any(e["node"] == "a" and e["field"] == "schema.minItems"
+check("door: legacy unsupported-keyword refusal keeps its exact field naming"
+      " (#472 re-pin: maxItems is admitted+enforced now — uniqueItems is the"
+      " still-unsupported keyword proving the subset stays closed)",
+      any(e["node"] == "a" and e["field"] == "schema.uniqueItems"
           and "unsupported schema keyword" in e["msg"]
-          for e in V(agent_node({"type": "array", "minItems": 1}))))
+          for e in V(agent_node({"type": "array", "uniqueItems": True,
+                                 "items": {"type": "string"}}))))
 
 print()
 if ok:

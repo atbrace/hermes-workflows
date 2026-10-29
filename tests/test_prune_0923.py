@@ -17,7 +17,7 @@ import wfcommon  # noqa: E402
 HOME = HERE / "home10"
 RUNS = HOME / "workflows"
 FAKE = HERE / "fake"
-ENV = {**os.environ, "HERMES_HOME": str(HOME), "WF_HERMES_BIN": str(FAKE),
+ENV = {**os.environ, "HERMES_HOME": str(HOME), "WF_RUNS_ROOT": str(RUNS), "WF_HERMES_BIN": str(FAKE),
        "PATH": f"{FAKE.parent}:{os.environ.get('PATH', '')}"}
 PY = sys.executable
 FAILS = []
@@ -52,8 +52,10 @@ def agent(id, after=(), verdict=None, inputs=None):
 
 # ---- 1. validator grammar ----
 V = wfcommon.validate_graph
-check("on_skip on agent rejected (closed key set)",
-      "unknown key" in (V([dict(agent("a"), on_skip="prune")]) or ""))
+check("on_skip on agent accepted (est-l2ey: agents take when/on_skip)",
+      V([agent("a"), dict(agent("b", ["a"]), when="out.a.verdict", on_skip="prune")]) is None)
+check("on_skip on agent without when rejected",
+      "needs a `when`" in (V([dict(agent("a"), on_skip="prune")]) or ""))
 check("on_skip bad enum rejected",
       "allowed: ['pass', 'prune']" in (V([agent("a"), {"id": "g", "type": "gate", "after": ["a"], "when": "out.a.ok", "on_skip": "nope", "question": "?"}]) or ""))
 check("on_skip without when rejected",
@@ -124,6 +126,7 @@ check("blocked_by: skipped dep is not a blocker", bb == [], str(bb))
 # ---- 6. door version-skew guard: runner_exit done + dead runner => wait returns, no respawn ----
 sys.path.insert(0, str(PLUGIN))
 os.environ["HERMES_HOME"] = str(HOME)
+os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
 import importlib.util
 spec = importlib.util.spec_from_file_location("door", PLUGIN / "__init__.py")
 door = importlib.util.module_from_spec(spec); spec.loader.exec_module(door)

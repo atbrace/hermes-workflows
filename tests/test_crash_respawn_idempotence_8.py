@@ -31,10 +31,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 BUILD = Path(os.environ.get("WF_TEST_BUILD") or HERE.parent)
+if os.environ.get("WF_TEST_BUILD") and not (BUILD / "__init__.py").exists():
+    raise SystemExit("WF_TEST_BUILD names a plugin BUILD root (this test loads its __init__.py); got " + str(BUILD))
+
 HOME = HERE / "home-crashrespawn8"
 RUNS = HOME / "workflows"
 FAKE = str(HERE / "fake")
 os.environ["HERMES_HOME"] = str(HOME)
+os.environ["WF_RUNS_ROOT"] = str(Path(os.environ["HERMES_HOME"]) / "workflows")  # est-2ek.1.762 pin: HERMES_HOME alone is not a sandbox
 os.environ["WF_RUNS_ROOT"] = str(RUNS)
 sys.path.insert(0, str(BUILD))
 
