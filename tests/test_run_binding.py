@@ -44,7 +44,11 @@ graph = {"name": "bind-replay", "defaults": {"context": "Shared {run.key}"}, "no
      "fanout": {"items": [{"goal": "item {run.key} {item}"}], "goal": "batch {run.argv} {item}"}},
     {"id": "gate", "type": "gate", "after": ["first"], "question": "ship {run.key}?", "options": ["yes", "no"]}]}
 check("schema exposes run_context", "run_context" in hw.WORKFLOW_PARAMS["properties"])
-assert run(graph=graph, **{})["run_id"]  # old unbound callers still launch
+# sys-vrovdu: a graph with {run.KEY} refs and NO run_context refuses (the old
+# unbound-caller leniency baked literal placeholders into spawned prompts).
+_r = run(graph=graph, **{})
+check("no-context launch of a ref graph refuses naming the key",
+      "run placeholder unbound" in _r.get("error", "") and "{run.key}" in _r.get("error", ""), _r)
 saved = HOME / "workflows" / "library" / "bind-replay.json"
 saved.parent.mkdir(parents=True, exist_ok=True)
 saved.write_text(json.dumps(graph))

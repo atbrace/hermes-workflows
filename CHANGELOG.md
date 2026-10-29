@@ -31,6 +31,25 @@ canary walls retimed (#581), amend re-bind law narrowed in docs (#575).
 ### Carried ship fragments
 
 
+Door:
+- fix(door): sys-vrovdu — an unbound `{run.KEY}` now refuses the LAUNCH, not
+  just a missing key in a supplied map. Before, a graph with `{run.KEY}` refs
+  and NO `run_context` (or a seed instead of a map) spawned nodes with the
+  literal placeholder baked into their prompts, and `dry_run` passed the same
+  hole (measured 10-04, run 20261004-150243-bindability-probe-real).
+  `_unbound_run_refs` sweeps the shared `_include_text_fields` surface after
+  binding and before the dry_run return — the refusal names node + key and
+  writes nothing. The seed-less literal-spawn leniency is retired for plain
+  graphs (composites were already fail-closed since 2026-09-30). Literal-free
+  graphs and fully-bound launches are byte-unchanged. Tests:
+  `tests/test_unbound_run_refs_vrovdu.py` (13 contracts, RED first); D9b/D16b/
+  D19b in `tests/test_include_door.py` flipped from leniency to refusal. The
+  map binder now renders the SHARED text surface on every launch (inline
+  included), not only library-sourced ones — a supplied binding reaches every
+  ref the survivor gate polices, so gate and renderer cannot drift (a supplied
+  pin referenced only in echo output launches and renders). Command argv keeps
+  the #293 split: a plain launch never renders it, a library launch does.
+
 Ops/chore:
 - fix(read model) est-t7yod (the #583 peer-review residual): the est-mqp1f
   machine-readable `refusal` stamp now reaches the read model. The producer

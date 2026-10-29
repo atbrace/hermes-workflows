@@ -28,8 +28,9 @@ import convention as tests/test_library.py). Covers the door lane of the design:
    shelf mutated between the passes can never stamp a digest of other bytes).
  - D19 gate options[] and wait.until_argv[] join the seed-render/survivor
    surface: unseeded refuses, seeded RENDERS into the committed bytes (the old
-   nested write-back only knew fanout), shelf bytes immutable, include-free
-   gate bytes keep verbatim leniency.
+   nested write-back only knew fanout), shelf bytes immutable. sys-vrovdu
+   retired the include-free verbatim leniency: plain graphs refuse unbound
+   {run.KEY} too (D9b/D16b/D19b).
 """
 import importlib.util, json, os, shutil, sys, tempfile, time
 from pathlib import Path
@@ -267,13 +268,15 @@ check("D9 include without seeds binds subtree refs from run_context (launches)",
       bool(r.get("run_id")), json.dumps(r)[:200])
 if r.get("run_id"):
     call(action="stop", run_id=r["run_id"])
-# seed map wins inside the subtree; parent literal-spawn leniency untouched
+# seed map wins inside the subtree; parent unbound refs are fail-closed too
+# (sys-vrovdu: the seed-less literal-spawn leniency is retired — the door names
+# the key instead of baking a literal placeholder)
+before = dirs()
 r = call(action="run", graph={"name": "d9-lenient",
                               "nodes": [{"id": "a", "type": "agent", "goal": "say {run.NOTHING}"}]})
-check("D9b parent node with unbound ref keeps plain-graph leniency",
-      bool(r.get("run_id")), json.dumps(r)[:120])
-if r.get("run_id"):
-    call(action="stop", run_id=r["run_id"])
+check("D9b parent node with unbound {run.KEY} and no run_context refuses (sys-vrovdu)",
+      "error" in r and "run.NOTHING" in json.dumps(r) and not r.get("run_id") and before == dirs(),
+      json.dumps(r)[:120])
 
 # ---------- D10: save(run_id) of a composite run REFUSES (C6) -------------------
 # the composite run's graph.json is the expanded, include-STRIPPED form; shelving
@@ -464,18 +467,14 @@ if r.get("run_id"):
           w.get("status") == "done" and n.get("output") == "verdict=ship",
           json.dumps(n)[:160])
     call(action="stop", run_id=r["run_id"])
-# include-free echo bytes stay verbatim (the golden law): a {run.X} in a PLAIN
-# graph's echo output is NOT refused — plain-graph leniency is untouched.
+# include-free echo bytes: sys-vrovdu retires the plain-graph leniency — a
+# {run.X} in a PLAIN graph's echo output is refused before any write, same gate.
+before = dirs()
 r = call(action="run", graph={"name": "d16-lenient", "nodes": [
     {"id": "a", "type": "echo", "output": "say {run.NOTHING}"}]})
-check("D16b include-free echo output keeps verbatim leniency (golden bytes)",
-      bool(r.get("run_id")), json.dumps(r)[:120])
-if r.get("run_id"):
-    w = call(action="wait", run_id=r["run_id"], timeout=60)
-    n = json.loads((ROOT / r["run_id"] / "nodes" / "a.json").read_text())
-    check("D16b plain echo output committed byte-verbatim",
-          n.get("output") == "say {run.NOTHING}", json.dumps(n)[:160])
-    call(action="stop", run_id=r["run_id"])
+check("D16b include-free echo output with unbound {run.KEY} refuses (sys-vrovdu)",
+      "error" in r and "run.NOTHING" in json.dumps(r) and not r.get("run_id") and before == dirs(),
+      json.dumps(r)[:120])
 
 # ---------- D17: export collisions are order-independent (PR#84 review F-4) ----
 (LIB / "alpha.json").write_text(json.dumps(
@@ -592,19 +591,15 @@ try:
           (LIB / "gatelib.json").read_bytes() == shelf_bytes)
 finally:
     hw._spawn_runner = _orig_spawn19
-# include-free golden bytes: a PLAIN graph's gate keeps verbatim options/argv
-# leniency (no include, no closed-seed contract — the pre-PR byte law).
+# include-free gate bytes: sys-vrovdu retires the plain-graph leniency — an
+# unbound {run.KEY} in a plain gate's question/options refuses before any write.
+before = dirs()
 r = call(action="run", graph={"name": "d19-plain", "nodes": [
     {"id": "g", "type": "gate", "question": "q {run.NOTHING}",
      "options": ["yes {run.NOTHING}", "no"]}]})
-check("D19b include-free gate keeps verbatim leniency (golden bytes)",
-      bool(r.get("run_id")), json.dumps(r)[:120])
-if r.get("run_id"):
-    g19p = json.loads((ROOT / r["run_id"] / "graph.json").read_text())
-    n19p = next(n for n in g19p["nodes"] if n["id"] == "g")
-    check("D19b plain gate options committed byte-verbatim",
-          n19p.get("options") == ["yes {run.NOTHING}", "no"], json.dumps(n19p)[:160])
-    call(action="stop", run_id=r["run_id"])
+check("D19b include-free gate with unbound {run.KEY} refuses (sys-vrovdu)",
+      "error" in r and "run.NOTHING" in json.dumps(r) and not r.get("run_id") and before == dirs(),
+      json.dumps(r)[:120])
 
 shutil.rmtree(HOME, ignore_errors=True)
 print(f"{'ALL PASS' if ok else 'FAILURES PRESENT'} ({_nchecks} door contracts)")

@@ -119,16 +119,12 @@ check("a ref absent from the persisted map refuses as amend_run_context_rebind",
 check("missing-key refusal also lands before any write",
       (home / "workflows" / rid / "graph.json").read_text() == gbytes)
 
-# ---------------------------------------------------------------- plain-lenient law unchanged
-run6 = door.act_run({"graph": author()})          # refs, no run_context: today's leniency
-check("plain-lenient launch still launches (literal seats, unchanged law)",
-      run6.get("error") is None, run6.get("error"))
-check("plain-lenient committed graph carries the literal",
-      "{run.ITEM}" in graph_of(run6["run_id"])["nodes"][0]["goal"])
-out7 = door.act_amend({"run_id": run6["run_id"], "graph": author()})
-check("plain-lenient raw resubmit PASSES untouched (no bound run to un-bind)",
-      out7.get("ok") is True and out7.get("error") is None,
-      {k: out7.get(k) for k in ("error", "error_type")})
+# ------------------------------------------------- plain leniency retired (sys-vrovdu)
+run6 = door.act_run({"graph": author()})          # refs, no run_context: refuses now
+check("plain launch with unbound refs and no run_context REFUSES (sys-vrovdu)",
+      run6.get("error") is not None and "run.ITEM" in (run6.get("error") or "")
+      and run6.get("run_id") is None,
+      {k: run6.get(k) for k in ("error", "run_id")})
 
 # ---------------------------------------------------------------- seed run carrying a fresh ref
 out8 = door.act_amend({"run_id": run3["run_id"], "graph": author()})
