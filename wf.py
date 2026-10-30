@@ -4345,7 +4345,12 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
     back to arbitrating the caller's own seed (honest degradation).
     ceiling (run.json meta max_seats — a per-RUN declaration, not env) acts as
     a CEILING under the pool cap: the run may hold fewer seats than the pool
-    allows, never more. WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
+    allows, never more, and at admission a declaration ABOVE the recorded cap
+    RAISES SeatCapError (seat_cap_mismatch: names pool cap, declared cap, and
+    the .cap reset path — sys-dk4164: loud at the door, never a silent clamp
+    that queues until the horizon answers seat_wait). A read-only peek
+    (seed=None) still just reports the recorded truth, never fatal.
+    WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
     and never touches pool state (_seat_acquire returns before this runs).
     Operators change a live pool's cap by removing <seats>/.cap while idle."""
     f = Path(seats) / ".cap"
@@ -4365,9 +4370,15 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
         except OSError:
             cap_v = seed                   # unrecordable pool: arbitrate locally
     if (cap_v is not None and isinstance(ceiling, int) and not isinstance(ceiling, bool)
-            and 0 < ceiling < cap_v):
-        return ceiling                     # per-run ceiling rides UNDER the pool truth
-    return cap_v
+            and 0 < ceiling):
+        if ceiling <= cap_v:
+            return ceiling                 # per-run ceiling rides UNDER the pool truth
+        if seed is not None:               # sys-dk4164: AT ADMISSION a declaration ABOVE
+            raise SeatCapError(            # the recorded truth is a typed reject — never
+                f"seat_cap_mismatch: run.json max_seats={ceiling} exceeds the pool's recorded "
+                f"cap {cap_v} at {f}. The pool never auto-raises (est-mg5o2 first-writer-wins); "
+                f"lower the run's max_seats, or remove {f} while idle to re-seed the pool.")
+    return cap_v                           # read-only peek (seed=None): the truth, not fatal
 
 def _seat_pool_seed():
     """est-mg5o2 x est-2ek.1.856: the process-side SEED for the pool cap — the
@@ -6942,17 +6953,28 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                         "or unset; the per-run opt-out is run.json max_seats: 0)",
                 "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
                 "spawn": spawn_no, "attempts": 1, **route}
-    seat = _seat_acquire(
-        _seats_dir(), f"{run.name}.{node['id']}", _seat_cap,
-        _seat_wall if isinstance(_seat_wall, (int, float)) else None,
-        on_wait=lambda: log(run, "seat.wait", node=node["id"], index=index,
-                            spawn=spawn_no,
-                            # est-mg5o2: the event carries the POOL truth (read-only);
-                            # _seat_cap is the already-validated fallback (no re-resolve
-                            # inside the callback: it must never raise SeatCapError).
-                            cap=_seat_pool_cap(_seats_dir()) or _seat_cap),
-        abort=_cancelled, admit_lock=seat_admit_lock,
-        pool_seed=_pool_seed, pool_ceiling=_seat_pool_ceiling(meta))
+    try:
+        seat = _seat_acquire(
+            _seats_dir(), f"{run.name}.{node['id']}", _seat_cap,
+            _seat_wall if isinstance(_seat_wall, (int, float)) else None,
+            on_wait=lambda: log(run, "seat.wait", node=node["id"], index=index,
+                                spawn=spawn_no,
+                                # est-mg5o2: the event carries the POOL truth (read-only);
+                                # _seat_cap is the already-validated fallback (no re-resolve
+                                # inside the callback: it must never raise SeatCapError).
+                                cap=_seat_pool_cap(_seats_dir()) or _seat_cap),
+            abort=_cancelled, admit_lock=seat_admit_lock,
+            pool_seed=_pool_seed, pool_ceiling=_seat_pool_ceiling(meta))
+    except SeatCapError as e:
+        # sys-dk4164: run.json max_seats declared ABOVE the recorded pool .cap.
+        # The est-2ek.1.856 law: the broken declaration fails the NODE closed,
+        # typed (error_class seat_cap; the message is typed seat_cap_mismatch),
+        # at the admission instant — never a silent clamp that burns the queue
+        # horizon and dies as seat_wait (measured: fan-out lane b73cc5).
+        return {"status": "failed",
+                "error": f"seat_cap: {e}",
+                "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
+                "spawn": spawn_no, "attempts": 1, **route}
     if seat is _SEAT_UNSUPPORTED:
         return {"status": "failed",
                 "error": "seat_unsupported: the global agent-seat semaphore is full and this "
