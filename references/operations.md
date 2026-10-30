@@ -167,7 +167,9 @@ it — nested child runners included, whose inherited env may carry a stale,
 missing or default `WORKFLOW_MAX_SEATS` — counts tickets against that RECORDED
 value, never its own environment. Env/.env files (read fresh, est-gxjh6) seed
 the first acquirer only. A run.json `max_seats` acts as a per-run CEILING under
-the pool cap: the run may hold fewer seats than the pool allows, never more.
+the pool cap: the run may hold fewer seats than the pool allows, never more — a
+ceiling above the recorded `.cap` rejects admission typed `seat_cap_mismatch` (the
+pool never auto-raises; re-seed by removing `<seats>/.cap` while the pool is idle).
 `WORKFLOW_MAX_SEATS=0` stays a LOCAL disable of the semaphore and never touches
 pool state. Operators change a live pool's cap by removing `<seats>/.cap` while
 the pool is idle (the next first acquirer re-seeds it). A corrupt `.cap` is

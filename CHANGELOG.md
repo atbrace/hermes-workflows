@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Seat-pool admission (sys-dk4164, endorse hw-bgb): a run.json `max_seats` ceiling
+  ABOVE the pool's recorded `.cap` now rejects admission typed `seat_cap_mismatch`
+  (node fails `error_class=seat_cap`) instead of going silently inert; the pool
+  never auto-raises — remove `<seats>/.cap` while the pool is idle to re-seed.
+
 ## 1.4.4 — 2026-10-29
 
 Patch release: 40 commits on main since v1.4.3. Retry discipline hardened end to
