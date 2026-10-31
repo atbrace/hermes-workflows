@@ -6843,6 +6843,11 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     wall = wall_s if wall_s is not None else node.get("timeout", meta.get("node_timeout", 900))
     env = dict(os.environ, HERMES_HOME=str(hermes_home()),
                HERMES_QUIET_TURN_REPORT_FILE=str(report_path),
+               # sys-tiismh: seat-scoped bg reap — arm the plugin's on_session_end
+               # reaper (seat_bg_reap.py) so the seat's answer is terminal. Stamped
+               # here only (the seat spawn), never in the door/gateway env; the
+               # routed-child env filter below keeps HERMES_WF_* by prefix.
+               HERMES_WF_SEAT_BG_REAP="1",
                HERMES_WF_STEER_FILE=steer_file,
                HERMES_WF_STEER_CURSOR=steer_cur,
                HERMES_WF_STEER_HWM=str(steer_hwm),

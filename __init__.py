@@ -45,6 +45,15 @@ assert _ow_spec is not None and _ow_spec.loader is not None
 _orphan_watch = importlib.util.module_from_spec(_ow_spec)
 _ow_spec.loader.exec_module(_orphan_watch)
 _orphan_watch.bind(_common)
+# sys-tiismh: seat background reaper (seat_bg_reap.py) — kills a workflow seat's
+# own bg children at the final answer so completion notices can't re-drive it.
+# Env-gated (HERMES_WF_SEAT_BG_REAP, stamped by wf.py at the seat spawn only):
+# off everywhere else, the hook is a no-op. Defs-only exec; fail-open by design.
+_sbr_spec = importlib.util.spec_from_file_location("_hermes_workflows_seat_bg_reap",
+                                                   Path(__file__).resolve().parent / "seat_bg_reap.py")
+assert _sbr_spec is not None and _sbr_spec.loader is not None
+_seat_bg_reap = importlib.util.module_from_spec(_sbr_spec)
+_sbr_spec.loader.exec_module(_seat_bg_reap)
 
 
 def _coerce_graph(graph):
@@ -5310,7 +5319,8 @@ def _hook_surface():
             ("pre_llm_call", _card_enforcement._pre_llm_call),
             ("transform_llm_output", _card_enforcement._card_hook),
             ("post_gateway_admission", _admission_handler),
-            ("pre_gateway_dispatch", _dispatch_witness)) + tuple(_orphan_watch.HOOKS.items())
+            ("pre_gateway_dispatch", _dispatch_witness),
+            ("on_session_end", _seat_bg_reap.reap)) + tuple(_orphan_watch.HOOKS.items())
 
 # The card ledger's three hooks: registered at literal, allow-list-gated sites in register().
 _CARD_HOOKS = ("post_tool_call", "pre_llm_call", "transform_llm_output")

@@ -155,4 +155,9 @@ def test_task_scoped_reap_spares_a_foreign_task(tmp_path, monkeypatch):
 
 
 if __name__ == "__main__":  # script style, matching the repo convention
-    sys.exit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
+    # This file is pytest-shaped (def test_*), so under the merge-gate conftest a
+    # bare relaunch would re-collect IT as a ScriptItem and re-run this block —
+    # infinite ping-pong into the 90s wall. WF_PYTEST_NATIVE=1 makes the inner
+    # run collect the test functions in-process (conftest's native escape hatch).
+    sys.exit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"],
+                             env=dict(os.environ, WF_PYTEST_NATIVE="1")))
