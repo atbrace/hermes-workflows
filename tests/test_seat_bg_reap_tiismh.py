@@ -16,19 +16,21 @@ Assertions mirror the bead's acceptance:
   (a) the child process is gone after the answer;
   (b) no post-answer notice turn appears for the seat session (the completion is
       consumed — drain_notifications skips it, which is the ONLY way a completion
-      becomes a follow-up turn on the quiet path).
+      becomes a follow-up turn on the quiet path);
+  (c) the reap is task-scoped: a foreign task_id (a subagent turn's on_session_end)
+      must not cut the parent seat's mid-turn background suite short.
 
-Style (repo convention): stdlib-only; core-dependent assertions SKIP when hermes is
-not importable (the carrier-side assertions always run).
+Style (repo convention): stdlib-only plain script; core-dependent assertions SKIP
+when hermes is not importable (the carrier-side assertions always run).
+Run:  python3 tests/test_seat_bg_reap_tiismh.py   (from the repo root)
 """
 import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -40,6 +42,23 @@ except Exception:
     pr_mod = None
     HAVE_CORE = False
 
+checks = 0
+failures = 0
+skips = 0
+
+
+def check(name, ok, detail=""):
+    global checks, failures
+    checks += 1
+    print(("PASS " if ok else "FAIL ") + name + (f" — {detail}" if detail and not ok else ""))
+    failures += 0 if ok else 1
+
+
+def skip(name, reason):
+    global skips
+    skips += 1
+    print(f"SKIP {name} — {reason}")
+
 
 def _load_reap_module():
     spec = importlib.util.spec_from_file_location(
@@ -50,114 +69,139 @@ def _load_reap_module():
     return mod
 
 
-def test_carrier_stamps_reap_env_on_seat_launch():
+def _env(values):
+    """Set/remove env entries (value None removes); returns the prior state."""
+    prior = {}
+    for k, v in values.items():
+        prior[k] = os.environ.get(k)
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    return prior
+
+
+def _env_restore(prior):
+    for k, v in prior.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def leg_carrier():
     """(1) The seat spawn env carries the reap flag, and delegation keeps it."""
     src = (ROOT / "wf.py").read_text(encoding="utf-8")
     anchor = src.index("HERMES_QUIET_TURN_REPORT_FILE=str(report_path)")
     env_block = src[anchor:anchor + 1600]
-    assert "HERMES_WF_SEAT_BG_REAP" in env_block, (
-        "carrier does not stamp the seat-reap flag into the seat launch env")
+    check("(1) carrier stamps HERMES_WF_SEAT_BG_REAP into the seat launch env",
+          "HERMES_WF_SEAT_BG_REAP" in env_block,
+          "carrier does not stamp the seat-reap flag into the seat launch env")
     # The flag must survive the routed (-p) env filter, which keeps only the
     # keep-set plus LC_* / HERMES_WF_* prefixes.
-    assert 'k.startswith("HERMES_WF_")' in src, "routed env filter no longer keeps HERMES_WF_*"
+    check("(1) routed env filter still keeps HERMES_WF_*",
+          'k.startswith("HERMES_WF_")' in src,
+          "routed env filter no longer keeps HERMES_WF_*")
 
 
-def test_plugin_surface_registers_the_reaper():
+def leg_plugin_surface():
     """(2) The reaper is on the hook surface (allow-list-gated loop registers it)."""
     src = (ROOT / "__init__.py").read_text(encoding="utf-8")
     surface = src[src.index("def _hook_surface()"):src.index("_CARD_HOOKS = (")]
-    assert "_seat_bg_reap.reap" in surface, "reaper is not on _hook_surface()"
-    assert "_seat_bg_reap = importlib.util.module_from_spec" in src, "seat_bg_reap.py not loaded"
+    check("(2) reaper is on _hook_surface()", "_seat_bg_reap.reap" in surface,
+          "reaper is not on _hook_surface()")
+    check("(2) seat_bg_reap.py is loaded by the plugin",
+          "_seat_bg_reap = importlib.util.module_from_spec" in src,
+          "seat_bg_reap.py not loaded")
     mod = _load_reap_module()
-    assert mod.ENV == "HERMES_WF_SEAT_BG_REAP" and mod.SOURCE == "seat_final_answer"
+    check("(2) reaper pins ENV/SOURCE constants",
+          mod.ENV == "HERMES_WF_SEAT_BG_REAP" and mod.SOURCE == "seat_final_answer")
 
 
-def test_reap_is_gated_on_the_carrier_env(monkeypatch):
+def leg_env_gate():
     """Off for every non-seat session: only the carrier's stamped env arms the reap."""
     mod = _load_reap_module()
+    ok = True
     for off in (None, "0", ""):
-        if off is None:
-            monkeypatch.delenv(mod.ENV, raising=False)
-        else:
-            monkeypatch.setenv(mod.ENV, off)
-        assert mod.reap(session_id="s", task_id="t") is None  # no-op, never raises
+        prior = _env({mod.ENV: off})
+        try:
+            ok = ok and mod.reap(session_id="s", task_id="t") is None  # no-op, never raises
+        except Exception:
+            ok = False
+            _env_restore(prior)
+            break
+        _env_restore(prior)
+    check("(3) reap is a no-op for unset/0/\"\" env, never raises", ok)
 
 
-@pytest.mark.skipif(not HAVE_CORE, reason="hermes core not importable")
-def test_child_gone_after_answer_and_no_notice_turn(tmp_path, monkeypatch):
-    """(a)+(b) against the REAL registry: kill_all at the answer reaps the live child,
-    and its completion is consumed — so the quiet drain loop gets no follow-up text."""
+def _registry_leg(name, sess_id, reap_task, sess_task, expect_dead):
+    """Shared driver for the two real-registry legs (child + singleton cleanup guaranteed)."""
     mod = _load_reap_module()
     pr = pr_mod.process_registry
-    # Isolate the singleton's durable side effects into the tmp hermes home.
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setattr(pr_mod, "CHECKPOINT_PATH", tmp_path / "processes.json")
-    monkeypatch.setattr(pr_mod, "save_completed_result", lambda session: None)
-    monkeypatch.setenv(mod.ENV, "1")
-
-    child = subprocess.Popen(["sleep", "300"])
-    task = "tiismh-seat-task"
-    sess = pr_mod.ProcessSession(
-        id="proc_tiismhtest0", command="sleep 300", task_id=task,
-        cwd=str(tmp_path), started_at=time.time(),
-        pid=child.pid, process=child, notify_on_complete=True)
-    with pr._lock:
-        pr._running[sess.id] = sess
-    try:
-        mod.reap(session_id="seat-session", task_id=task)
-        # (a) the child is gone after the answer (SIGTERM, waiter reaps the zombie).
-        assert child.wait(timeout=5) in (-15, -9, 143, 137)
-        assert sess.exited and sess.termination_source == mod.SOURCE
-        # (b) the completion is consumed: the quiet loop's drain skips it, so no
-        # follow-up turn can re-open the seat.
-        assert pr._drain_should_skip(sess.id) is True
-        assert pr.drain_notifications(session_key=sess.session_key) == []
-        # The post-answer linger finds nothing pending and returns immediately.
-        assert sess._completion_event.wait(timeout=5)
-        assert pr.wait_for_pending_completions(None, timeout=1)["waited"] == []
-    finally:
-        with pr._lock:
-            pr._running.pop(sess.id, None)
-            pr._finished.pop(sess.id, None)
-            pr._completion_consumed.discard(sess.id)
-        if child.poll() is None:
-            child.kill()
-            child.wait(timeout=5)
-
-
-@pytest.mark.skipif(not HAVE_CORE, reason="hermes core not importable")
-def test_task_scoped_reap_spares_a_foreign_task(tmp_path, monkeypatch):
-    """The reap is task-scoped: a subagent turn's on_session_end (different task_id)
-    must not cut the parent seat's mid-turn background suite short."""
-    mod = _load_reap_module()
-    pr = pr_mod.process_registry
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setattr(pr_mod, "CHECKPOINT_PATH", tmp_path / "processes.json")
-    monkeypatch.setattr(pr_mod, "save_completed_result", lambda session: None)
-    monkeypatch.setenv(mod.ENV, "1")
-
-    child = subprocess.Popen(["sleep", "300"])
-    sess = pr_mod.ProcessSession(
-        id="proc_tiismhtest1", command="sleep 300", task_id="sa-other",
-        cwd=str(tmp_path), started_at=time.time(),
-        pid=child.pid, process=child, notify_on_complete=True)
-    with pr._lock:
-        pr._running[sess.id] = sess
-    try:
-        mod.reap(session_id="seat-session", task_id="tiismh-seat-task")
-        assert child.poll() is None, "foreign-task child must survive the seat's reap"
-    finally:
-        with pr._lock:
-            pr._running.pop(sess.id, None)
-            pr._finished.pop(sess.id, None)
-        child.kill()
-        child.wait(timeout=5)
+    with tempfile.TemporaryDirectory() as tmp:
+        # Isolate the singleton's durable side effects into the tmp hermes home.
+        prior = _env({"HERMES_HOME": tmp, mod.ENV: "1"})
+        prior_ck = pr_mod.CHECKPOINT_PATH
+        prior_save = pr_mod.save_completed_result
+        pr_mod.CHECKPOINT_PATH = Path(tmp) / "processes.json"
+        pr_mod.save_completed_result = lambda session: None
+        child = subprocess.Popen(["sleep", "300"])
+        sess = pr_mod.ProcessSession(
+            id=sess_id, command="sleep 300", task_id=sess_task,
+            cwd=tmp, started_at=time.time(),
+            pid=child.pid, process=child, notify_on_complete=True)
+        try:
+            with pr._lock:
+                pr._running[sess.id] = sess
+            mod.reap(session_id="seat-session", task_id=reap_task)
+            if expect_dead:
+                # (a) the child is gone after the answer (SIGTERM, waiter reaps the zombie).
+                check(f"{name} (a) child gone at the answer",
+                      child.wait(timeout=5) in (-15, -9, 143, 137))
+                check(f"{name} termination_source is the reap",
+                      bool(sess.exited and sess.termination_source == mod.SOURCE))
+                # (b) the completion is consumed: the quiet loop's drain skips it, so no
+                # follow-up turn can re-open the seat.
+                check(f"{name} (b) drain skips the consumed completion",
+                      pr._drain_should_skip(sess.id) is True
+                      and pr.drain_notifications(session_key=sess.session_key) == [])
+                # The post-answer linger finds nothing pending and returns immediately.
+                check(f"{name} (b) linger waits on nothing",
+                      sess._completion_event.wait(timeout=5)
+                      and pr.wait_for_pending_completions(None, timeout=1)["waited"] == [])
+            else:
+                check(f"{name} (c) foreign-task child survives the seat's reap",
+                      child.poll() is None,
+                      "foreign-task child must survive the seat's reap")
+        finally:
+            with pr._lock:
+                pr._running.pop(sess.id, None)
+                pr._finished.pop(sess.id, None)
+                pr._completion_consumed.discard(sess.id)
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            pr_mod.CHECKPOINT_PATH = prior_ck
+            pr_mod.save_completed_result = prior_save
+            _env_restore(prior)
 
 
-if __name__ == "__main__":  # script style, matching the repo convention
-    # This file is pytest-shaped (def test_*), so under the merge-gate conftest a
-    # bare relaunch would re-collect IT as a ScriptItem and re-run this block —
-    # infinite ping-pong into the 90s wall. WF_PYTEST_NATIVE=1 makes the inner
-    # run collect the test functions in-process (conftest's native escape hatch).
-    sys.exit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"],
-                             env=dict(os.environ, WF_PYTEST_NATIVE="1")))
+def main():
+    leg_carrier()
+    leg_plugin_surface()
+    leg_env_gate()
+    if HAVE_CORE:
+        _registry_leg("(4) reap at the answer —", "proc_tiismhtest0",
+                      "tiismh-seat-task", "tiismh-seat-task", expect_dead=True)
+        _registry_leg("(5) task-scoped reap —", "proc_tiismhtest1",
+                      "tiismh-seat-task", "sa-other", expect_dead=False)
+    else:
+        skip("(4) reap at the answer (real registry)", "hermes core not importable")
+        skip("(5) task-scoped reap (real registry)", "hermes core not importable")
+    print(f"DONE seat_bg_reap_tiismh — {checks - failures}/{checks}"
+          + (f" ({skips} SKIP)" if skips else ""))
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()
