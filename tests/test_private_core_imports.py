@@ -100,6 +100,13 @@ ALLOW_LIST = {
     # guarded fallbacks so the plugin still reads graphs without core.
     ("wfcommon.py", "hermes_yaml.safe_load"):
         "_yaml_load: except ImportError -> ruamel, then PyYAML",
+    # --- tools.process_registry: the seat bg reaper's kill seam (sys-tiismh).
+    # The plugin ctx surface exposes no registry kill_all with consume_output,
+    # and the reap must hit the SAME singleton the linger drains — no public
+    # substitute reaches it (v0.22.x _PUBLIC checked, same split as #456).
+    ("seat_bg_reap.py", "tools.process_registry.process_registry"):
+        "reap(): lazy import inside except Exception -> pass (fail-open: no "
+        "reap, core's agent_close lifecycle kill unchanged)",
     # --- cron.jobs: tick-job lifecycle (landed by #534 after #456's table).
     ("cron_bridge.py", "cron.jobs"):
         "_jobs: except Exception -> None + callable surface check, never a "

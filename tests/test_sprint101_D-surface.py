@@ -167,8 +167,10 @@ try:
             lambda k: ["post_tool_call", "pre_gateway_dispatch", "on_session_end", "no_such_hook"]
             if k == "enabled_hooks" else _prev_reader(k))
         _c4 = _StubCtx(); door.register(_c4)
-        check("allow-list subset registers exactly the intersection (literal site + loop sites, PR-3 and PR-4 names)",
-              sorted(_c4.hooks) == ["on_session_end", "post_tool_call", "pre_gateway_dispatch"])
+        check("allow-list subset registers exactly the intersection (literal site + loop sites, PR-4 and sys-tiismh names)",
+              # on_session_end appears TWICE: the PR-4 orphan observer and the
+              # sys-tiismh seat bg reaper are two handlers under one allow-list name.
+              sorted(_c4.hooks) == ["on_session_end", "on_session_end", "post_tool_call", "pre_gateway_dispatch"])
         door._common.set_owner_setting_reader(
             lambda k: "not-a-list" if k == "enabled_hooks" else _prev_reader(k))
         check("malformed allow-list fails CLOSED (zero hooks)", door._hook_allowlist() == [])

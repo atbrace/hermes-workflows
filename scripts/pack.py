@@ -83,6 +83,7 @@ INCLUDE_FILES = (
     "gate_index.py",  # PR-3: imported by __init__.py at bind time
     "docs/admission-gates.md",
     "orphan_watch.py",  # PR-4: imported by __init__.py at bind time — a packaged plugin without it dies at import
+    "seat_bg_reap.py",  # sys-tiismh: imported by __init__.py at bind time — a packaged plugin without it dies at import
     "card_enforcement.py",  # #157: imported by __init__.py at bind time — a packaged plugin without it dies at import
     # P1 (PR #432): wf.py spec-loads this by file path (_outbound_bridge) — absent from the ZIP, a
     # packaged install silently loses the outbound bridge (bridge resolves None) and the shipped
