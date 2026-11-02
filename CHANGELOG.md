@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- CI core pin raised v0.22.0 -> v0.22.5 (`bf0203a794`, peeled): the plugin adopted
+  the v0.22.5 `on_session_delete` observer at `db146e08`, so CI now tests against
+  the contract release we actually rely on. Re-pin probe 2026-11-02: all consumed
+  symbols present at the tag; `test_upstream_hook_contract`,
+  `test_private_core_imports` (15/15) and `test_validate_0923` (57/57) pass with
+  the core resolved at the tag. `requires_hermes` floor unchanged (>=0.21.4).
+- CI installs the pinned core with `uv pip install --system --override`
+  (`Pillow==13.0.0`) at both install points: core v0.22.5 requires Pillow 13 on
+  py>=3.14 while browser-harness 0.1.13 pins pillow==12.3.0, and plain pip —
+  blind to core's `[tool.uv] override-dependencies` — died at
+  `ResolutionImpossible` in all 8 shards (run 41441923619). The mirror drops
+  when browser-harness allows Pillow 13.
+
 ## 1.4.5 — 2026-10-31
 
 Patch release from seven merged pull requests since v1.4.4:
