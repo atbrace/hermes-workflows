@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Error classification (sys-989kek, field report krb4cx): the CLI's stdout prose
+  "reached the iteration limit" now classifies `cap_exhausted` — added to
+  `_CAP_TOKENS` (typed report) and to a new shared `_CAP_PROSE_TOKENS` that feeds
+  both the marker gate and the cap branch of `_classify_rc_output` (the inline
+  duplicate is what drifted); the node rides the existing bounded re-drive
+  instead of dying `unknown` and falling to hand-build.
 - Seat-pool admission (sys-dk4164, endorse hw-bgb): a run.json `max_seats` ceiling
   ABOVE the pool's recorded `.cap` now rejects admission typed `seat_cap_mismatch`
   (node fails `error_class=seat_cap`) instead of going silently inert; the pool
