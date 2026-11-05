@@ -2988,10 +2988,16 @@ _CAP_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
 # keeps max_turns/max_iterations_reached( report-TEXT-only, but the CLI's own
 # "I reached the iteration limit and couldn't generate a summary." wording is a
 # stdout fact; the prose fallback must trust it or the node dies `unknown` and
-# skips the bounded re-drive. ONE tuple feeds both the marker gate and the cap
-# branch of _classify_rc_output — the old inline duplicate is what drifted.
+# skips the bounded re-drive. The cap branch of _classify_rc_output consults
+# this tuple (the old inline duplicate is what drifted) — but ONLY via a
+# marker already pinned by another gate rule; this tuple does NOT gate.
 _CAP_PROSE_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
                      "reached the iteration limit")
+# sys-989kek review: the ONLY prose allowed to self-pin as a marker is the
+# CLI's anchored first-person cap sentence. Legacy tokens ("turn limit" etc.)
+# in plain prose stay unpinnable (0923 law) — "stayed under the turn limit"
+# must not mask an Error code: 400 into a re-drivable cap_exhausted.
+_CAP_PROSE_GATE = ("i reached the iteration limit",)
 # The CLOSED set every node.failed (record + event) must carry (sprint101 #3).
 ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
@@ -3516,14 +3522,15 @@ def _classify_rc_output(out):
     ONLY from _typed_error_class() reading the child's core -Q turn report —
     nothing on stdout can prove it (the usage-file report is -z-only). The
     exception (sys-989kek): the CLI's own "reached the iteration limit" prose
-    is a stdout cap claim the fallback trusts via _CAP_PROSE_TOKENS."""
+    is a stdout cap claim the fallback trusts — anchored via _CAP_PROSE_GATE,
+    classified via _CAP_PROSE_TOKENS."""
     lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     marker = None
     for l in reversed(lines):  # the LAST machine-readable marker line wins
         low = l.lower()
         if low.startswith(_AGENT_FAIL_PREFIX) or low.startswith(_PROVIDER_SAID) or "error code: " in low \
                 or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT) \
-                or any(t in low for t in _CAP_PROSE_TOKENS):   # sys-989kek: a prose cap claim is a marker
+                or low.startswith(_CAP_PROSE_GATE):   # sys-989kek: only the anchored CLI cap sentence self-pins
             marker = l
             break
     if marker is None:
