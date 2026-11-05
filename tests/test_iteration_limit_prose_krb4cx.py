@@ -41,4 +41,15 @@ check("typed report -> cap_exhausted", tcls == "cap_exhausted", repr(tcls))
 cls2, _ = wf._classify_rc_output("Session found. max_turns noted in unrelated prose.\n")
 check("max_turns prose stays unpromotable (0923 law)", cls2 == "unknown", f"got {cls2!r}")
 
+# sys-989kek review: the gate must be the anchored cap SENTENCE only — legacy
+# tokens in plain prose stay unpinnable, or a non-retryable 400 whose summary
+# idles about limits gets masked into a re-drivable cap_exhausted.
+cls3, _ = wf._classify_rc_output("Error code: 400 - invalid request\n"
+                                 "Summary: I stayed well under the turn limit.\n")
+check("legacy 'turn limit' prose does not mask provider_400 (0923 law)",
+      cls3 == "provider_400", f"got {cls3!r}")
+cls4, _ = wf._classify_rc_output("Plan: keep under the tool call limit of 40.\n"
+                                 "Traceback (most recent call last):\nboom\n")
+check("legacy 'tool call limit' prose stays unknown", cls4 == "unknown", f"got {cls4!r}")
+
 sys.exit(0 if ok else 1)
