@@ -2982,7 +2982,16 @@ _MODEL404_TOKENS = ("error code: 404", "http 404")
 # loop's own max_iterations_reached( stamp (report TEXT only — stdout prose
 # naming a cap stays unpinnable, the 0923 law).
 _CAP_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
-               "max_turns", "max_iterations_reached(")
+               "max_turns", "max_iterations_reached(",
+               "reached the iteration limit")
+# sys-989kek (krb4cx): the cap markers stdout PROSE may claim. The 0923 law
+# keeps max_turns/max_iterations_reached( report-TEXT-only, but the CLI's own
+# "I reached the iteration limit and couldn't generate a summary." wording is a
+# stdout fact; the prose fallback must trust it or the node dies `unknown` and
+# skips the bounded re-drive. ONE tuple feeds both the marker gate and the cap
+# branch of _classify_rc_output — the old inline duplicate is what drifted.
+_CAP_PROSE_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
+                     "reached the iteration limit")
 # The CLOSED set every node.failed (record + event) must carry (sprint101 #3).
 ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
@@ -3505,13 +3514,16 @@ def _classify_rc_output(out):
     exception str) — never grep prose.
     `timeout` is a fact the runner knows (it killed the child); `max_turns` comes
     ONLY from _typed_error_class() reading the child's core -Q turn report —
-    nothing on stdout can prove it (the usage-file report is -z-only)."""
+    nothing on stdout can prove it (the usage-file report is -z-only). The
+    exception (sys-989kek): the CLI's own "reached the iteration limit" prose
+    is a stdout cap claim the fallback trusts via _CAP_PROSE_TOKENS."""
     lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     marker = None
     for l in reversed(lines):  # the LAST machine-readable marker line wins
         low = l.lower()
         if low.startswith(_AGENT_FAIL_PREFIX) or low.startswith(_PROVIDER_SAID) or "error code: " in low \
-                or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT):
+                or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT) \
+                or any(t in low for t in _CAP_PROSE_TOKENS):   # sys-989kek: a prose cap claim is a marker
             marker = l
             break
     if marker is None:
@@ -3530,7 +3542,7 @@ def _classify_rc_output(out):
     if _RATELIMIT_BANNER_RE.search(low):
         return "ratelimit", marker      # est-t0vz (issue #54): credential-window 429 —
                                         # its own bounded park, not the 5s/20s ladder
-    if any(t in low for t in ("tool-call limit", "tool call limit", "turn limit")):
+    if any(t in low for t in _CAP_PROSE_TOKENS):
         return "cap_exhausted", marker
     if any(t in low for t in _TRANSPORT_TOKENS):
         return "transport", marker
