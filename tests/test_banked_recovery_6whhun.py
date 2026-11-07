@@ -228,6 +228,33 @@ def run_checks():
         results.append(check("G1 refusal receipt carries the reason",
                              json.loads((run3 / "banked_receipt.json").read_text())
                              .get("reason")))
+
+        # ---- H: origin/main advances before --apply: the rebase rewrites HEAD, so
+        # the PR leg must see the POST-rebase sha (what actually gets pushed), not
+        # the banked one (D3's fixture never advances, so its rebase is a no-op).
+        remote3, lane3 = mk_lane(tmp, "lane3")
+        seed3 = tmp / "seed-lane3"   # mk_lane's seed clone (same idiom as E's seed2)
+        git(seed3, "checkout", "main")
+        (seed3 / "upstream.txt").write_text("main moved\n")   # disjoint file: clean rebase
+        git(seed3, "add", ".")
+        git(seed3, "commit", "-m", "moved")
+        git(seed3, "push", "origin", "main")
+        run4 = mk_run(tmp, lane_graph(lane3), name="run4")
+        log3 = tmp / "pr3.log"
+        rc, rep = lr.recover_banked_work(
+            run4, apply=True,
+            pr_cmd=f"sh -c 'echo $LANE_BRANCH $LANE_SHA >> {log3}'")
+        results.append(check("H1 apply over an advanced origin/main exits 0 recovered",
+                             rc == 0 and rep.get("status") == "recovered",
+                             f"rc={rc} reason={rep.get('reason')}"))
+        logged3 = log3.read_text().split() if log3.exists() else []
+        pushed3 = git(remote3, "ls-remote", "--heads", ".", "refs/heads/sys-test",
+                      check=False).stdout.split()
+        results.append(check("H2 PR-leg LANE_SHA equals the sha pushed to the remote",
+                             logged3[1:2] == pushed3[:1], f"log={logged3} remote={pushed3}"))
+        results.append(check("H3 receipt sha is the pushed sha; sha_banked keeps the pre-rebase one",
+                             [rep.get("sha")] == pushed3[:1]
+                             and rep.get("sha_banked") not in (None, rep.get("sha")), rep))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return results
