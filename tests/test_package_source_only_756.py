@@ -18,6 +18,8 @@ SOURCE_ONLY_TESTS = {
     "tests/test_plugin_resolution_live_not_old.py", "tests/test_scrub_yml_166b.py",
     # rebased onto main's #235: same shape, executes source-only lane_recover.py
     "tests/test_stuck_node_finalize_733.py",
+    # sys-6whhun: same shape, executes source-only lane_recover.py (--banked recovery)
+    "tests/test_banked_recovery_6whhun.py",
     # #248 r3 rebase onto main's #298: executes source-only make_public.py, reads scripts/scrub-list.txt
     "tests/test_personal_path_scrub_867.py",
     # est-xwvu9: the post-exit hook is stripped from the shipped build; this test
