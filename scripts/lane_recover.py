@@ -12,6 +12,9 @@ is opened READ-ONLY (`mode=ro`) and never mutated.
 Usage:
   python3 scripts/lane_recover.py --profile <name> --skey <session-key> [--out <restore-dir>]
   python3 scripts/lane_recover.py --run <run-id> [--node <id>] [--index <i>] [--attempt <n>] [--out <restore-dir>]
+  python3 scripts/lane_recover.py --watchdog <run-id> | --finalize <run-dir>
+  python3 scripts/lane_recover.py --banked <run-dir> [--node <id>] [--repo <wt> --branch <br>]
+                                  [--pr-check-cmd C] [--apply [--pr-cmd C] [--chain-cmd C]]
 
 The session key is what the runner writes into the spawn record / node record
 (`nodes/<node>[.<i>].json` -> `skey`): `wf:<run>:<node>[:<i>]:<efp8>.<nonce>`;
@@ -513,6 +516,196 @@ def _finalize_locked(wc, r, graph):
     return 4 if errors else 0
 
 
+# ---------- sys-6whhun banked-work recovery (dead lane, committed + unpushed) ----------
+# The shape: a lane dies AFTER its build seat committed (clean tree, branch ahead of
+# main) but before push/PR — the work is banked in the git sense: safe on the branch,
+# invisible to the carrier. The hand is a rebase->push->PR->ci-repair-chain; --banked
+# turns that prose into one audited command. Laws:
+#   * SAME liveness law as --finalize: the runner's own runner.lock flock is taken and
+#     held across the pass, plus wf.pid identity. A live runner can run the chain
+#     itself, so recovery REFUSES while it lives (exit 3).
+#   * The banked shape is verified fail-closed (exit 4 + reason): tree clean, HEAD on
+#     the lane branch, branch ahead of origin/main, branch NOT on the remote, and no
+#     open PR (--pr-check-cmd, exit 0 == a PR is open == refuse; absent that, the
+#     not-on-remote proof already excludes a PR, since a PR needs a pushed branch).
+#   * Default is DRY-RUN: the plan prints, nothing moves. --apply runs fetch -> rebase
+#     -> push -> PR -> chain, stopping at the FIRST failing leg. A rebase conflict is
+#     ABORTED (never left mid-rebase); the push is plain (never force — banked work
+#     must not clobber a concurrent writer's branch).
+#   * Every invocation writes <run>/banked_receipt.json next to nodes/ (dry-runs too:
+#     the plan is the artifact an operator returns to).
+BANKED_RECEIPT = "banked_receipt.json"
+_WORKTREE_GOAL_RE = re.compile(r"work only in the prepared (\S+) worktree on branch (\S+)",
+                              re.IGNORECASE)
+
+
+def _resolve_run_dir(arg):
+    """Path verbatim; a bare run id resolves the way the read model does
+    (WF_RUNS_ROOT / HERMES_HOME, else wfcommon.find_run). Shared by --finalize
+    and --banked (same resolution main() has always used)."""
+    cand = Path(arg)
+    if cand.is_dir():
+        return cand
+    root = os.environ.get("WF_RUNS_ROOT") or str(_hermes_home() / "workflows")
+    cand = Path(root) / arg
+    if cand.is_dir():
+        return cand
+    wc = _wfcommon()
+    if wc is not None:
+        try:
+            return Path(wc.find_run(arg))
+        except SystemExit:
+            pass
+    return cand
+
+
+def _git(repo, *args):
+    import subprocess
+    return subprocess.run(["git", "-C", str(repo), *args],
+                          capture_output=True, text=True)
+
+
+def _banked_repo_branch(r, node):
+    """Repo/branch from the carrier's own prompt law: every build seat goal carries
+    'work only in the prepared <path> worktree on branch <branch>.' (--node names
+    the node; default scans all). Fallback for the BRANCH only: the claim-plan
+    record's output.branch (the schema field)."""
+    graph = _jload(r / "graph.json") or {}
+    gnodes = [n for n in (graph.get("nodes") or []) if isinstance(n, dict)] \
+        if isinstance(graph, dict) else []
+    pool = ([n for n in gnodes if n.get("id") == node], gnodes) if node else (gnodes,)
+    for group in pool:
+        for n in group:
+            m = _WORKTREE_GOAL_RE.search(str(n.get("goal", "")))
+            if m:
+                return m.group(1).rstrip(".,;:"), m.group(2).rstrip(".,;:")
+    cp = _jload(r / "nodes" / "claim-plan.json") or {}
+    out = cp.get("output") if isinstance(cp, dict) else None
+    return None, (out or {}).get("branch") or None
+
+
+def recover_banked_work(run_dir, repo=None, branch=None, node=None, apply=False,
+                        pr_check_cmd=None, pr_cmd=None, chain_cmd=None):
+    """(--banked) Verify the banked shape and (with --apply) rebase->push->PR->chain
+    a dead lane's committed-unpushed work back into the carrier. Returns
+    (exit_code, receipt dict):
+      0 shape verified — dry-run printed the plan, or --apply ran every leg
+      2 run dir unusable, or repo/branch unresolvable (pass --repo/--branch)
+      3 runner alive — the lane can still run the chain itself
+      4 not the banked shape (dirty / not on branch / not ahead / on remote / open PR)
+      5 an --apply leg failed (receipt names the leg; a failed rebase was aborted).
+    The PR and ci-repair legs are injectable shell commands because the forge varies
+    per estate (Forgejo API vs gh); they receive LANE_REPO/LANE_BRANCH/LANE_SHA/
+    LANE_RUN_DIR in their environment — env, not argv, is the contract."""
+    import subprocess
+    r = Path(run_dir)
+    rep = {"ran_at": _now_iso(), "run": r.name, "mode": "apply" if apply else "dry-run",
+           "checks": {}, "steps": []}
+
+    def emit(code):
+        _atomic_json(r / BANKED_RECEIPT, rep)
+        return code, rep
+
+    if not r.is_dir():
+        rep["reason"] = f"no run dir at {r}"
+        return 2, rep                     # nowhere to write a receipt
+    lock = _take_runner_flock(r)          # held across the pass, like finalize
+    if lock is None:
+        rep["reason"] = "runner alive (runner.lock held) — the lane can run the chain itself"
+        return emit(3)
+    try:
+        try:
+            pid = int((r / "wf.pid").read_text().strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid and _pid_is_our_runner(pid, r):
+            rep["reason"] = f"runner pid {pid} alive — recovery refused"
+            return emit(3)
+        if not (repo and branch):
+            g_repo, g_branch = _banked_repo_branch(r, node)
+            repo, branch = repo or g_repo, branch or g_branch
+        rep["repo"], rep["branch"] = repo, branch
+        if not (repo and branch):
+            rep["reason"] = ("repo/branch unresolved from the graph (the build goal names the "
+                             "worktree; claim-plan carries the branch) — pass --repo/--branch")
+            return emit(2)
+
+        def shape_fail(reason):
+            rep["reason"] = reason
+            return emit(4)
+
+        if _git(repo, "rev-parse", "--is-inside-work-tree").returncode != 0:
+            return shape_fail(f"{repo} is not a git worktree")
+        head = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        if head.returncode != 0 or head.stdout.strip() != branch:
+            return shape_fail(f"worktree HEAD on {head.stdout.strip()!r}, not lane branch {branch!r}")
+        if _git(repo, "status", "--porcelain").stdout.strip():
+            return shape_fail("tree dirty — banked work is COMMITTED work; commit or stash first")
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        rep["sha"] = sha
+        if _git(repo, "rev-parse", "--verify", "-q", "origin/main").returncode != 0:
+            return shape_fail("no origin/main ref — fetch first (chain leg 1 does exactly that)")
+        ahead = _git(repo, "rev-list", "--count", "origin/main..HEAD")
+        if ahead.returncode != 0 or not ahead.stdout.strip().isdigit() or int(ahead.stdout.strip()) == 0:
+            return shape_fail("branch not ahead of origin/main — nothing banked")
+        rep["checks"]["ahead_of_main"] = int(ahead.stdout.strip())
+        remote = _git(repo, "ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+        if remote.returncode != 0:
+            return shape_fail(f"ls-remote failed (offline/unreachable remote): {remote.stderr.strip()}")
+        if remote.stdout.strip():
+            return shape_fail("branch already on origin — the chain moved past banked; "
+                              "finish the PR by hand from the pushed branch")
+        rep["checks"]["not_on_remote"] = True
+        steps = [
+            ("fetch", ["git", "-C", str(repo), "fetch", "origin"]),
+            ("rebase", ["git", "-C", str(repo), "rebase", "origin/main"]),
+            ("push", ["git", "-C", str(repo), "push", "origin", branch]),   # never -f
+        ]
+        # Env is the injectable-leg contract (argv would put the branch at $0 of an
+        # `sh -c` wrapper — a footgun); LANE_* is what every forge wrapper needs.
+        lane_env = dict(os.environ, LANE_REPO=str(repo), LANE_BRANCH=branch,
+                        LANE_SHA=sha, LANE_RUN_DIR=str(r))
+        if pr_check_cmd:
+            if subprocess.run(pr_check_cmd, shell=True, capture_output=True,
+                              text=True, env=lane_env).returncode == 0:
+                return shape_fail("open PR (--pr-check-cmd exit 0) — the chain already ran")
+            rep["checks"]["open_pr"] = "none"
+        else:
+            rep["checks"]["open_pr"] = "not checked (no --pr-check-cmd; not-on-remote covers it)"
+        if pr_cmd:
+            steps.append(("pr", pr_cmd))
+        if chain_cmd:
+            steps.append(("chain", chain_cmd))
+        rep["steps"] = [{"leg": name, "cmd": argv if isinstance(argv, list) else [argv]}
+                        for name, argv in steps]
+        if not apply:
+            rep["reason"] = "dry-run: plan above (pass --apply to run it)"
+            return emit(0)
+        for i, (name, argv) in enumerate(steps):
+            if isinstance(argv, str):        # injectable leg: operator shell command, LANE_* env
+                proc = subprocess.run(argv, shell=True, capture_output=True,
+                                      text=True, env=lane_env)
+            else:
+                proc = subprocess.run(argv, capture_output=True, text=True)
+            tail = " | ".join((proc.stdout + proc.stderr).strip().splitlines()[-3:])
+            rep["steps"][i]["rc"] = proc.returncode
+            rep["steps"][i]["tail"] = tail
+            if proc.returncode != 0:
+                if name == "rebase":
+                    _git(repo, "rebase", "--abort")   # never leave the lane mid-rebase
+                    rep["reason"] = "rebase conflict on the rebase leg — aborted, tree restored"
+                else:
+                    rep["reason"] = f"{name} leg failed (rc {proc.returncode}): {tail}"
+                rep["failed_leg"] = name
+                rep["steps"] = rep["steps"][:i + 1]
+                return emit(5)
+        rep["status"] = "recovered"
+        rep["reason"] = "chain complete: rebased, pushed, PR/chain legs run"
+        return emit(0)
+    finally:
+        os.close(lock)
+
+
 class Bail(Exception):
     """A typed early exit: message + process exit code (2 = no session/run/db)."""
     def __init__(self, msg, code=2):
@@ -875,7 +1068,34 @@ def main(argv=None):
                           "child is adopted, never finalized (exit 3 when the runner "
                           "is alive, 2 for an unknown/fresh run, 4 when a write failed "
                           "— rerun to repair, 0 when done).")
+    bnd = ap.add_argument_group("sys-6whhun banked-work recovery (mutually exclusive with replay)")
+    bnd.add_argument("--banked", metavar="RUN_DIR",
+                     help="recover a dead lane's COMMITTED-but-UNPUSHED work: verify the "
+                          "banked shape (runner dead, tree clean, HEAD on the lane branch, "
+                          "branch ahead of origin/main, branch not on the remote, no open "
+                          "PR) and default-dry-run the rebase->push->PR->ci-repair-chain. "
+                          "Exit 3 runner alive, 4 not the banked shape, 2 repo/branch "
+                          "unresolvable; a receipt lands in <run>/" + BANKED_RECEIPT + ".")
+    bnd.add_argument("--repo", help="lane worktree dir (default: parsed from the lane "
+                                    "node's goal — 'work only in the prepared <path> worktree')")
+    bnd.add_argument("--branch", help="lane branch (default: node goal, then claim-plan "
+                                      "output.branch)")
+    bnd.add_argument("--pr-check-cmd", help="shell command that exits 0 iff an OPEN PR "
+                                            "exists for $LANE_BRANCH (exit 0 refuses: the "
+                                            "chain already ran). Omit to rely on the "
+                                            "branch-not-on-remote proof alone.")
+    bnd.add_argument("--apply", action="store_true",
+                     help="run the chain instead of printing the plan; stops at the first "
+                          "failing leg, aborts a conflicting rebase, never force-pushes")
+    bnd.add_argument("--pr-cmd", help="--apply: shell command that opens the PR (gets "
+                                      "LANE_REPO/LANE_BRANCH/LANE_SHA/LANE_RUN_DIR env); "
+                                      "omit to stop after the push")
+    bnd.add_argument("--chain-cmd", help="--apply: shell command that chains the ci-repair "
+                                         "dispatch after the PR (same LANE_* env contract)")
     args = ap.parse_args(argv)
+    n_modes = sum(bool(x) for x in (args.finalize, args.banked, args.watchdog))
+    if n_modes > 1:
+        ap.error("--watchdog/--finalize/--banked are separate explicit acts (pick one)")
     if args.home:   # the read model resolves runs/profiles from HERMES_HOME; honor the flag
         os.environ["HERMES_HOME"] = str(Path(args.home).expanduser())   # (before --watchdog too)
     if args.watchdog:
@@ -895,18 +1115,18 @@ def main(argv=None):
         # #733: an explicit close act, never entangled with the replay path.
         # A bare run id resolves the way the read model does (WF_RUNS_ROOT /
         # --home, else wfcommon.find_run); a path is taken verbatim.
-        cand = Path(args.finalize)
-        if not cand.is_dir():
-            root = os.environ.get("WF_RUNS_ROOT") or str(_hermes_home() / "workflows")
-            cand = Path(root) / args.finalize
-            if not cand.is_dir():
-                wc = _wfcommon()
-                if wc is not None:
-                    try:
-                        cand = Path(wc.find_run(args.finalize))
-                    except SystemExit:
-                        pass
-        return finalize_run(cand)
+        return finalize_run(_resolve_run_dir(args.finalize))
+
+    if args.banked:
+        # sys-6whhun: an explicit recovery act, like --finalize never entangled
+        # with the replay path. --node narrows which node's goal names the
+        # worktree; the receipt (plan or outcome) prints AND lands beside nodes/.
+        rc, rec = recover_banked_work(
+            _resolve_run_dir(args.banked), repo=args.repo, branch=args.branch,
+            node=args.node, apply=args.apply, pr_check_cmd=args.pr_check_cmd,
+            pr_cmd=args.pr_cmd, chain_cmd=args.chain_cmd)
+        print(json.dumps(rec, indent=1))
+        return rc
 
     if args.run:
         skey, db = run_lookup(args.run, args.node, args.index, args.home)
