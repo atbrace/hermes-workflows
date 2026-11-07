@@ -15,6 +15,7 @@ against the current graph (own def + all ancestors' defs). An amend upstream mak
 downstream result stale — downstream nodes re-run or re-hold; unchanged chains replay.
 """
 import json, os, random, re, shutil, signal, socket, subprocess, sys, threading, time
+import ctypes
 import errno
 import fcntl
 import hashlib
@@ -4931,6 +4932,11 @@ RUNNER_PID_ENV = "HERMES_WF_RUNNER_PID"      # spawn pin: the runner's own pid
 # that the death window actually matches a gateway restart is the reaper's
 # log-correlated "; gw-restart window match" suffix (__init__.py
 # _reap_silent_death) — that clause is earned from files, never asserted here.
+# sys-nseyz4: this constant is the SIGINFO-LESS FALLBACK. When the sigwaitinfo
+# capture arms (see _arm_sigterm_sender_capture), the reason takes the
+# attributed shape "terminated: SIGTERM (external: pid <p> uid <u> <cmdline>)"
+# — a sender NAME is allowed only as siginfo evidence resolved at receipt,
+# never as prose; the false-provenance law above stands untouched.
 EXTERNAL_SIGTERM_REASON = "terminated: SIGTERM (external: source unknown)"
 CHILD_BELT_GRACE_S = 5.0   # replacement-runner (adoption) window before belt self-exit
 CHILD_BELT_POLL_S = 0.25
@@ -5084,6 +5090,110 @@ def _runner_term_cleanup(meta, reason="exit"):
     try: _sweep_orphans(meta, f"term:{reason}")
     except Exception: pass
 
+# sys-nseyz4: siginfo sender capture. The plain handler cannot see WHO fired
+# (adversary probe 2026-10-06: prose provenance was false), but siginfo carries
+# si_pid/si_uid — routing SIGTERM through a sigwaitinfo thread lets the receipt
+# name the sender while the pid is still the sender. The plain handler stays
+# armed as the siginfo-less fallback: attribution is an upgrade, never a
+# dependency, and records written without it keep the exact constant shape, so
+# wfcommon.is_external_kill classifies both forms unchanged.
+_SIGINFO_BYTES = 128               # glibc siginfo_t (musl 64; over-allocating is safe)
+# kernel struct siginfo _sifields sits behind the si_code word, padded to
+# pointer alignment (the union carries sival_ptr): pid/uid land at 16/20 on
+# 64-bit, 12/16 on 32-bit (offsetof-probed against glibc; musl matches —
+# this is the kernel uapi layout).
+_SI_PID_OFF = 16 if ctypes.sizeof(ctypes.c_void_p) == 8 else 12
+_SI_UID_OFF = _SI_PID_OFF + 4
+
+def _sigterm_sender_reason(si_pid, si_uid):
+    """Resolve the sender AT RECEIPT (pid reuse turns a late read into a
+    loaded gun at a stranger). Anything unresolvable falls back to the fixed
+    class-only constant — the record never carries an unproven name."""
+    cmd = ""
+    try:
+        cmd = (Path(f"/proc/{si_pid}/cmdline").read_bytes()
+               .replace(b"\0", b" ").decode("utf-8", "replace"))
+        if not cmd.strip():                        # kernel thread: cmdline is empty
+            cmd = Path(f"/proc/{si_pid}/comm").read_text(errors="replace")
+        cmd = re.sub(r"\s+", " ", cmd).strip()[:120]
+    except OSError:
+        cmd = ""
+    if si_pid <= 0 or not cmd:
+        return EXTERNAL_SIGTERM_REASON
+    return f"terminated: SIGTERM (external: pid {si_pid} uid {si_uid} {cmd})"
+
+def _arm_sigterm_sender_capture(meta):
+    """True when SIGTERM was handed to a sigwaitinfo capture thread. Blocking
+    the mask makes sigwaitinfo the only delivery path, and child threads INHERIT
+    the mask — so this must arm before any other thread spawns (the install
+    site sits above the zombie reaper for exactly that reason). On receipt the
+    thread writes the attributed verdict and dies under the signal itself
+    (libc-restored SIG_DFL + local unblock): the same signal-death exit status
+    an unhandled SIGTERM gives, so the door reaper's semantics are unchanged.
+    Any arm failure leaves the plain handler in charge: reason falls back to
+    EXTERNAL_SIGTERM_REASON. A hard (non-EINTR) sigwaitinfo failure after arm
+    exits the thread and unblocks it — that failure class needs an ABI bug,
+    and the cooperative stop path plus SIGKILL still own the runner either
+    way."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.sigemptyset.argtypes = [ctypes.c_void_p]
+        libc.sigaddset.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libc.sigwaitinfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        libc.sigwaitinfo.restype = ctypes.c_int
+        sigset = ctypes.create_string_buffer(_SIGINFO_BYTES)
+        libc.sigemptyset(sigset)                   # libc fills its own layout
+        libc.sigaddset(sigset, signal.SIGTERM)
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+        threading.Thread(target=_sigterm_capture_loop, args=(libc, sigset, meta),
+                         daemon=True, name="sigterm-capture").start()
+    except Exception:
+        try:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        except Exception:
+            pass
+        return False
+    return True
+
+def _sigterm_capture_loop(libc, sigset, meta):
+    si = ctypes.create_string_buffer(_SIGINFO_BYTES)
+    while True:
+        n = libc.sigwaitinfo(sigset, si)
+        if n == signal.SIGTERM:
+            break
+        if n == -1 and ctypes.get_errno() == errno.EINTR:
+            continue                               # interrupted, nothing consumed
+        try:                                       # hard error: hand SIGTERM back
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        except Exception:
+            pass
+        return
+    pid = int.from_bytes(si[_SI_PID_OFF:_SI_PID_OFF + 4], sys.byteorder, signed=True)
+    uid = int.from_bytes(si[_SI_UID_OFF:_SI_UID_OFF + 4], sys.byteorder, signed=True)
+    try:
+        reason = _sigterm_sender_reason(pid, uid)
+    except Exception:
+        reason = EXTERNAL_SIGTERM_REASON
+    try: _runner_term_cleanup(meta, "sigterm")
+    except Exception: pass
+    try:
+        if not _EXIT_WRITTEN[0]:
+            write_runner_exit(meta["_run"], reason)
+    except Exception: pass
+    # Die under the signal itself, right here: signal.signal(SIG_DFL) is
+    # main-thread-only and the mask re-raise would otherwise wait on the main
+    # thread reaching an eval boundary (blocked signals never interrupt its
+    # sleep) — so SIG_DFL is restored through libc directly and the default
+    # action runs on THIS unblocked thread. Same signal-death exit status an
+    # unhandled SIGTERM would give, reaper-observed semantics unchanged. If
+    # sigaction refuses (non-glibc layout), fall through: the still-registered
+    # Python handler re-raises from the main thread at its next loop tick.
+    act = ctypes.create_string_buffer(152)   # glibc sigaction: NULL handler, 0
+    libc.sigaction.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+    libc.sigaction(signal.SIGTERM, act, None)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+    os.kill(os.getpid(), signal.SIGTERM)
+
 def _install_runner_term_cleanup(meta):
     """Wire the termination cleanup into every exit path of the runner process:
     * atexit covers the normal end and any bail that unwinds cleanly;
@@ -5114,10 +5224,20 @@ def _install_runner_term_cleanup(meta):
                 # file-evidenced clause.
                 write_runner_exit(meta["_run"], EXTERNAL_SIGTERM_REASON)
         except Exception: pass
+        # sys-nseyz4: unblock FIRST — with the capture armed, every thread's
+        # mask blocks SIGTERM and signal.signal(SIG_DFL) does NOT unblock
+        # (probed on 3.14: the mask survives the SIG_DFL restore), so without
+        # this the re-raise would sit pending-blocked and the runner would
+        # live on ignoring its own death signal. Harmless no-op on the
+        # capture-less fallback path (never blocked there).
+        try: signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        except Exception: pass
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         os.kill(os.getpid(), signal.SIGTERM)     # re-raise the default
     try:
         signal.signal(signal.SIGTERM, _on_sigterm)
+        _arm_sigterm_sender_capture(meta)   # only with the handler registered:
+                                            # the capture re-delivers into it
     except (ValueError, OSError):
         pass                                      # non-main thread / unsupported
 
@@ -10381,11 +10501,15 @@ def main(run_id):
     # walks). The daemon drains the pool every second; it never reaps a pid
     # the runner owns (_procs seats / _aux_pids probes: verdict integrity),
     # and it does not start at all unless meta["_subreaper"] (#283 review B2).
-    _start_reaper(meta)
     # est-2ek.1.666: termination cleanup wired on EVERY exit path (atexit +
     # SIGTERM-clean-and-reraise) — a runner that leaves must not leave its
     # agent-node child mutating real state unsupervised.
+    # sys-nseyz4: the install runs ABOVE the reaper start on purpose — the
+    # siginfo sender capture blocks SIGTERM in the calling thread and every
+    # thread spawned afterwards INHERITS that mask, so the capture thread must
+    # own SIGTERM before the reaper (and every worker pool) exists.
     _install_runner_term_cleanup(meta)
+    _start_reaper(meta)
     meta["_run"] = run                      # Q1: spawn records + per-spawn logs
     meta["_spawn_n"] = {}                   # per (node,item) spawn counter for log names
     meta["_retries_left"] = _retry_conf_params(meta)[1]   # Q4 per-run retry budget
