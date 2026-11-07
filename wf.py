@@ -3158,6 +3158,13 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "fatal_quota", "ratelimit", "route_unavailable",
                            "incomplete_work", "early_death", "cancelled",
                            "schema", "spawn", "inputs", "killed",
+                           # sys-bknard: rc!=0 death whose capture carries a fenced
+                           # answer that PARSES but fails the node schema (the #4
+                           # harvest declined a parseable answer). Terminal like
+                           # `schema` — the answer defect is the child's own, not
+                           # a transport wound; the error text names the validate()
+                           # errors instead of dead-session CLI noise.
+                           "answer_schema_invalid",
                            "quorum", "fanout_empty", "crashed", "unknown",
                            # est-13z1: the node's output claims an estate bead was
                            # closed; the runner read the store itself (`bd show`)
@@ -3856,6 +3863,23 @@ def _harvest_death(out, schema):
     return {"output": parsed,
             "remaining": _remaining_steps(out),
             "harvest": {"declared_status": declared if isinstance(declared, str) and declared else None}}
+
+def _schema_failed_answer(out, schema):
+    """The #4 harvest DECLINED a PARSEABLE answer: the capture carries a fenced
+    json block that parses to a dict but fails the node schema. Returns the
+    validate() error list (non-empty), None when no fenced block parses to a
+    dict — mirrors _harvest_death's accept rule exactly (fenced-only, last
+    fence, dict-only) so the two can never disagree (sys-bknard)."""
+    fences = JSON_FENCE.findall(out or "")
+    if not fences:
+        return None
+    try:
+        parsed = json.loads(fences[-1])
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return validate(parsed, schema) or None
 
 def _cancel_evidence(run, nid, index, lp):
     """Snapshot after a quorum kill. Byte/file counts are raw disk evidence,
@@ -6781,7 +6805,9 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
                         f"typed malformed turn; not harvestable). Verdict: {verdict}",
                 "error_class": "malformed_turn", "raw": (out or "")[-2000:], "ms": ms,
                 "final": final_reply, **evd}
-    verdict = _verdict_lines(marker if marker else out)
+    # sys-bknard: adopted deaths carry the same #102 noise risk as rc!=0 deaths.
+    verdict = _verdict_lines(_clean_capture(marker if marker else out)) \
+        or "capture held only dead-session noise (no verdict lines)"
     rec = {"status": "failed", "error": f"adopted child died (rc unobservable — runner was "
             f"respawned): {verdict}", "error_class": eclass, "raw": (out or "")[-2000:],
             "ms": ms, "final": final_reply, **evd}
@@ -7839,7 +7865,26 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                 eclass, marker = "transport", _ov["detail"]
             elif _ov["outcome"] == "failure" and _otok == "failure":
                 eclass = "declared_failure"
-        verdict = _verdict_lines(marker if marker else out)
+        if eclass == "unknown":
+            # sys-bknard: the harvest above declined a PARSEABLE fenced answer
+            # (schema miss) — name that, with the validate() errors, instead of
+            # letting a completed seat's rc=1 land `unknown` with an error that
+            # quotes dead-session CLI noise back at the operator.
+            serr = _schema_failed_answer(out, harvest_schema)
+            if serr:
+                return {"status": "failed",
+                        "error": f"child exited rc={rc}: answer_schema_invalid — the "
+                                 f"capture carries a fenced json answer that parses but "
+                                 f"fails the node schema ({'; '.join(map(str, serr))}); "
+                                 f"verdict: {_verdict_lines(_clean_capture(out))}",
+                        "error_class": "answer_schema_invalid",
+                        "raw": (out or "")[-2000:], "ms": ms, "final": final_reply,
+                        **sk, **evd}
+        # sys-bknard: strip the #102 dead-session noise BEFORE quoting the
+        # capture — an rc=1 exit over a completed session printed that line and
+        # the runner presented pure startup noise as the death verdict.
+        verdict = _verdict_lines(_clean_capture(marker if marker else out)) \
+            or "capture held only dead-session noise (no verdict lines)"
         rec = {"status": "failed", "error": f"child exited rc={rc}: {verdict}",
                "error_class": eclass, "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
         if eclass == "ratelimit":   # est-t0vz: keep the verbatim banner for the park's

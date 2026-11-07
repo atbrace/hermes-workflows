@@ -47,8 +47,10 @@ def check(label, cond, detail=""):
     ok = ok and bool(cond)
 
 # a0's real fenced answer (claim-plan node, receipt 20261107-143106-b2p-sysggxeiu,
-# logs/claim-plan.a0.log — the ONLY fence in that capture), embedded verbatim.
-A0_BODY = r"""{"bead_id":"sys-ggxeiu","branch":"sys-ggxeiu","destructive":false,"fleet_touching":false,"hosts":["devbox"],"premise_evidence":"grep -rqiE 'api_server.{0,160}flat|flat.{0,160}api_server' /home/claude/.hermes/profiles/homelab/skills -> exit 1 (gap live); anchor at plugin-hooks.md:42 (API_SERVER_KEY bearer line); live flat shape at profiles/homelab/config.yaml:374-379 platforms.api_server{enabled,host,port,key}, nested extra: form seen on jetstream in same file; git rev-parse in skills dir = not a repo and system-wide find shows exactly one copy of plugin-hooks.md — no repo tracks it, so the PR carries no diff and the fix is a direct profile-file edit","roles":[],"summary_plan":"Apply one line to /home/claude/.hermes/profiles/homelab/skills/autonomous-ai-agents/hermes-agent/references/plugin-hooks.md next to the line-42 API_SERVER_KEY bearer bullet, stating that api_server requires flat keys (enabled/host/port/key directly under platforms.api_server, not the nested extra: map other platforms use). The file is under no git, so expect an empty worktree and no PR; close with close_class=verified plus the acceptance grep exit-0 as cite, and do not let the stat-only incident-analysis.md phantom redden exit-check.","tests_run":[],"verdict":"ready"}"""
+# logs/claim-plan.a0.log — the ONLY fence in that capture), embedded verbatim
+# except personal home paths scrubbed to '~' (test_personal_path_scrub_867 ships
+# the tree; the schema-miss pin rides the KEYS, so the scrub is shape-neutral).
+A0_BODY = r"""{"bead_id":"sys-ggxeiu","branch":"sys-ggxeiu","destructive":false,"fleet_touching":false,"hosts":["devbox"],"premise_evidence":"grep -rqiE 'api_server.{0,160}flat|flat.{0,160}api_server' ~/.hermes/profiles/homelab/skills -> exit 1 (gap live); anchor at plugin-hooks.md:42 (API_SERVER_KEY bearer line); live flat shape at profiles/homelab/config.yaml:374-379 platforms.api_server{enabled,host,port,key}, nested extra: form seen on jetstream in same file; git rev-parse in skills dir = not a repo and system-wide find shows exactly one copy of plugin-hooks.md — no repo tracks it, so the PR carries no diff and the fix is a direct profile-file edit","roles":[],"summary_plan":"Apply one line to ~/.hermes/profiles/homelab/skills/autonomous-ai-agents/hermes-agent/references/plugin-hooks.md next to the line-42 API_SERVER_KEY bearer bullet, stating that api_server requires flat keys (enabled/host/port/key directly under platforms.api_server, not the nested extra: map other platforms use). The file is under no git, so expect an empty worktree and no PR; close with close_class=verified plus the acceptance grep exit-0 as cite, and do not let the stat-only incident-analysis.md phantom redden exit-check.","tests_run":[],"verdict":"ready"}"""
 
 # The receipt graph's claim-plan answer shape: the probe reported the a0 answer
 # missing exactly ['premise_verdict', 'sha']; the pinned schema keeps those two
@@ -91,8 +93,8 @@ HOME.mkdir(parents=True); RUNS.mkdir()
 (HOME / "fake.log").write_text("")
 
 # the a0 capture as the fake replays it (the fake prints the noise line itself):
-# finished-work prose + the schema-missing fence.
-CAP = HERE / "bknard_a0_capture.txt"
+# finished-work prose + the schema-missing fence. HOME is gitignored (tests/home*/).
+CAP = HOME / "bknard_a0_capture.txt"
 CAP.write_text("plan.json written to the run dir; intake complete for sys-ggxeiu.\n"
                "```json\n" + A0_BODY + "\n```\n")
 
@@ -129,7 +131,7 @@ check("B2 no re-drive over absent api-call evidence (receipt attempts=1 shape)",
       spawns_of("bknard-noise") == 1, f"spawns={spawns_of('bknard-noise')}")
 
 # ================= C: schema-VALID fence over rc=1 — #4 accept rule unchanged =========
-GOOD = HERE / "bknard_good_capture.txt"
+GOOD = HOME / "bknard_good_capture.txt"
 GOOD.write_text("```json\n" + json.dumps({"verdict": "ready", "premise_verdict": "valid",
                                            "sha": "0" * 40}) + "\n```\n")
 r = mk("bknard-valid", f"DEADSEAT {GOOD} bknard-valid claim-plan", SCHEMA)
