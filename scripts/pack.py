@@ -302,6 +302,7 @@ SOURCE_ONLY_TESTS = {
     # scripts/make_public.py — same shape as test_scrub_yml_166b / #867.
     "tests/test_scrub_nul_readme_580.py": "executes source-only scripts/make_public.py (NUL-README pin, est-iypbd)",
     "tests/test_scrub_surface_1w0hoy.py": "executes source-only scripts/make_public.py (surface audit pin, est-iypbd)",
+    "tests/test_banked_recovery_6whhun.py": "executes source-only scripts/lane_recover.py (--banked)",
 }
 
 # Source-only SCRIPTS: repository/estate CI tooling that never travels in the
