@@ -594,6 +594,18 @@ if _FAKE_MODE == "retry_hint":   # #130: transport death (0 api calls) that BANK
         pass
     print("hermes -z: agent failed: openai.APIConnectionError. Connection error.")
     sys.exit(2)
+if "DEADSEAT" in q:
+    # sys-bknard (completed-seat rc=1): DEADSEAT <path|NONE> — replay the real
+    # capture of a seat that ANSWERED but whose CLI exit path returned rc=1:
+    # the #102 dead-session noise line FIRST, then the session's real output
+    # (the capture file; NONE = noise only), then exit FAKE_RC (default 1).
+    # Prompt-scoped marker (QFLUSH/CLOSE-CLAIM precedent) so one run mixes shapes.
+    _dsp = q.split("DEADSEAT", 1)[1].split()[0]
+    print("Session local-deadseat0000000000000000000000000000000000000000000000 "
+          "found but has no messages. Starting fresh.", flush=True)
+    if _dsp != "NONE":
+        print(open(_dsp).read(), flush=True)
+    sys.exit(int(os.environ.get("FAKE_RC", "1")))
 if _FAKE_MODE == "lease_busy":
     # lease-busy (2026-10-03 field shape): attempt 1 prints the CLI's dead-session
     # banner + the CLI's fail-closed lease notice verbatim and exits 130 (the CLI's
