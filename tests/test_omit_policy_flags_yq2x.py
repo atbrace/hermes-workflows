@@ -3,8 +3,10 @@
 
 The gateway's frozen-route resume policy refuses creation overrides under
 `--continue <skey> --create-if-missing` (every child dies rc=2 — est-yq2xq
-class). The runner strips the frozen-route flag PAIRS (--max-turns,
---run-budget, --reasoning, -t, -m, --provider) while the feature is active:
+class). The runner strips the frozen-route flag PAIRS while the feature is
+active (sys-84q3qi shrank the list to --run-budget alone: the core
+launch-flags port #146245 now freezes -m/--provider/--max-turns/--reasoning
+at create, so only --run-budget still refuses the re-check):
 env WF_OMIT_POLICY_FLAGS=1 OR the marker file
 <hermes_home>/workflows/omit-policy-flags.on. Two proofs here:
 
@@ -43,7 +45,9 @@ ARGV = ["hermes", "-p", "launcher", "chat", "--query-file", "/tmp/p.md",
         "-t", "terminal,-file", "--max-turns", "65", "--run-budget", "300"]
 STRIPPED = ["hermes", "-p", "launcher", "chat", "--query-file", "/tmp/p.md",
             "--oneshot", "-Q", "--source", "workflow",
-            "--continue", "wf:r1:child#a0", "--create-if-missing"]
+            "--continue", "wf:r1:child#a0", "--create-if-missing",
+            "-m", "test-model", "--provider", "test-provider", "--reasoning", "high",
+            "-t", "terminal,-file", "--max-turns", "65"]
 
 
 class HelperStrip(unittest.TestCase):
@@ -122,9 +126,9 @@ class SpawnWiring(unittest.TestCase):
     def test_enabled_spawn_never_carries_frozen_route_flags(self):
         with tempfile.TemporaryDirectory() as td:
             argv = self._capture(Path(td), {"WF_OMIT_POLICY_FLAGS": "1"})
-            for flag in ("-m", "--provider", "--reasoning", "-t",
-                         "--max-turns", "--run-budget"):
-                self.assertNotIn(flag, argv)
+            self.assertNotIn("--run-budget", argv)   # the only frozen route flag
+            for flag in ("-m", "--provider", "--max-turns"):
+                self.assertIn(flag, argv)            # delisted (sys-84q3qi)
             self.assertIn("--continue", argv)   # the join survives
             self.assertIn("--create-if-missing", argv)
 

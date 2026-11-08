@@ -6678,8 +6678,12 @@ def _stale_spawn_refusal(run, node, byid):
 # creation flags on the create-if-missing shape); until then this keeps waves
 # alive on affected seats instead of a per-install monkey-patch that every
 # plugin update wipes.
-_FROZEN_ROUTE_FLAGS = ("--max-turns", "--run-budget", "--reasoning",
-                       "-t", "-m", "--provider")
+# sys-84q3qi shrink: the core create_titled_session port (upstream #146245, live
+# in the estate pin-roll) freezes -m/--provider/--max-turns/--reasoning on the
+# created row, so those no longer need the strip; only --run-budget still
+# refuses the resume re-check (not in _LAUNCH_POLICY, hw-aqz) and stays frozen
+# here — mirroring the hermes-homelab-nomaxturns shim.
+_FROZEN_ROUTE_FLAGS = ("--run-budget",)
 
 
 def _omit_policy_flags_if_enabled(cmd, home=None, env=None):
