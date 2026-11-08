@@ -187,15 +187,9 @@ publication guards, and crash recovery.
   class, not the prose; the exit-0-is-not-success settle law (`declared_failure`, transient
   sentinels) is in references/operations.md. `cancelled` (a `stop`, or a fan-out
   straggler at quorum) is never a failure: the run reads `stopped`, and a `wait` re-drives it.
-  `answer_schema_invalid` (sys-bknard): a fenced answer that PARSED but missed required schema keys — the
-  harvest declined a parseable answer; terminal like `schema`, and the error text names the validate()
-  errors instead of #102 dead-session noise.
-  `budget_exhausted` (est-3acn): a RunBudget cap (graph-root or node `budget:{tokens:N}`; tokens-only —
-  USD is excluded per the repo cost-trust law, issue #124) refused the spawn BEFORE submit, logged as
-  `dispatch.refused` and never billing (zero attempts); the runner closes the run gracefully as
-  `partial` and `budget_ledger.json` names the never-launched nodes. Terminal: outside every retry ladder.
-  A capped fan-out that DID harvest is a committing record: it rides the boundary gates (est-ps8i9); a
-  gate-demote's `node.failed` names the cap (`budget_cause=budget_exhausted`, est-6ig3s).
+  `budget_exhausted` (est-3acn): a RunBudget cap refused the spawn BEFORE submit and billed nothing;
+  the cap law — tokens-only, the capped-commit boundary gates (est-ps8i9), and
+  `budget_cause=budget_exhausted` on gate-demotes (est-6ig3s) — is in references/operations.md.
   `seat_wait` (est-g2xx): no global agent seat (`WORKFLOW_MAX_SEATS`) freed within the node wall — the spawn never happened.
   `seat_unsupported` (est-g255): the semaphore was full and the host exposes no process-ancestry
   channel (neither `/proc` nor `ps`), so a nested runner cannot prove which held seat is its own
