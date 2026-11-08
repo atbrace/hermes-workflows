@@ -34,7 +34,7 @@ def _fixture(root):
              "fp_rule_version": wfcommon.FP_RULE_VERSION}))
     return run, byid
 
-def _stamp(run, byid, rec):
+def _stamp(run, rec):
     (run / "nodes" / "b.json").write_text(json.dumps(rec))
 
 def test_clamped_death_refuses_green():
@@ -42,7 +42,7 @@ def test_clamped_death_refuses_green():
     # is not a failed_node, yet names the death and refuses completed.
     with tempfile.TemporaryDirectory() as td:
         run, byid = _fixture(pathlib.Path(td))
-        _stamp(run, byid, {"status": "done", "attempt": 1, "output": {"ok": True},
+        _stamp(run, {"status": "done", "attempt": 1, "output": {"ok": True},
                 "error": "turn cap", "error_class": "cap_exhausted",
                 "harvest": {"declared_status": "done"},
                 "clamped": {"policy": "validate", "from_status": "partial",
@@ -59,7 +59,7 @@ def test_honest_fold_death_refuses_green():
     # folds to done for consumption yet must refuse run-level green.
     with tempfile.TemporaryDirectory() as td:
         run, byid = _fixture(pathlib.Path(td))
-        _stamp(run, byid, {"status": "failed", "attempt": 1, "error": "boom",
+        _stamp(run, {"status": "failed", "attempt": 1, "error": "boom",
                 "error_class": "timeout",
                 "harvest": {"declared_status": "done"}, "output": {"ok": True},
                 "efp": wfcommon.efp(byid, byid["b"]),
