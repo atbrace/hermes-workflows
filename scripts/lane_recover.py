@@ -665,6 +665,7 @@ def recover_banked_work(run_dir, repo=None, branch=None, node=None, apply=False,
         # `sh -c` wrapper — a footgun); LANE_* is what every forge wrapper needs.
         lane_env = dict(os.environ, LANE_REPO=str(repo), LANE_BRANCH=branch,
                         LANE_SHA=sha, LANE_RUN_DIR=str(r))
+        rep["sha_banked"] = sha   # pre-rebase; rep["sha"]/LANE_SHA refresh after rebase rewrites HEAD
         if pr_check_cmd:
             if subprocess.run(pr_check_cmd, shell=True, capture_output=True,
                               text=True, env=lane_env).returncode == 0:
@@ -699,6 +700,12 @@ def recover_banked_work(run_dir, repo=None, branch=None, node=None, apply=False,
                 rep["failed_leg"] = name
                 rep["steps"] = rep["steps"][:i + 1]
                 return emit(5)
+            if name == "rebase":
+                # the rebase rewrote HEAD — refresh the sha the later legs and the
+                # receipt speak of, else LANE_SHA names a commit that was never pushed
+                sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+                rep["sha"] = sha
+                lane_env["LANE_SHA"] = sha
         rep["status"] = "recovered"
         rep["reason"] = "chain complete: rebased, pushed, PR/chain legs run"
         return emit(0)
