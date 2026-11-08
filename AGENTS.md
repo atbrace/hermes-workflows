@@ -197,7 +197,7 @@ publication guards, and crash recovery.
   a host are unsupported (set `WORKFLOW_MAX_SEATS=0` there). A fan-out item waiting on a seat when
   `quorum` is met ends `cancelled` and never spawns.
   `seat_cap` (est-2ek.1.856): the seat-cap knob (`WORKFLOW_MAX_SEATS` env or config
-  `workflows.max_seats`) named a non-integer or a value outside [4, 16]. The door refuses the
+  `workflows.max_seats`) named a non-integer or a value outside [4, 64]. The door refuses the
   whole launch before any write or spawn; an already-running runner fails the node. Never
   retried, never silently defaulted to `SEATS_DEFAULT`.
   `left_live_descendants` (#61): the runner is process-tree aware — an exit-0 spawn is

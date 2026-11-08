@@ -3194,7 +3194,7 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "declared_failure",
                            # est-2ek.1.856 (B3): the seat-cap knob (WORKFLOW_MAX_SEATS
                            # env / config workflows.max_seats) named a non-integer or
-                           # a value outside [4, 16]. The door refuses the whole launch
+                           # a value outside [4, 64]. The door refuses the whole launch
                            # with it; a runner that sees it flip invalid mid-run fails
                            # the node with it. Operator input error: never retried,
                            # never silently defaulted.

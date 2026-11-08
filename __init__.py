@@ -3729,7 +3729,7 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta["plugin_version"] = _pv
     # est-2ek.1.856 deep review D2: the advertised per-run seat-cap opt-out is
     # baked where the runner reads it — run.json meta max_seats (the structural
-    # pass has already validated the value: integer in [4,16] or the explicit 0
+    # pass has already validated the value: integer in [4,64] or the explicit 0
     # off-sentinel; _max_seats honours meta over env/config). Absent = key never
     # written: a plain run keeps the exact golden key set.
     if "max_seats" in graph:

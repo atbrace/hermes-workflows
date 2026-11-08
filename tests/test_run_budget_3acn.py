@@ -61,11 +61,11 @@ def check(label, cond, detail=""):
 TMP = Path(tempfile.mkdtemp(prefix="wf-3acn-"))
 os.environ["HERMES_HOME"] = str(TMP / "home")
 os.environ["WF_RUNS_ROOT"] = str(TMP / "home" / "workflows")
-# est-3acn re-roll 2026-10-16: main's #439 bounds WORKFLOW_MAX_SEATS to [4,16];
+# est-3acn re-roll 2026-10-16: main's #439 bounds WORKFLOW_MAX_SEATS to the [4,64] bracket (hw-e65 widened);
 # a wide ambient lane value must never fail-close this pin (env-insensitive law).
 if os.environ.get("WORKFLOW_MAX_SEATS") not in (None, "0") and \
-        not (4 <= int(os.environ.get("WORKFLOW_MAX_SEATS", "8")) <= 16):
-    os.environ["WORKFLOW_MAX_SEATS"] = "16"
+        not (4 <= int(os.environ.get("WORKFLOW_MAX_SEATS", "8")) <= 64):
+    os.environ["WORKFLOW_MAX_SEATS"] = "64"
 
 # The recording stub: every spawn appends its --continue key to the attempt
 # ledger AND bills WF3_IN/WF3_OUT tokens into state.db under that session title
@@ -267,7 +267,7 @@ def door_env():
     os.environ["WF_RUNS_ROOT"] = str(home / "workflows")
     os.environ["HERMES_HOME"] = str(home)
     # est-3acn re-roll 2026-10-16: main's #439 seat-cap validator bounds
-    # WORKFLOW_MAX_SEATS to [4,16]; a wide ambient lane value (64) must never
+    # WORKFLOW_MAX_SEATS to the [4,64] bracket; a wider ambient value must never
     # bake-lock the door — the pin is environment-insensitive.
     os.environ["WORKFLOW_MAX_SEATS"] = "16"
     door._CTX = FakeCtx()

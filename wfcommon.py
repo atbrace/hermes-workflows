@@ -6668,7 +6668,13 @@ def amend_preview(r, new_nodes):
 
 SEATS_DEFAULT = 4          # the semaphore's shipped default (wf.py binds the same law)
 SEAT_CAP_FLOOR = 4         # the smallest cap a raise/override may name (est-2ek.1.856)
-SEAT_CAP_CEILING = 16      # the largest cap config/env may name (est-2ek.1.856)
+# The band is a SANITY BRACKET (order-of-magnitude typo refusal), not a capacity
+# model: est-g2xx measured ~13 concurrent seats half-hanging ONE estate's pinned
+# local sglang server (30+ min silent stalls) — a sizing note for local-server
+# hosts to size their own raise, never the band's top. 64 admits deliberate
+# raises (17..64) while real typo shapes (160/444/1600) are still refused a full
+# order of magnitude above the bracket (hw-e65; agreed with downstream review).
+SEAT_CAP_CEILING = 64      # the largest cap config/env may name (est-2ek.1.856, widened hw-e65)
 
 
 class SeatCapError(ValueError):
