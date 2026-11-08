@@ -10552,6 +10552,10 @@ def main(run_id):
             if st in ("done", "partial"): outputs[n["id"]] = (rec or {}).get("output")  # #4: partial output IS output
             # e68544a37be37657; est-ggqs: a validate-clamped harvest is the node's
             # own vouched `done` — its declared schema already held the answer.
+            # sys-wt3cck: only the clamped arm is vouched — an unvouched
+            # harvest-on-death stays prov True so _unmet_requires keeps gating
+            # the requires-gate on `<ancestor>.harvested` (e68544a; a GRANT
+            # here would be outside completion-honesty scope).
             prov[n["id"]] = bool((rec or {}).get("harvest")) and not (rec or {}).get("clamped")
             # A committed `partial` whose class is budget_exhausted (capped
             # fan-out WITH harvest) is a RunBudget death too — the class, not

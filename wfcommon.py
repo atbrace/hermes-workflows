@@ -4652,6 +4652,20 @@ def _answer_harvest_valid(n, rec):
     schema = n.get("schema") or (n.get("fanout") or {}).get("schema")
     return not validate(out, schema)
 
+def _died_but_harvested(n, rec):
+    """sys-wt3cck: the ONE derivation site for 'this node died but its answer was
+    harvested' — either the validate policy laundered a `partial` death to `done`
+    (the `clamped` stamp names the verdict it replaced) or an efp-valid `failed`
+    carries a harvest answer that re-validates (the jam-aus honest fold). Both
+    arms READ `done` and stay out of failed_nodes, so every consumer asking 'did
+    the run finish green' must consult this predicate, not the folded status
+    (the 44+ masked runs on disk flip here, derive-not-stored, sys-5lnm17 law).
+    efp validity is the caller's gate — node_rec/run_state fold on efp-valid
+    states; this reads only the record's own death evidence."""
+    if (rec or {}).get("clamped"):
+        return True
+    return (rec or {}).get("status") == "failed" and _answer_harvest_valid(n, rec)
+
 def node_rec(r, n, byid, memo=None, legacy_memo=None):
     """Return (status, rec): done|partial|failed|pending. Stale (efp mismatch after an
     amend) == pending — its stored result must never be presented as current.
@@ -6034,6 +6048,15 @@ def run_state(r, *, telemetry=True, lock_state=None):
     failed_nodes = [{"id": n["id"], "error": (recs[n["id"]] or {}).get("error"),
                      "error_class": (recs[n["id"]] or {}).get("error_class")}
                     for n in graph["nodes"] if states[n["id"]] == "failed"]
+    # sys-wt3cck: WHICH nodes died-but-were-harvested — the honest fold lets a
+    # validate-clamped or harvest-validated death READ done, so it is absent from
+    # failed_nodes and used to let completed launder it too (run
+    # 20261103-171453-b2p-sysizvfq9: push-pr died, the run reported done). Derived
+    # here from the SAME states/recs fold through the ONE predicate (sys-5lnm17
+    # derive-not-stored law): masked runs on disk flip with no migration.
+    completed_over_dead_node = [
+        n["id"] for n in graph["nodes"]
+        if states[n["id"]] == "done" and _died_but_harvested(n, recs[n["id"]])]
     accounting = {}
     if telemetry:
         import time as _time
@@ -6118,11 +6141,16 @@ def run_state(r, *, telemetry=True, lock_state=None):
            # never be consumed as 'finished green'. `completed` is the one field that
            # separates the two senses, derived through the SAME fold as status and
            # failed_nodes (derive-not-stored, sys-5lnm17 law): true only for a
-           # terminal done-verdict with zero failed nodes. The key rides only runs
+           # terminal done-verdict with zero failed nodes AND zero died-but-harvested
+           # nodes (sys-wt3cck: a laundered death is still a death — completed_over_dead_node
+           # names them and forces completed False, fail-closed: it can refuse green,
+           # never grant it). The key rides only runs
            # that carry a recorded terminal verdict — a run with no verdict stamped
            # yet keeps its exact pre-key key set (the est-3acn D7 verbatim-key-set
            # law), so the field is honest absence before terminal, never a guess.
-           **({"completed": (status == "done" and not failed_nodes)}
+           **({"completed": (status == "done" and not failed_nodes
+                             and not completed_over_dead_node),
+               "completed_over_dead_node": completed_over_dead_node}
               if isinstance(exit_state, dict) and exit_state.get("reason") else {}),
            "started": (jload(r / "run.json", {}) or {}).get("started"),
            "owner": (jload(r / "run.json", {}) or {}).get("owner"),
