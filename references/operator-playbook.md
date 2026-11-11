@@ -151,6 +151,14 @@ for unfinished work with no verified live runner (see operations.md).
   waiting. Re-drive when seats free and stagger same-seat waves; never edit the
   def to chase it, and treat a per-run seat-cap override as admission against
   the same shared registry, not an isolated reservation.
+- **Dispatch caps doctrine: guards mechanical, judgment only in graph seats.**
+  Caps are per-subject interval / per-tick / live-laps numbers — the cap is a
+  meter, never the governor's opinion: it stops dispatch, it never evaluates the
+  work. Lanes are terminal on the subjects their guards watch: a capped lane
+  closes with what it harvested (`partial` + `budget_exhausted`, or `seat_wait`
+  without ever spawning) and does not re-litigate the cap. Mechanics: the owner
+  clamp in grammar.md (Per-run concurrency), RunBudget and pool caps in
+  operations.md.
 - **Author world-observation machine gates by probe polarity:** exit 0 on ANY
   decisive verdict (good or bad), 1 while undecided, 2 on probe error itself.
   An exit-0-only-on-green probe makes a red reality poll until the gate timeout

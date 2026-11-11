@@ -186,6 +186,9 @@ caller arbitrating its own seed.
 
 ## RunBudget: tokens-only run caps (est-3acn)
 
+The cap is a meter, never the governor's opinion — the dispatch caps doctrine
+("guards mechanical, judgment only in graph seats") is in `operator-playbook.md`.
+
 `budget: {"tokens": N}` caps provider-metered tokens — at the graph root (whole run;
 door-baked into run.json `meta.budget` at submit, does not ride amends) and/or per node.
 USD is deliberately NOT a key: an author who writes `budget.usd` is REFUSED at admission,
