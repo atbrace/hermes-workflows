@@ -1,0 +1,105 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "The launch contract lives in the row: pins carry run content, tune slots carry a domain and a stamped default",
+        "The door refuses every missing binding before any write \u2014 a bad launch writes no state and spawns no model",
+        "Depth ladder: a `where` seam keeps the audit lane out of the concrete graph while the knob sits low",
+        "Verb family: a `by` patch swaps the work goal per case \u2014 branching by binding, not by agent discretion"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "1 echo, 2 agents, 2 edges: guard brief, then the bound verb's work node, audit only at full depth",
+        "params \u2014 pin: session; tune: verb (watch|act) and depth (brief|full), effective bindings stamped into the run record",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "guard",
+      "id": "guard-work",
+      "to": "work",
+      "variant": "default"
+    },
+    {
+      "from": "work",
+      "id": "work-audit",
+      "to": "audit",
+      "variant": "default"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "work",
+      "label": "Agents",
+      "variant": "normal"
+    },
+    {
+      "id": "room",
+      "label": "Deterministic",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/admission-lap.html",
+    "quality_profile": "standard",
+    "subtitle": "Typed-params worked example: the launch contract lives in the row and the door enforces it before anything is ",
+    "title": "admission-lap"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "guard",
+      "label": "Guard",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "work",
+      "label": "Work",
+      "lane": "work",
+      "sublabel": "fallback goal never",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "audit",
+      "label": "Audit",
+      "lane": "work",
+      "sublabel": "you exist only when",
+      "type": "backend",
+      "width": 104
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 1
+    },
+    {
+      "fromCol": 2,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 2
+    }
+  ],
+  "schema_version": 2
+}

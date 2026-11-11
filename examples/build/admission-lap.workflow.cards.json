@@ -1,0 +1,15 @@
+{
+  "cards": [
+    {"dot": "cyan", "title": "Why it works", "items": [
+      "The launch contract lives in the row: pins carry run content, tune slots carry a domain and a stamped default",
+      "The door refuses every missing binding before any write — a bad launch writes no state and spawns no model",
+      "Depth ladder: a `where` seam keeps the audit lane out of the concrete graph while the knob sits low",
+      "Verb family: a `by` patch swaps the work goal per case — branching by binding, not by agent discretion"
+    ]},
+    {"dot": "rose", "title": "Contract", "items": [
+      "{{echoes}} echo, {{agents}} agents, {{edges}} edges: guard brief, then the bound verb's work node, audit only at full depth",
+      "params — pin: session; tune: verb (watch|act) and depth (brief|full), effective bindings stamped into the run record",
+      "Derived from this example's bytes by scripts/graph_diagram.py"
+    ]}
+  ]
+}

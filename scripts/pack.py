@@ -195,6 +195,7 @@ INCLUDE_FILES = (
     "examples/build/census-fanout.workflow.json",
     "examples/review/escalation-ladder.workflow.json",
     "examples/build/bulk-transform.workflow.json",
+    "examples/build/admission-lap.workflow.json",
     "examples/release/release-lifecycle.workflow.json",
     "examples/release/issue-to-pr.workflow.json",
     "examples/release/submit-pr.workflow.json",

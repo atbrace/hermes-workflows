@@ -1,0 +1,79 @@
+{
+  "grammar": "wf/1",
+  "name": "admission-lap",
+  "description": "Typed-params worked example: the launch contract lives in the row and the door enforces it before anything is written. PARAMS SLOTS: 'session' = pin, the content being admitted (a path, URL, or identifier the receiving estate can read); 'verb' = tune, domain watch|act, default watch — a `by` patch swaps the work node's goal per case (the verb-family idiom: watch reads read-only, act mutates then reports); 'depth' = tune, domain brief|full, default brief — a `where` seam keeps the audit lane OUT of the committed graph unless depth=full (the depth-ladder idiom: a removed `where` node cascade-prunes its descendants, so nothing downstream may depend on it). DISPATCHER FLOW: the guard echo stamps the one LAUNCH brief (zero tokens; the seam is already popped — the concrete graph carries the EFFECTIVE bindings, tune defaults included), the work node runs the verb the binding picked, the audit lane joins only at full depth. DOOR LAW the lap demonstrates: every missing pin, unknown key, and out-of-domain value refuses LAUNCH as ONE params_contract refusal with zero state written; a tune slot left unbound rides its stamped default (the run record carries the effective binding, never a silent one); the contract is TOTAL both ways — every operative {run.KEY} ref is declared, every declared slot is consumed by operative text or a where/by gate. LAUNCH: save this file to the library, then run from: with a run_context map {\"session\": \"<what to admit>\"} (omit verb/depth to ride the stamped defaults, or bind them explicitly); an unbound session refuses before any write.",
+  "provenance": {
+    "owner": "author-estate (peer-estate maintained)",
+    "source": "hermes-workflows/examples/build/admission-lap.workflow.json"
+  },
+  "defaults": {
+    "timeout": 900,
+    "context": "You are one lap of an admission workflow. Ground rules:\n- The LAUNCH brief in ## Inputs states the effective contract; work it verbatim, never re-interpret the binding.\n- Read-only unless your node's goal says to act.\n- Self-report is not proof: every claim cites the command or file that backs it.\n- Keep answers to the schema; one fenced ```json block as your final message. Never print secrets."
+  },
+  "params": {
+    "session": {
+      "kind": "pin",
+      "desc": "what to admit: a path, URL, or identifier the receiving estate can read"
+    },
+    "verb": {
+      "kind": "tune",
+      "domain": ["watch", "act"],
+      "default": "watch",
+      "desc": "verb family: watch observes read-only; act mutates, then reports"
+    },
+    "depth": {
+      "kind": "tune",
+      "domain": ["brief", "full"],
+      "default": "brief",
+      "desc": "depth ladder: brief ends at the work node; full adds the audit lane"
+    }
+  },
+  "nodes": [
+    {
+      "id": "guard",
+      "type": "echo",
+      "output": "LAUNCH brief — session={run.session} verb={run.verb} depth={run.depth}. The door materialized the params contract before any write; this brief states the EFFECTIVE bindings (defaults stamped), and the graph you are reading is the concrete one."
+    },
+    {
+      "id": "work",
+      "type": "agent",
+      "after": ["guard"],
+      "shape": "build",
+      "goal": "Fallback goal (never reached while the verb cases cover the domain): inspect {run.session}.",
+      "by": {
+        "verb": {
+          "watch": {
+            "goal": "Watch {run.session}: read it with whatever read-only tools you have. Do not mutate anything. Reply with ONLY fenced json {\"did\": \"<what you observed>\", \"evidence\": \"<command/output backing it>\"}"
+          },
+          "act": {
+            "goal": "Act on {run.session}: apply the admission it asks for, using the least invasive change that completes it, then re-read to prove the effect. Reply with ONLY fenced json {\"did\": \"<what you changed>\", \"evidence\": \"<the read-back proving the effect>\"}"
+          }
+        }
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "did": {"type": "string"},
+          "evidence": {"type": "string"}
+        },
+        "required": ["did", "evidence"]
+      }
+    },
+    {
+      "id": "audit",
+      "type": "agent",
+      "after": ["work"],
+      "shape": "review",
+      "where": {"param": "depth", "in": ["full"]},
+      "goal": "You exist only when depth=full was bound at launch (see the LAUNCH brief in ## Inputs). Audit the work node's claim (## Inputs): re-derive its evidence independently — re-run the read-back it cites, or an equivalent — and say plainly whether the claim holds. Reply with ONLY fenced json {\"holds\": true|false, \"checked\": \"<what you re-ran and what it printed>\"}",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "holds": {"type": "boolean"},
+          "checked": {"type": "string"}
+        },
+        "required": ["holds", "checked"]
+      }
+    }
+  ]
+}
