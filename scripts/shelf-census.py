@@ -26,6 +26,15 @@ Census law (lifecycle-governor re-measure notes):
     inner graph's nodes — the FB-D1 under-read fix).
   - consumer scan: live rows referencing archived cell rows (measured consumers
     > 0 is the SH-03 revival trigger).
+  - run-dir bucketing (hw-0y7): a run dir older than the grace whose
+    runner_exit.json is absent and whose name is not in the live-runner batch
+    probe (the one liveness law: batch runner.lock states + runner_alive) is a
+    HUSK. Every run dir lands in one bucket and every census prints the
+    canonical counters block {total, by_status, live_runners, husks,
+    gate_held} — the fleet line that made a 26-husk estate visible by pure
+    subtraction. The gate_held bucket is the marker shape (gates/<id>.held.json
+    with no gates/<id>.json answer); the read model re-derives holds from the
+    graph bytes and remains the authority.
 
 --out defaults to <HERMES_HOME>/work/shelf-census/latest.json and is a LOCAL
 artifact. It is explicitly NOT a cross-seat truth registry: each seat re-runs
@@ -165,6 +174,126 @@ def grep_refs(term, roots):
     return hits
 
 
+HUSK_GRACE_DEFAULT_S = 86400
+PKG_MARKERS = ("run.json", "graph.json", "runner_exit.json", "events.jsonl",
+               "spawn-ledger.jsonl")  # age anchor: the retention law (dir mtime lies)
+
+
+def _wfcommon():
+    """wfcommon when the plugin checkout sits beside this script, else None."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        import wfcommon
+        return wfcommon
+    except Exception:
+        return None
+
+
+def live_runners(dirs):
+    """The live-runner batch probe: the ONE liveness law (batch runner.lock
+    states, one probe child per batch, folded through runner_alive). Without the
+    plugin tree the weaker pid-only fallback applies — a pid is not ownership,
+    so it can only ever ADD liveness, never subtract it."""
+    if not dirs:
+        return set()
+    wc = _wfcommon()
+    if wc is not None:
+        try:
+            from pathlib import Path
+            # ponytail: runner_lock_states ships the whole batch as ONE argv
+            # string; Linux refuses a single arg past MAX_ARG_STRLEN (128 KiB)
+            # — ~4k seats blew the cap and fail-closed EVERY dir to live.
+            # Chunk below the cap; one probe child per chunk, still.
+            found = set()
+            for i in range(0, len(dirs), 256):
+                chunk = dirs[i:i + 256]
+                paths = [Path(d) for d in chunk]
+                states = wc.runner_lock_states(paths)
+                found |= {d for d, p in zip(chunk, paths)
+                          if wc.runner_alive(p, lock_state=states.get(p))}
+            return found
+        except Exception:
+            pass
+    out = set()
+    for d in dirs:
+        try:
+            with open(os.path.join(d, "wf.pid")) as fh:
+                os.kill(int(fh.read().strip()), 0)
+            out.add(d)
+        except Exception:
+            pass
+    return out
+
+
+def _gate_held(d):
+    # Marker shape only: held.json without an answer file. A released hold keeps
+    # its marker (wf.py never unlinks it), so the answer file is the law here.
+    gdir = os.path.join(d, "gates")
+    try:
+        names = os.listdir(gdir)
+    except OSError:
+        return False
+    return any(fn.endswith(".held.json") and not os.path.exists(
+        os.path.join(gdir, fn[:-len(".held.json")] + ".json")) for fn in names)
+
+
+def _run_age_s(d, now):
+    mt = [os.path.getmtime(os.path.join(d, f)) for f in PKG_MARKERS
+          if os.path.exists(os.path.join(d, f))] or [os.path.getmtime(d)]
+    return max(0.0, now - max(mt))
+
+
+def run_status_census(dirs, grace_s, now=None, probe=None):
+    """Bucket every run dir into exactly one status and tally the fleet line.
+    The runner's own exit verdict outranks every other signal, mirroring the
+    read model's honest-status ladder; terminal-or-live fails toward NOT husk —
+    only age + absence + a negative liveness probe subtracts a run dir."""
+    now = time.time() if now is None else now
+    live = (probe or live_runners)(list(dirs))
+    buckets, husks = {}, []
+    for d in dirs:
+        try:
+            with open(os.path.join(d, "runner_exit.json")) as fh:
+                exit_state = json.load(fh)
+            exit_state = exit_state if isinstance(exit_state, dict) else {}
+        except Exception:
+            exit_state = None
+        reason = str((exit_state or {}).get("reason") or "")
+        if d in live:
+            status = "live"
+        elif exit_state is not None:
+            if reason == "done":
+                status = "done"
+            elif reason == "stopped":
+                status = "stopped"
+            elif reason == "budget_exhausted":
+                status = "partial"
+            elif reason.startswith(("blocked by failed", "crashed:")):
+                status = "failed"
+            elif reason.startswith(("terminated:", "interrupted")):
+                status = "interrupted"
+            elif reason.startswith("blocked:"):
+                status = "blocked"
+            else:
+                status = "other"
+        elif _gate_held(d):
+            status = "gate_held"
+        elif _run_age_s(d, now) >= grace_s:
+            status = "husk"
+            husks.append(d)
+        else:
+            status = "in_flight"
+        buckets[status] = buckets.get(status, 0) + 1
+    return {"total": len(dirs), "by_status": dict(sorted(buckets.items())),
+            "live_runners": buckets.get("live", 0),
+            "husks": buckets.get("husk", 0),
+            "gate_held": buckets.get("gate_held", 0),
+            "husk_grace_s": grace_s,
+            "husk_dirs": sorted(husks)}
+
+
 def main():
     ap = argparse.ArgumentParser(description="WOF shelf census (SH-07; local artifact, not a registry)")
     ap.add_argument("--wf-root", default=WF_ROOT_DEFAULT, help="workflows root (library/ + run dirs)")
@@ -175,6 +304,8 @@ def main():
                     help="quarantine dir(s) to census (absent = 0)")
     ap.add_argument("--out", default=OUT_DEFAULT)
     ap.add_argument("--no-refs", action="store_true", help="skip the grep-ref scan (fast mode)")
+    ap.add_argument("--husk-grace", type=float, default=HUSK_GRACE_DEFAULT_S,
+                    help="seconds before a no-exit-record, no-live-runner run dir books as a husk")
     a = ap.parse_args()
 
     live_dir = os.path.join(a.wf_root, "library")
@@ -287,6 +418,7 @@ def main():
         "rows": rows,
         "deadweight": sorted(k for k, v in rows.items() if v["deadweight"]),
         "new_deadweight": new_dead,
+        "run_status": run_status_census([r["dir"] for r in runs], a.husk_grace),
     }
 
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
@@ -294,7 +426,7 @@ def main():
         json.dump(result, fh, indent=1, sort_keys=True)
     print(json.dumps({k: result[k] for k in
                       ("rows_live", "rows_archive", "consumers",
-                       "deadweight", "new_deadweight")}, indent=1))
+                       "deadweight", "new_deadweight", "run_status")}, indent=1))
     print("written:", a.out)
     if new_dead:
         sys.exit(1)

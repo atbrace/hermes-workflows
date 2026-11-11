@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Feat: `scripts/shelf-census.py` buckets every run dir into one status and
+  prints the canonical counters block `{total, by_status, live_runners,
+  husks, gate_held}` (hw-0y7). A run dir older than `--husk-grace` (default
+  24 h) whose `runner_exit.json` is absent and whose name the live-runner
+  batch probe (the one liveness law: batch `runner.lock` states folded
+  through `runner_alive`, chunked under the 128 KiB single-arg cap — an
+  unchunked 4k-dir batch fail-closed every husk to live) does not recognise
+  is a HUSK; `husk_dirs` names them. Gate holds book from the marker shape
+  (`gates/<id>.held.json` with no answer file).
+  Pinned by `tests/test_shelf_census_husk_hw0y7.py`.
+
 ## 1.4.8 — 2026-11-11
 
 Patch release from ten merged pull requests since v1.4.7. The door no longer
