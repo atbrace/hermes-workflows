@@ -237,7 +237,8 @@ procedures, and the rules that keep the tree publishable. Changes are gated by
 the serial suite (`python3 scripts/suite.py . ci-out`) and
 `hermes plugins validate .` — both run in [CI](.github/workflows/ci.yml).
 `graphify` (a separate tool) can query the code graph locally; it is never
-required and never gates.
+required and never gates. Operators wiring agents to bus wakes follow the five
+event-admission laws — [docs/event-admission.md](docs/event-admission.md).
 
 ## License
 

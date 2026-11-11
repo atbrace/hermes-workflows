@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Docs: `docs/event-admission.md` — the five event-admission laws (events are
+  triggers, never truth; one mechanical script per wake route, the session is
+  the pipe; the bus is an accelerator with a cron dead-man re-presentation;
+  emit==consume via one shared eligibility predicate; three answers three
+  codes — deferred = exit 3 with no ledger write, permanent no writes then
+  silence), restoring the prose deleted by #470 without replacement; linked
+  from the README, listed in `scripts/pack.py` so the release ZIP carries it,
+  pinned by `tests/test_docs_hw-zqq.py` (hw-zqq).
+
 ## 1.4.8 — 2026-11-11
 
 Patch release from ten merged pull requests since v1.4.7. The door no longer
