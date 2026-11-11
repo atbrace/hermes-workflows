@@ -1,0 +1,20 @@
+{
+ "browser": "chromium 157.0.8103.38 (snap) --headless=new --screenshot at 1400px width; viewer chrome (.toolbar, .diagram-nav, .no-print) hidden by injected style before capture; snap-confined headless capture \u2014 recorded honestly as snap chromium headless, not desktop chrome",
+ "chrome_free": true,
+ "clipped": false,
+ "expected_nodes": 9,
+ "legible": true,
+ "measured": {
+  "chrome_buttons_killed": 0,
+  "svg_geometry_onscreen": true,
+  "viewport": [
+   1400,
+   1476
+  ],
+  "visible_chrome_buttons_after_kill": 0
+ },
+ "note": "sublabel mid-word cuts are the generator's fit law (phrase()/fit_label budget at width 104) \u2014 deterministic by design, not raster variance. Card panels are crop-included; the bottom crop sits 30px below the last non-background row.",
+ "png_sha256_16": "2f06ddca13b4dccc",
+ "renderer": "archify 3.0.1 (MIT) \u2014 vendored renderer for the diagram shoot loop; provenance: https://github.com/tt-a1i/archify skill-release.json @3.0.1; renderers/schemas/assets copied verbatim.",
+ "shot_date": "2026-11-11"
+}

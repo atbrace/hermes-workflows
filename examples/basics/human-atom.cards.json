@@ -1,22 +1,14 @@
 {
- "cards": [
-  {
-   "dot": "cyan",
-   "title": "Why it works",
-   "items": [
-    "The minimal BOUNDED human-in-the-loop atom: an intake distills the single decision, a person answers (or the hold expires into the defer default), a capture lane applies the released answer as data",
-    "Timer default != a result: the deferred release writes nothing and the record stays parked \u2014 the lane cannot mistake silence for a ruling",
-    "The hold-vs-wall law is baked in: the capture seat's own timeout equals the gate's hold ceiling, so no consumer can die mid-collection (and the day cap marks the longest legal armed hold)"
-   ]
-  },
-  {
-   "dot": "rose",
-   "title": "Contract",
-   "items": [
-    "{{nodes}} nodes, {{gates}} gates, {{branches}} branch: intake -> when-gate -> human hold -> capture",
-    "Single-option defer default releases the hold with 'not yet' instead of hanging forever",
-    "Derived from this example's bytes by scripts/graph_diagram.py"
-   ]
-  }
- ]
+  "cards": [
+    {"dot": "cyan", "title": "Why it works", "items": [
+      "The owner decides, the grammar parks: the human gate carries no wall, so the answer can never arrive from a timer",
+      "A hold_timeout with a default_option answers in the owner's place — the dead-knob trap this atom teaches against",
+      "Smallest contract lap for testing gate answer plumbing end to end"
+    ]},
+    {"dot": "rose", "title": "Contract", "items": [
+      "{{nodes}} nodes, {{gates}} gate, {{echoes}} echo: brief -> decision -> record",
+      "The park is bounded only by the operator park-watchdog floor",
+      "Derived from this example's bytes by scripts/graph_diagram.py"
+    ]}
+  ]
 }
