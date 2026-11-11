@@ -89,10 +89,10 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
   shelves author bytes and the digests match. A `run_context:{required?,defaults?}` contract refuses a launch missing a key, pre-write. One-off `run` needs no library lookup, tags, save or `why_not_library`. Explicit study-only `submit` retains its receipt requirement. A composite run refuses `save(run_id)` — shelf the author form. [grammar](references/grammar.md).
 - Optional typed `params` contract (pin/tune) with node `where`/`by` door-time seams: the door materializes, refuses every violation in one answer, and stamps the reproducibility triple. [grammar](references/grammar.md#params--the-typed-contract-and-the-door-time-seam-optional).
 - No double-dispatch for pollers: `run` with `lane_key:<key>` — while an UNFINISHED
-  incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume`
-  means `wait` it — never replace it; `stop` is the explicit abandonment. Keys are
-  global per runs root; prefix `<team>/` yourself. Details:
-  [operations](references/operations.md).
+  incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume` means
+  `wait` it — never replace it; `stop` is the explicit abandonment. Keys are global per
+  runs root; prefix `<team>/` yourself. A woken consumer owns its own self-wake guard:
+  dedupe on subject-id + content-hash over fields your own writes never touch; details: [operations](references/operations.md).
 - Report a finished run by metrics (token in/out, api calls, tool calls), not the
   dollar figure: `estimated_cost_usd` is a price-table estimate (subscription routes
   report `included`) and reads badly as spend.
