@@ -3,7 +3,9 @@
 Authoring rules for build sprints, fleets of children, and babysitting long runs.
 The graph vocabulary lives in [grammar.md](grammar.md), the read model and recovery
 reference in [operations.md](operations.md); this file collects the failure modes
-observed across many build waves, each rule earned by watching a run die. Terms
+observed across many build waves, each rule earned by watching a run die. Holding one
+`error_class` and wanting the row for it, not the prose: the death table indexes all of
+them — [death-table.md](death-table.md). Terms
 used here are defined on first use: the **effective fingerprint** (efp) is the
 content hash every node definition carries — when the stored efp equals the hash
 of the current definition, the node is current; **interrupted** is the run state
