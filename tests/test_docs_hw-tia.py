@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """hw-tia: the external-pack adoption recipe is shipped in references/operations.md.
 
-Born from the haus-estate consolidation run 20261111-162224-wof-study-council:
-every gap below was grep-verified absent from v1.4.7, so the pin is wording-
-anchored (the council's gap-grep must go non-empty). Plain stdlib, no door, no
+Born from a peer estate's doc-gap council: every gap below was grep-verified
+absent from v1.4.7, so the pin is wording-anchored (the council's gap-grep must
+go non-empty). Plain stdlib, no door, no
 engine import: this pins the DOC, mirroring how test_portable_32 pins the
 portable.md digests. Red without the section; green with it.
 """
