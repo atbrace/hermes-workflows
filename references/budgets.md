@@ -65,6 +65,18 @@ commit turn; and write-first — persist artifacts to the work dir every few
 turns and emit the fenced JSON the moment the last required section lands, so a
 cap death costs only the answer, not the work.
 
+**The honest-partial recipe** — for the most common real death: a late leg
+starved of budget whose harvest its consumers need. A cap-killed lane's
+schema-valid answer commits `partial`, and a plain `partial` blocks plain
+downstream edges: the consumers die `blocked_by_partial_ancestor` with zero
+spawns. Release the harvest honestly from either side. Producer-side: set
+`harvest_policy: "validate"` on the capped node — a schema-valid harvest with
+an empty `## Remaining` tail commits `done`, and the record stays honest: it
+keeps `error_class`, `error` and the `harvest` stamp, so the death is on the
+record, not swallowed. Consumer-side: set `after_partial: true` on a
+descendant that can use the harvest deliberately. Full law: [grammar.md](grammar.md)
+§ Nodes and data.
+
 This contract is pinned by `tests/test_turn_accounting_contract_lw1eh.py`
 (spawn carries `--max-turns <cap>`; the capped lane's recorded `api_calls`
 reach the cap and the death is typed with the `turn_cap` clock reason and
