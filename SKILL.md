@@ -106,4 +106,4 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
 The graph vocabulary lives in [grammar](references/grammar.md); read-model/recovery in
 [operations](references/operations.md); build lanes and babysitting in the [operator
 playbook](references/operator-playbook.md); skills-repo→pack in [wofification](references/wofification.md);
-the stance behind them in [posture](docs/posture.md). [Development checks](references/development.md) are for contributors.
+the stance behind them in [posture](docs/posture.md); the packaged philosophy appendix in [references/posture](references/posture.md). [Development checks](references/development.md) are for contributors.
