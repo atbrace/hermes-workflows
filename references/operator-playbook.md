@@ -128,9 +128,9 @@ for unfinished work with no verified live runner (see operations.md).
 - **Stall detection needs a signature, not a hunch.** Idle growth with flat
   `api_calls` is necessary evidence, not sufficient: a healthy long-reasoning
   lane legitimately writes nothing until it answers (one in-flight call IS flat
-  api_calls on a slow route). Corroborate against `node_facts`/
-  `logs/<id>.a<n>.log` tail and process state before acting. When you do kill,
-  kill AND re-drive in the same pass (`kill`/`stop` + `amend`, or let the
+  api_calls on a slow route). Corroborate on the log tail (`node_facts`, the
+  child's `logs/<id>.a<n>.log`) and process state before you `steer`; answer
+  every kill with a same-pass re-drive (`stop`/`kill` + `amend`, or let the
   watchdog tick revive it) — a kill without a re-drive strands the lane exactly
   as thoroughly as the wedge did.
 - **The host kills a long tool call at its own deadline** — typically around 420 s
