@@ -184,6 +184,48 @@ the pool is idle (the next first acquirer re-seeds it). A corrupt `.cap` is
 re-seeded, never trusted, never fatal; an unwritable pool degrades to each
 caller arbitrating its own seed.
 
+### FIFO seat queue (est-2ek.1.856/857)
+
+A blind flock poll that lets the first poller win starves long waiters: a field
+report (2026-10-08 12:19Z) sat a node in `seat.wait` for 17 minutes while
+short-run cron re-launches re-took every freed seat. Admission is now FIFO
+within a seats dir:
+
+- A waiter the door refuses — the pool is at cap, or a live marker already
+  holds an older queue position — registers a **queue marker** under
+  `<seats>/queue/` before it decides, so an admitted newcomer can never jump
+  the queue. A marker is NOT a ticket: it gates fairness only, never
+  capacity — the ticket count stays the capacity arbiter. Creation happens
+  under the pool's `.lock` flock, so enqueue order is linearizable with the
+  count-then-admit step.
+- Queue position is the **order key `(enqueued, uuid)`**, carried in the
+  marker row `{pid, boottime, uuid, enqueued, ts, hb}` — `enqueued` is the
+  waiter's arrival time (stable across retries), `uuid` breaks exact ties.
+  Admission requires `live < cap` AND no strictly-older live marker: the queue
+  is the arbiter, the flock-poll race is not.
+- Liveness has three clocks: the waiter refreshes its own marker heartbeat
+  every **0.5 s**; a marker blocks younger admissions while its owner pid
+  lives AND the heartbeat is no older than **8.0 s**; a dead owner makes the
+  marker a prune candidate at once, and so does a live owner whose heartbeat
+  has aged past **20.0 s** (a wedged waiter cannot wedge the queue forever).
+  Between 8.0 and 20.0 s the marker neither blocks nor is prunable — it
+  self-heals at both bounds. Prune is a two-pass verdict: after a short
+  settle the liveness law is re-run, and a candidate whose owner reconfirms
+  alive (or whose heartbeat refreshed) is kept.
+- An **unreadable marker blocks admission** — uncertain capacity is never a
+  silently-dropped fairness claim — until its mtime ages past the 20.0 s
+  prune window and it becomes a reconfirmed prune candidate.
+- A marker owned by an ANCESTOR of the waiting process is lent, never
+  blocking (a nested child runner waits on us, same law as lent tickets).
+- Every external unlink of a ticket or marker appends one line to
+  **`<seats>/.pruned.jsonl`** — ts, pruner pid, kind, ticket/marker name, row
+  snapshot, reason. The over-admit field report was undebuggable precisely
+  because prunes were silent; the ledger is best-effort (a ledger failure
+  never blocks admission) and rotates once at ~1 MiB.
+
+Markers gate fairness only: the bounded wait and the typed `seat_wait` death
+stay the outer bound.
+
 ## RunBudget: tokens-only run caps (est-3acn)
 
 `budget: {"tokens": N}` caps provider-metered tokens — at the graph root (whole run;
