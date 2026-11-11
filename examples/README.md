@@ -24,6 +24,7 @@ repo docs tree; the runtime zip ships maps and graphs, not art.
 | [`smoke.json`](basics/smoke.json) | 1 echo node | The smallest legal graph; zero tokens. |
 | [`approve-publish.json`](basics/approve-publish.json) | draft → human gate → single arm | The two gate laws: a human `gate` holds until released, and complementary `when` + `on_skip: "prune"` branches route exactly one arm. |
 | [`branch-on-verdict.json`](basics/branch-on-verdict.json) | judge → verdict-branch pair | Routing on a *machine* answer instead of a human one. |
+| [`human-atom.json`](basics/human-atom.json) | brief echo → human hold → join | The decision-park starter: a human hold is a park, not a wall — no `hold_timeout`, so no timer ever answers in the owner's place. Run it as-is on a fresh install. |
 | [`exchange-run.workflow.json`](basics/exchange-run.workflow.json) | echo → courier → leaf | Byte portability: a graph travels save → library → re-run and the hand-off is proven by re-reading committed records, never chat memory. |
 
 ## build/ — fan-out, barriers, ledgers
@@ -58,6 +59,7 @@ repo docs tree; the runtime zip ships maps and graphs, not art.
 | File | Shape | Teaches |
 |---|---|---|
 | [`incident-response.json`](ops/incident-response.json) | alert → sweep → verdict-branch → recovery probe → close | Full incident lifecycle: verdict-branch gate pair, machine recovery probe with human escalation, merge-gated close. Adapt the lanes to your stack. |
+| [`bead-to-prod.json`](ops/bead-to-prod.json) | intake → plan → lane → verify → arm pair → owner gate → publish | The carrier-scale reference: the first bead-to-shipped lifecycle at carrier size — suite proof gates publication, a when-guarded pair lands a red verify on a halt arm, and a person sits between green and ship. |
 
 ## Running one
 

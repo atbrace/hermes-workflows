@@ -1,0 +1,14 @@
+{
+  "cards": [
+    {"dot": "cyan", "title": "Why it works", "items": [
+      "The owner decides, the grammar parks: the human gate carries no wall, so the answer can never arrive from a timer",
+      "A hold_timeout with a default_option answers in the owner's place — the dead-knob trap this atom teaches against",
+      "Smallest contract lap for testing gate answer plumbing end to end"
+    ]},
+    {"dot": "rose", "title": "Contract", "items": [
+      "{{nodes}} nodes, {{gates}} gate, {{echoes}} echo: brief -> decision -> record",
+      "The park is bounded only by the operator park-watchdog floor",
+      "Derived from this example's bytes by scripts/graph_diagram.py"
+    ]}
+  ]
+}

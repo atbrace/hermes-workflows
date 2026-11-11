@@ -1,0 +1,203 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "Publishing rests on a banked suite proof, never on the implementer's word",
+        "A when-guarded pair splits the ok and red arms: the halt arm is a landing, not a silence",
+        "The owner gate sits between green verify and the publish authority"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "9 nodes, 3 gates, 3 branches, 8 edges: intake -> plan -> lane -> verify -> arms",
+        "run_context seeds bead, store, lane \u2014 all required, none defaulted",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "intake",
+      "id": "intake-plan",
+      "to": "plan",
+      "variant": "default"
+    },
+    {
+      "from": "plan",
+      "id": "plan-lane",
+      "to": "lane",
+      "variant": "default"
+    },
+    {
+      "from": "lane",
+      "id": "lane-verify",
+      "to": "verify",
+      "variant": "default"
+    },
+    {
+      "from": "verify",
+      "id": "verify-publish_gate",
+      "to": "publish_gate",
+      "variant": "security"
+    },
+    {
+      "from": "verify",
+      "id": "verify-halt_gate",
+      "to": "halt_gate",
+      "variant": "security"
+    },
+    {
+      "from": "halt_gate",
+      "id": "halt_gate-halt_note",
+      "to": "halt_note",
+      "variant": "default"
+    },
+    {
+      "from": "publish_gate",
+      "id": "publish_gate-ship_ask",
+      "to": "ship_ask",
+      "variant": "default"
+    },
+    {
+      "from": "ship_ask",
+      "id": "ship_ask-publish",
+      "to": "publish",
+      "variant": "security"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "work",
+      "label": "Agents",
+      "variant": "normal"
+    },
+    {
+      "id": "gates",
+      "label": "Gates",
+      "variant": "normal"
+    },
+    {
+      "id": "room",
+      "label": "Deterministic",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/bead-to-prod.html",
+    "quality_profile": "standard",
+    "subtitle": "The carrier-scale reference: the full tracked-work lifecycle from a bead to shipped, at the scale an estate ca",
+    "title": "bead-to-prod"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "intake",
+      "label": "Intake",
+      "lane": "work",
+      "sublabel": "read work item run",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "plan",
+      "label": "Plan",
+      "lane": "work",
+      "sublabel": "turn the acceptance",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "lane",
+      "label": "Lane",
+      "lane": "work",
+      "sublabel": "work the repo lane",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "verify",
+      "label": "Verify",
+      "lane": "work",
+      "sublabel": "verify the lane work",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 4,
+      "id": "halt_gate",
+      "label": "Halt Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 4,
+      "id": "publish_gate",
+      "label": "Publish Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104,
+      "yOffset": 92
+    },
+    {
+      "col": 5,
+      "id": "halt_note",
+      "label": "Halt Note",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 5,
+      "id": "publish",
+      "label": "Publish",
+      "lane": "work",
+      "sublabel": "publish the verified",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 5,
+      "id": "ship_ask",
+      "label": "Ship Ask",
+      "lane": "gates",
+      "sublabel": "verify is green for",
+      "tag": "human hold",
+      "type": "security",
+      "width": 104
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 4
+    },
+    {
+      "fromCol": 5,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 5
+    }
+  ],
+  "schema_version": 2
+}

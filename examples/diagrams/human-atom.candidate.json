@@ -1,0 +1,104 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "The owner decides, the grammar parks: the human gate carries no wall, so the answer can never arrive from a timer",
+        "A hold_timeout with a default_option answers in the owner's place \u2014 the dead-knob trap this atom teaches against",
+        "Smallest contract lap for testing gate answer plumbing end to end"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "3 nodes, 1 gate, 1 echo: brief -> decision -> record",
+        "The park is bounded only by the operator park-watchdog floor",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "brief",
+      "id": "brief-decision",
+      "to": "decision",
+      "variant": "default"
+    },
+    {
+      "from": "decision",
+      "id": "decision-record",
+      "to": "record",
+      "variant": "default"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "gates",
+      "label": "Gates",
+      "variant": "normal"
+    },
+    {
+      "id": "room",
+      "label": "Deterministic",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/human-atom.html",
+    "quality_profile": "standard",
+    "subtitle": "The decision-park starter: owner-decision intake with zero authoring. An echo commits the brief (zero tokens),",
+    "title": "human-atom"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "brief",
+      "label": "Brief",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "decision",
+      "label": "Decision",
+      "lane": "gates",
+      "sublabel": "how do you rule",
+      "tag": "human hold",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "record",
+      "label": "Record",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 1
+    },
+    {
+      "fromCol": 2,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 2
+    }
+  ],
+  "schema_version": 2
+}

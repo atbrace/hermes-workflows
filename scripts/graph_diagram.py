@@ -31,7 +31,8 @@ record in the README table, never re-rastered in CI (§4 as amended).
 """
 import argparse, hashlib, json, os, re, sys
 
-ACTOR = {"agent": "backend", "gate": "security", "echo": "messagebus"}
+# join rides the deterministic lane: it is a zero-token merge, same actor class as echo.
+ACTOR = {"agent": "backend", "gate": "security", "echo": "messagebus", "join": "messagebus"}
 WIDTH = 104
 STACK = 92
 
@@ -103,13 +104,13 @@ def derive(graph, cards, rel_graph):
     lane_defs = (("work", "Agents"), ("gates", "Gates"), ("room", "Deterministic"))
     lanes = [{"id": lid, "label": lab, "variant": "normal"}
              for lid, lab in lane_defs
-             if any(({"agent": "work", "gate": "gates", "echo": "room"}
+             if any(({"agent": "work", "gate": "gates", "echo": "room", "join": "room"}
                      .get(n.get("type", "agent"), "work")) == lid for n in nodes)]
 
     out_nodes, stacked = [], {}
     for n in sorted(nodes, key=lambda x: (min(depth[x["id"]], 5), x["id"])):
         t = n.get("type", "agent")
-        lane = {"agent": "work", "gate": "gates", "echo": "room"}[t]
+        lane = {"agent": "work", "gate": "gates", "echo": "room", "join": "room"}[t]
         col = min(depth[n["id"]], 5)
         cell = (lane, col)
         node = {"id": slug(n["id"]), "lane": lane, "col": col,

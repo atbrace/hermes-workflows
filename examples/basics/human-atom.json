@@ -1,0 +1,24 @@
+{
+  "name": "human-atom",
+  "description": "The decision-park starter: owner-decision intake with zero authoring. An echo commits the brief (zero tokens), a human gate parks the decision, a join records the answer deterministically. Post hold-vs-wall (#475/#481): the gate carries NO hold_timeout — a human hold is a park, not a wall. It answers at zero tokens whenever the owner releases it, bounded only by the operator's park-watchdog floor; a hold_timeout without default_option would log gate.expired and keep holding (a dead knob), and with a default_option the machine would answer in the owner's place — which is exactly what a decision atom must never do. Run it as-is on a fresh install to exercise gate answer plumbing end to end; fork it wherever a person, not a timer, owns the call.",
+  "nodes": [
+    {
+      "id": "brief",
+      "type": "echo",
+      "output": "A decision is waiting on its owner. The run parks at this gate until a person releases it — nothing here times out on its own."
+    },
+    {
+      "id": "decision",
+      "type": "gate",
+      "after": ["brief"],
+      "question": "How do you rule on the brief above? Answer 'approve' to let it stand or 'decline' to reject it.",
+      "options": ["approve", "decline"]
+    },
+    {
+      "id": "record",
+      "type": "join",
+      "after": ["decision"],
+      "keys": { "answer": "decision.answer" }
+    }
+  ]
+}

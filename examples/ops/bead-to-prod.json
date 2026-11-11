@@ -1,0 +1,89 @@
+{
+  "name": "bead-to-prod",
+  "description": "The carrier-scale reference: the full tracked-work lifecycle from a bead to shipped, at the scale an estate carrier actually runs. run_context seeds (ALL required): 'bead' = the tracked work-item id; 'store' = the issue-store path the intake reads; 'lane' = the repo directory the work lands on. intake reads the bead and commits its acceptance; plan turns acceptance into ordered file-level steps; lane implements and commits on the repo lane; verify re-runs the repo's own suite and is the suite-PROOF node; a when-guarded pair routes on the verify answer — the ok arm asks the owner to publish (publishes node, refused typed at the wave boundary unless the suite proof is banked), the failed arm drops a loud halt note. Swap the beads wording for your tracker CLI to run this elsewhere; do not bolt a bead_close key onto closeout before reading the grammar — its store path is a baked literal, never a {run.KEY}.",
+  "nodes": [
+    {
+      "id": "intake",
+      "type": "agent",
+      "shape": "recon",
+      "goal": "Read work item {run.bead} in the issue store at {run.store} (bd show {run.bead}). Commit what the item actually demands: its title, its acceptance criteria verbatim, and anything it forbids. Reply with ONLY fenced json {\"title\": \"<str>\", \"acceptance\": [\"<criterion>\", ...], \"forbids\": [\"<str>\", ...]}",
+      "schema": {
+        "type": "object",
+        "required": ["title", "acceptance"],
+        "properties": {
+          "title": { "type": "string" },
+          "acceptance": { "type": "array", "items": { "type": "string" } },
+          "forbids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "id": "plan",
+      "type": "agent",
+      "after": ["intake"],
+      "shape": "recon",
+      "goal": "Turn the acceptance list into an ordered implementation plan: for each step name the exact files it touches and the check that proves it. Honor every forbids entry. Reply with ONLY fenced json {\"steps\": [\"<file-level step>\", ...]}",
+      "schema": {
+        "type": "object",
+        "required": ["steps"],
+        "properties": {
+          "steps": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "id": "lane",
+      "type": "agent",
+      "after": ["plan"],
+      "repo": "{run.lane}",
+      "goal": "Work the repo lane at {run.lane} for item {run.bead}. Implement the planned steps, keep the diff minimal and honest to the acceptance list, and commit with a message that names the item. Reply with ONLY fenced json {\"summary\": \"<str>\", \"files\": [\"<path>\", ...]}"
+    },
+    {
+      "id": "verify",
+      "type": "agent",
+      "after": ["lane"],
+      "repo": "{run.lane}",
+      "suite_proof": true,
+      "goal": "Verify the lane work for item {run.bead} at {run.lane}: re-run the repo's own test suite yourself — never trust the implementer's report. Any red or unexplained skip means ok=false. Reply with ONLY fenced json {\"ok\": true|false, \"evidence\": \"<the command you ran and its tail>\"}"
+    },
+    {
+      "id": "publish_gate",
+      "type": "gate",
+      "after": ["verify"],
+      "when": "out.verify.ok == true",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "halt_gate",
+      "type": "gate",
+      "after": ["verify"],
+      "when": "out.verify.ok != true",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "halt_note",
+      "type": "echo",
+      "after": ["halt_gate"],
+      "output": "VERIFY DIED OR CAME BACK RED — nothing publishes. Read the verify record, fix the lane, re-drive. The halt arm exists so a red verify is a landing, not a silence."
+    },
+    {
+      "id": "ship_ask",
+      "type": "gate",
+      "after": ["publish_gate"],
+      "question": "Verify is green for {run.bead}. Publish the lane work? Answer 'publish' to ship it or 'hold' to keep it banked and unshipped.",
+      "options": ["publish", "hold"]
+    },
+    {
+      "id": "publish",
+      "type": "agent",
+      "after": ["ship_ask"],
+      "when": "out.ship_ask.answer == 'publish'",
+      "on_skip": "prune",
+      "publishes": true,
+      "repo": "{run.lane}",
+      "goal": "Publish the verified lane work for item {run.bead} at {run.lane}: push the branch and open the PR (never merge on this authority). Reply with ONLY fenced json {\"pr\": \"<url>\", \"result\": \"<str>\"}"
+    }
+  ]
+}
