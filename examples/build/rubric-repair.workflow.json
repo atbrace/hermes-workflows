@@ -1,0 +1,162 @@
+{
+  "grammar": "wf/1",
+  "name": "rubric-repair",
+  "description": "Bounded admission loop: author -> blind rubric scoring of the committed artifact -> exactly one repair of the named findings -> frontier re-score -> second-disagreement STOP rule -> exactly one disposition. There is no loop engine, which is exactly why the loop is structural: the re-score hangs behind the repair, so a clean first pass cascade-prunes the whole repair arm instead of re-entering it. run_context seeds (ALL required): 'artifact_spec' = the one-line brief for the artifact to author; 'rubric' = the scoring-rubric text, applied verbatim by both scoring seats. Capability-class slot: the re-score pins model name 'council_a' - a CAPABILITY CLASS, not a vendor id. Bind it in your own config (plugins.entries.hermes-workflows.settings.models: {council_a: <your frontier model>}); an unbound class fails the launch closed BY NAME, never a silent downgrade. The other seats ride the seat default so an admission attempt is completable at no frontier spend. Blindness is structural, not phrased: the rubric seat consumes ONLY the author's artifact path (its inputs pick that one dotted path, so the author's claims never reach the scoring seat) and the re-score consumes ONLY the repaired artifact path plus the original findings list - never the repair's claim of resolution. Second-disagreement law: the first scoring pass counts as disagreement round 1; if the re-score seat still finds the artifact wanting after the one repair it sets disagreements: 2, which trips the halt machine gate (>= 2 halts, < 2 admits) - bounded admission, never an unbounded repair loop.",
+  "provenance": {
+    "owner": "author-estate (peer-estate maintained)",
+    "source": "hermes-workflows/examples/rubric-repair.workflow.json"
+  },
+  "defaults": {
+    "timeout": 900,
+    "context": "You are one seat of a bounded admission loop. Ground rules:\n- Open the artifact yourself from the path your inputs give you; no party's claims about it are evidence.\n- Every claim you hand downstream names its evidence (file:line, or a quote from the artifact). Uncertainty raises a finding; only silence when nothing load-bearing is wrong.\n- Reply with ONLY one fenced ```json block as your final message. Never print secrets."
+  },
+  "nodes": [
+    {
+      "id": "author",
+      "type": "agent",
+      "shape": "build",
+      "max_turns": 20,
+      "goal": "Author an artifact that satisfies this rubric: {run.rubric}\nBrief: {run.artifact_spec}\nWrite a self-contained markdown artifact, one file inside your own work dir, that answers the brief as well as the rubric allows. The path is the commitment - sibling seats see the file, never your work dir.\nReturn {\"artifact\": \"<absolute path of the file you wrote>\", \"summary\": \"<what you wrote, two lines>\"}",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "type": "string",
+            "description": "absolute path of the written artifact"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": ["artifact"]
+      }
+    },
+    {
+      "id": "rubric",
+      "type": "agent",
+      "after": ["author"],
+      "inputs": ["author.artifact"],
+      "shape": "review",
+      "reasoning": "high",
+      "max_turns": 12,
+      "context": "Blindness contract: you score an artifact, not an author. You were given the path and nothing else - no summary, no intentions, no self-assessment. Judge what is written, not what was meant.",
+      "goal": "Score the artifact against the rubric verbatim. Rubric: {run.rubric}\nThe artifact's absolute path is in ## Inputs. Open it and read it whole before judging.\nReturn {\"verdict\": \"pass|findings\", \"findings\": [\"<one per line, each naming the rubric criterion it violates>\"]}. Use 'pass' only when nothing load-bearing is wrong; with 'findings' the list is never empty, and every concern you raise is a finding.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "description": "one of: pass, findings"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["verdict", "findings"]
+      }
+    },
+    {
+      "id": "clear-gate",
+      "type": "gate",
+      "after": ["rubric"],
+      "when": "out.rubric.verdict == 'pass'",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "admit-first-pass",
+      "type": "echo",
+      "after": ["clear-gate"],
+      "output": "admitted-first-pass"
+    },
+    {
+      "id": "repair",
+      "type": "agent",
+      "after": ["rubric"],
+      "when": "out.rubric.verdict == 'findings'",
+      "on_skip": "prune",
+      "shape": "build",
+      "max_turns": 16,
+      "goal": "Address the rubric findings with EXACTLY ONE repair pass - the re-score that follows you is the last scoring this artifact gets before a disposition.\nThe findings ride in ## Inputs verbatim. Rewrite the artifact so every named finding is cleared; clear the findings, do not grow the scope. If you write a new file, commit its path.\nReturn {\"artifact\": \"<absolute path of the repaired file>\", \"addressed\": [\"<each finding, restated verbatim>\"]}",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "type": "string",
+            "description": "absolute path of the repaired artifact"
+          },
+          "addressed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["artifact", "addressed"]
+      }
+    },
+    {
+      "id": "rescore",
+      "type": "agent",
+      "after": ["repair"],
+      "inputs": ["repair.artifact", "rubric.findings"],
+      "model": "council_a",
+      "shape": "review",
+      "reasoning": "high",
+      "max_turns": 12,
+      "context": "Blindness contract: you re-score an artifact, not a changelog. You hold the repaired path and the ORIGINAL findings list - never the repair's claims about what it fixed. Judge the file. Your class binding is the point of this seat: the second opinion must be at least as strong as the first.",
+      "goal": "Re-score the repaired artifact against the rubric verbatim. Rubric: {run.rubric}\n## Inputs carries the repaired artifact path and the original findings list. Open the artifact yourself; re-check every original finding against the file, and score the rubric afresh - a repair can fix one criterion and break another.\ndisagreements is the number of scoring rounds that found the artifact wanting: the first pass already counted its own, so it counts as round 1. If you too find it wanting after the one repair, set disagreements: 2 and the second-disagreement STOP trips; if the repair cleared everything, set disagreements: 1.\nReturn {\"verdict\": \"pass|findings\", \"findings\": [\"<residual or newly-named>\"], \"disagreements\": <number>}",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "description": "one of: pass, findings"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "disagreements": {
+            "type": "number",
+            "description": "scoring rounds that found the artifact wanting: 1 (repair cleared it) or 2 (STOP)"
+          }
+        },
+        "required": ["verdict", "findings", "disagreements"]
+      }
+    },
+    {
+      "id": "halt-gate",
+      "type": "gate",
+      "after": ["rescore"],
+      "when": "out.rescore.disagreements >= 2",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "stop",
+      "type": "echo",
+      "after": ["halt-gate"],
+      "output": "stopped-second-disagreement"
+    },
+    {
+      "id": "admit-gate",
+      "type": "gate",
+      "after": ["rescore"],
+      "when": "out.rescore.disagreements < 2",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "accept",
+      "type": "echo",
+      "after": ["admit-gate"],
+      "output": "admitted-after-repair"
+    }
+  ]
+}

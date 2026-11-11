@@ -1,0 +1,217 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "items": [
+        "Blindness is structural: each scoring seat consumes only artifact paths, never the author's defense or the repair's claim of resolution",
+        "Bounded admission: the single repair pass is gated and never re-entered, and the second-disagreement STOP is a machine `when` on a count, not prose",
+        "Dispositions are echoes - every arm commits its verdict at no token cost"
+      ],
+      "title": "Why it works"
+    },
+    {
+      "dot": "rose",
+      "items": [
+        "10 nodes, 4 seats, 3 machine gates, 3 dispositions: author -> blind rubric -> gated repair pass -> frontier re-score -> halt/admit pair",
+        "run_context seeds artifact_spec + rubric; the re-score pins capability class council_a - bind it in settings.models or the launch refuses by name",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ],
+      "title": "Contract"
+    }
+  ],
+  "diagram_type": "workflow",
+  "edges": [
+    {
+      "from": "author",
+      "id": "author-rubric",
+      "to": "rubric",
+      "variant": "default"
+    },
+    {
+      "from": "rubric",
+      "id": "rubric-clear-gate",
+      "to": "clear-gate",
+      "variant": "security"
+    },
+    {
+      "from": "clear-gate",
+      "id": "clear-gate-admit-first-pass",
+      "to": "admit-first-pass",
+      "variant": "default"
+    },
+    {
+      "from": "rubric",
+      "id": "rubric-repair",
+      "to": "repair",
+      "variant": "security"
+    },
+    {
+      "from": "repair",
+      "id": "repair-rescore",
+      "to": "rescore",
+      "variant": "default"
+    },
+    {
+      "from": "rescore",
+      "id": "rescore-halt-gate",
+      "to": "halt-gate",
+      "variant": "security"
+    },
+    {
+      "from": "halt-gate",
+      "id": "halt-gate-stop",
+      "to": "stop",
+      "variant": "default"
+    },
+    {
+      "from": "rescore",
+      "id": "rescore-admit-gate",
+      "to": "admit-gate",
+      "variant": "security"
+    },
+    {
+      "from": "admit-gate",
+      "id": "admit-gate-accept",
+      "to": "accept",
+      "variant": "default"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "work",
+      "label": "Agents",
+      "variant": "normal"
+    },
+    {
+      "id": "gates",
+      "label": "Gates",
+      "variant": "normal"
+    },
+    {
+      "id": "room",
+      "label": "Deterministic",
+      "variant": "normal"
+    }
+  ],
+  "meta": {
+    "output": "examples/diagrams/rubric-repair.html",
+    "quality_profile": "standard",
+    "subtitle": "Bounded admission loop: author -> blind rubric scoring of the committed artifact -> exactly one repair of the ",
+    "title": "rubric-repair"
+  },
+  "nodes": [
+    {
+      "col": 0,
+      "id": "author",
+      "label": "Author",
+      "lane": "work",
+      "sublabel": "author an artifact",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 1,
+      "id": "rubric",
+      "label": "Rubric",
+      "lane": "work",
+      "sublabel": "score the artifact",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "clear-gate",
+      "label": "Clear Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "repair",
+      "label": "Repair",
+      "lane": "work",
+      "sublabel": "address the rubric",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "admit-first-pass",
+      "label": "Admit First\u2026",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "rescore",
+      "label": "Rescore",
+      "lane": "work",
+      "sublabel": "re score the",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 4,
+      "id": "admit-gate",
+      "label": "Admit Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104
+    },
+    {
+      "col": 4,
+      "id": "halt-gate",
+      "label": "Halt Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104,
+      "yOffset": 92
+    },
+    {
+      "col": 5,
+      "id": "accept",
+      "label": "Accept",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 5,
+      "id": "stop",
+      "label": "Stop",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104,
+      "yOffset": 92
+    }
+  ],
+  "phases": [
+    {
+      "fromCol": 0,
+      "id": "roots",
+      "label": "entry",
+      "toCol": 0
+    },
+    {
+      "fromCol": 1,
+      "id": "mid",
+      "label": "hand-offs",
+      "toCol": 4
+    },
+    {
+      "fromCol": 5,
+      "id": "out",
+      "label": "terminus",
+      "toCol": 5
+    }
+  ],
+  "schema_version": 2
+}

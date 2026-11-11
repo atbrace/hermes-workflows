@@ -34,6 +34,7 @@ repo docs tree; the runtime zip ships maps and graphs, not art.
 | [`bulk-transform.workflow.json`](build/bulk-transform.workflow.json) | manifest → per-item lanes → audit | Barrier fan-out: the audit reconciles `all_results` against the declared manifest *and* re-checks the filesystem — evidence-without-command is a failed lane. |
 | [`census-fanout.workflow.json`](build/census-fanout.workflow.json) | roster → no-quorum barrier → tally | Deterministic tally over N machines: every item answered or *named missing*, counts computed from the record, a dead gauge prints as a loud red row, never silent loss. |
 | [`quorum-probe.workflow.json`](build/quorum-probe.workflow.json) | raced probe ‖ reconciled barrier | The speed/coverage contrast in one run: `quorum` cancels stragglers (report them honestly); the no-quorum barrier reconciles survivors against a master catalog. |
+| [`rubric-repair.workflow.json`](build/rubric-repair.workflow.json) | author → blind rubric → one gated repair → frontier re-score → halt/admit | Bounded admission without a loop engine: blindness by `inputs`, one repair gated by the first verdict, the second-disagreement STOP as a machine `when` on a count, and every disposition echoed at zero tokens. |
 
 ## review/ — independent judgment
 

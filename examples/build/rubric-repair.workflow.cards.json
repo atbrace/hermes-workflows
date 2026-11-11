@@ -1,0 +1,22 @@
+{
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Why it works",
+      "items": [
+        "Blindness is structural: each scoring seat consumes only artifact paths, never the author's defense or the repair's claim of resolution",
+        "Bounded admission: the single repair pass is gated and never re-entered, and the second-disagreement STOP is a machine `when` on a count, not prose",
+        "Dispositions are echoes - every arm commits its verdict at no token cost"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Contract",
+      "items": [
+        "{{nodes}} nodes, {{agents}} seats, {{gates}} machine gates, {{echoes}} dispositions: author -> blind rubric -> gated repair pass -> frontier re-score -> halt/admit pair",
+        "run_context seeds artifact_spec + rubric; the re-score pins capability class council_a - bind it in settings.models or the launch refuses by name",
+        "Derived from this example's bytes by scripts/graph_diagram.py"
+      ]
+    }
+  ]
+}

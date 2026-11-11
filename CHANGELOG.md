@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Example: new `examples/build/rubric-repair.workflow.json` — the bounded
+  admission loop (author -> blind rubric scoring -> exactly one gated repair ->
+  frontier re-score -> second-disagreement STOP as a machine `when` -> single
+  zero-token disposition). Blindness is carried by `inputs`, the loop is
+  structural (the re-score cascade-prunes with its repair arm on a clean pass).
+  Tested example: `tests/test_examples_hw_gft.py` + derived diagram (hw-gft).
+
 ## 1.4.8 — 2026-11-11
 
 Patch release from ten merged pull requests since v1.4.7. The door no longer
