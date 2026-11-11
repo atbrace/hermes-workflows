@@ -1,95 +1,78 @@
 {
   "grammar": "wf/1",
   "name": "admission-lap",
+  "description": "Typed-params worked example: the launch contract lives in the row and the door enforces it before anything is written. PARAMS SLOTS: 'session' = pin, the content being admitted (a path, URL, or identifier the receiving estate can read); 'verb' = tune, domain watch|act, default watch — a `by` patch swaps the work node's goal per case (the verb-family idiom: watch reads read-only, act mutates then reports); 'depth' = tune, domain brief|full, default brief — a `where` seam keeps the audit lane OUT of the committed graph unless depth=full (the depth-ladder idiom: a removed `where` node cascade-prunes its descendants, so nothing downstream may depend on it). DISPATCHER FLOW: the guard echo stamps the one LAUNCH brief (zero tokens; the seam is already popped — the concrete graph carries the EFFECTIVE bindings, tune defaults included), the work node runs the verb the binding picked, the audit lane joins only at full depth. DOOR LAW the lap demonstrates: every missing pin, unknown key, and out-of-domain value refuses LAUNCH as ONE params_contract refusal with zero state written; a tune slot left unbound rides its stamped default (the run record carries the effective binding, never a silent one); the contract is TOTAL both ways — every operative {run.KEY} ref is declared, every declared slot is consumed by operative text or a where/by gate. LAUNCH: save this file to the library, then run from: with a run_context map {\"session\": \"<what to admit>\"} (omit verb/depth to ride the stamped defaults, or bind them explicitly); an unbound session refuses before any write.",
   "provenance": {
-    "owner": "author-estate (study-council distillation)",
-    "source": "peer dispatch guard, restated in native grammar 2026-11-11"
-  },
-  "description": "The worked TYPED-LAUNCH-CONTRACT example: a graph-level `params` block, a `where` depth-ladder seam, and a `by` verb-family patch — the dispatcher story a zero-LLM guard needs. THE DISPATCHER FLOW this file is built for: a small non-LLM guard script prints one LAUNCH brief (graph_path + lane_key + the run_context binding map); the session launches `run from: admission-lap` with that map; the DOOR refuses every missing or unknown binding in ONE answer (error_type params_contract, violations named) BEFORE any state is written — no half-run to clean up. The shelf surfaces the contract to dispatchers: `library name:admission-lap` / `/wf show admission-lap` lists required pins unfilled and tune defaults pre-filled (the meta.params envelope is derived from the block at save). THE SEAMS: `where: {param: depth, in: [full]}` removes the peer-rubric node entirely when depth=fast — removal cascade-prunes its descendants BEFORE the graph exists (the depth-ladder idiom); `by: {depth: {...}}` value-patches the report seat's context per effective value (the verb-family idiom). At depth=fast the report still fires: the structurally-absent peer is not a dependency that died, and the live rubric dep carries it — removal differs from pruning exactly as the door-time seam differs from a false `when`. Totality law: every declared slot must be referenced and every operative {run.KEY} must be declared; this graph carries its ONE contract as `params` (no run_context contract block).",
-  "params": {
-    "BEAD": {"kind": "pin", "desc": "subject record id under admission"},
-    "SCRATCH": {"kind": "pin", "desc": "absolute pre-existing artifact directory every seat writes into"},
-    "depth": {"kind": "tune", "domain": ["fast", "full"], "default": "fast"}
+    "owner": "author-estate (peer-estate maintained)",
+    "source": "hermes-workflows/examples/build/admission-lap.workflow.json"
   },
   "defaults": {
-    "timeout": 1200,
-    "max_turns": 10,
-    "context": "You are one seat of an admission lap running under a typed launch contract. Ground rules:\n- The tracker record as committed is truth; re-read it, never trust a prior seat's narrative.\n- All artifact paths absolute, under the run's scratch dir only.\n- Keep answers to the schema; one fenced ```json block as your final message. Never print secrets."
+    "timeout": 900,
+    "context": "You are one lap of an admission workflow. Ground rules:\n- The LAUNCH brief in ## Inputs states the effective contract; work it verbatim, never re-interpret the binding.\n- Read-only unless your node's goal says to act.\n- Self-report is not proof: every claim cites the command or file that backs it.\n- Keep answers to the schema; one fenced ```json block as your final message. Never print secrets."
+  },
+  "params": {
+    "session": {
+      "kind": "pin",
+      "desc": "what to admit: a path, URL, or identifier the receiving estate can read"
+    },
+    "verb": {
+      "kind": "tune",
+      "domain": ["watch", "act"],
+      "default": "watch",
+      "desc": "verb family: watch observes read-only; act mutates, then reports"
+    },
+    "depth": {
+      "kind": "tune",
+      "domain": ["brief", "full"],
+      "default": "brief",
+      "desc": "depth ladder: brief ends at the work node; full adds the audit lane"
+    }
   },
   "nodes": [
     {
-      "id": "author",
-      "type": "agent",
-      "goal": "Subject: tracker record {run.BEAD}. Re-read it with your tracker's read tools. Bring it to the canonical spine (symptom, root cause, bounded fix scope, one rejected simpler alternative citing real prior art or the honest empty, and an Acceptance done-check that is a command). Write your answer JSON to {run.SCRATCH}/author.json and reply with ONLY fenced json {\"verdict\": \"authored|skip-not-mine\", \"summary\": \"<one paragraph: what you changed and why>\"}",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "verdict": {"type": "string"},
-          "summary": {"type": "string"}
-        },
-        "required": ["verdict", "summary"]
-      }
+      "id": "guard",
+      "type": "echo",
+      "output": "LAUNCH brief — session={run.session} verb={run.verb} depth={run.depth}. The door materialized the params contract before any write; this brief states the EFFECTIVE bindings (defaults stamped), and the graph you are reading is the concrete one."
     },
     {
-      "id": "gate-armed",
-      "type": "gate",
-      "after": ["author"],
-      "when": "out.author.verdict == 'authored'",
-      "on_skip": "prune"
-    },
-    {
-      "id": "rubric",
+      "id": "work",
       "type": "agent",
-      "after": ["gate-armed"],
-      "inputs": ["author"],
-      "goal": "BLIND rubric pass on record {run.BEAD} as committed (re-read it; the author's summary only says where to look). Score 0-10 against the canonical spine; thin, vague, or invented content = named findings. Write {run.SCRATCH}/rubric.json and reply with ONLY fenced json {\"agreement\": true|false, \"score\": <0-10>, \"findings\": \"<one line per defect; empty iff clean>\"}",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "agreement": {"type": "boolean"},
-          "score": {"type": "integer"},
-          "findings": {"type": "string"}
-        },
-        "required": ["agreement", "score", "findings"]
-      }
-    },
-    {
-      "id": "peer-rubric",
-      "type": "agent",
-      "after": ["gate-armed"],
-      "inputs": ["author"],
-      "where": {"param": "depth", "in": ["full"]},
-      "goal": "Second BLIND rubric pass on record {run.BEAD} as committed — an independent seat, same 0-10 spine rubric, its own findings. Disagreement between the two passes is the signal the full-depth lap pays for; do not read the sibling's artifact. Write {run.SCRATCH}/peer_rubric.json and reply with ONLY fenced json {\"agreement\": true|false, \"score\": <0-10>, \"findings\": \"<one line per defect; empty iff clean>\"}",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "agreement": {"type": "boolean"},
-          "score": {"type": "integer"},
-          "findings": {"type": "string"}
-        },
-        "required": ["agreement", "score", "findings"]
-      }
-    },
-    {
-      "id": "report",
-      "type": "agent",
-      "after": ["rubric", "peer-rubric"],
-      "inputs": ["rubric", "peer-rubric"],
+      "after": ["guard"],
+      "shape": "build",
+      "goal": "Fallback goal (never reached while the verb cases cover the domain): inspect {run.session}.",
       "by": {
-        "depth": {
-          "fast": {"context": "Depth tier 'fast': the report seat compresses hard — one verdict line plus the findings array verbatim; no narrative."},
-          "full": {"context": "Depth tier 'full': the report seat expands — reconcile the two blind passes, name where they disagree and why, and state the single disposition the lap recommends for record {run.BEAD}."}
+        "verb": {
+          "watch": {
+            "goal": "Watch {run.session}: read it with whatever read-only tools you have. Do not mutate anything. Reply with ONLY fenced json {\"did\": \"<what you observed>\", \"evidence\": \"<command/output backing it>\"}"
+          },
+          "act": {
+            "goal": "Act on {run.session}: apply the admission it asks for, using the least invasive change that completes it, then re-read to prove the effect. Reply with ONLY fenced json {\"did\": \"<what you changed>\", \"evidence\": \"<the read-back proving the effect>\"}"
+          }
         }
       },
-      "goal": "Report the admission lap for {run.BEAD}. At full depth your inputs carry BOTH blind passes: reconcile them, name the disagreement, recommend exactly one disposition (workable | needs-fix | needs-human | reject). At fast depth the peer pass was removed at the door — report from the rubric pass alone and say so in one line. Write {run.SCRATCH}/report.json and reply with ONLY fenced json {\"disposition\": \"<recommended label>\", \"disagreement\": \"<lines where the passes differ, or 'single-pass lap'>\", \"findings\": [\"<actionable finding lines>\"]}",
       "schema": {
         "type": "object",
         "properties": {
-          "disposition": {"type": "string"},
-          "disagreement": {"type": "string"},
-          "findings": {"type": "array", "items": {"type": "string"}}
+          "did": {"type": "string"},
+          "evidence": {"type": "string"}
         },
-        "required": ["disposition", "disagreement", "findings"]
+        "required": ["did", "evidence"]
+      }
+    },
+    {
+      "id": "audit",
+      "type": "agent",
+      "after": ["work"],
+      "shape": "review",
+      "where": {"param": "depth", "in": ["full"]},
+      "goal": "You exist only when depth=full was bound at launch (see the LAUNCH brief in ## Inputs). Audit the work node's claim (## Inputs): re-derive its evidence independently — re-run the read-back it cites, or an equivalent — and say plainly whether the claim holds. Reply with ONLY fenced json {\"holds\": true|false, \"checked\": \"<what you re-ran and what it printed>\"}",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "holds": {"type": "boolean"},
+          "checked": {"type": "string"}
+        },
+        "required": ["holds", "checked"]
       }
     }
   ]
