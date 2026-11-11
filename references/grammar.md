@@ -138,6 +138,47 @@ A gate has `type:"gate"`, `after`, optional `question`/`options`, `when`, `on_sk
 
 Bounded `when` on gates and agents (`agent.when`) reads `out.<ancestor>.<path>`, with string/number/boolean literals (`true`, `false`, `True`, `False`), the `None` literal, comparisons, and/or/not and parentheses. Malformed predicates and heads outside the node's `after` ancestry are refused before write/spawn. `on_skip` requires `when` and accepts only `pass` or `prune`. A false predicate defaults to `on_skip:"prune"`: the node and descendants with only skipped dependencies become terminal-skipped; a join with one live dependency still runs. An agent skips with zero spawns. Explicit `on_skip:"pass"` skips the gate question or commits the agent `done` with `{agent:"skipped"}`, letting descendants proceed; at that commit edge an agent that also declares `effects` rides the receipt gate (est-0lxnh, #56 law) — a false predicate never wrote the artifact, so the commit demotes `failed` `error_class:"effect_receipt"` instead of booking a zero-receipt done, and effects-free agents are untouched. A true predicate spawns the agent or holds/waits on the gate; a predicate error holds the gate or spawns the agent with `agent.when_error` — never a silent skip. For mutually exclusive arms, use complementary predicates on agents; two complementary gates with their agents and a mixed join also work. See tested `examples/basics/approve-publish.json` and `examples/basics/branch-on-verdict.json`. A missing upstream input fails rather than injecting an empty value; the one exception (#473) is an explicit `inputs:` ref whose head committed `skipped` (`on_fail:"skip"` catch, false `when`, all-deps-pruned): it resolves to one labelled skipped-sentinel block carrying the committed skip record (`{skipped, caught_error, caught_error_class}`), so the dropout arm reaches its consumer as readable, fail-closed data instead of an `error_class:"inputs"` spawn crash — a head that never committed, or committed `done` without that path, still hard-fails. There is no native vote/loop/foreach engine.
 
+## The join node (zero-token merge)
+
+`join` is the fourth node type (the closed set `agent|gate|echo|join`, shipped in 1.3.0). It is
+a machine-committed merge, not a spawn: the runner resolves the node's declared refs against the
+committed parent outputs and commits the merged JSON object ITSELF at the wave boundary — zero
+tokens, zero children, and peers paying agent-spawn tokens for every JSON merge are paying for
+what this node gives free. A join's fields are exactly `{id, type:"join", after, keys, wait}`:
+that is the reject set (`wfcommon.JOIN_KEYS`), so any other key — `when`, `on_skip`, `requires`,
+`inputs`, `schema` and every other agent/gate key — is refused at the door with
+`unknown key; allowed: ["after", "id", "keys", "type", "wait"]`, and a `wait` outside
+`"terminal"`/`"any"` is refused naming the pair.
+
+`keys` is a map `{label: "<node_id>.<dotted.path>"}`. The committed output is `{label: value}`,
+entries sorted by label so the same set of committed parent outputs always yields the same record
+bytes; like `echo`, the join follows the replay-skip law (pending only when its stored
+fingerprint disagrees). Downstream nodes consume the merge like any other output — `after`
+injection, `inputs`, `when`. Terminal/any merge semantics:
+
+- **`"terminal"` (default)** — fires once every `after` parent has settled and a failed leg
+  FAILS the join, loud: `failed` `error_class:"precondition"`,
+  `error: join parent failed: <ids>`. A missing leg is a hole in the merged object — loud, never
+  a silent null. Only `failed` sinks it: `skipped` legs (an `on_fail:"skip"` catch, a
+  false-`when` pruned arm) are join-tolerant — a join with one live dep still commits (pinned by
+  `tests/test_on_fail_h23.py`).
+- **`"any"`** — fires as soon as ONE parent is done/partial — the fan-out-quorum flavour, a
+  quorum-cancelled straggler never sinks the merge — and keys whose legs are unsettled, failed
+  or skipped are simply DROPPED from the object.
+
+The two hole rules differ in kind. A key whose parent COMMITTED but whose dotted path is absent is
+an author typo and fails the node as loud as a failed leg: `failed` `error_class:"precondition"`,
+`error: join key <label><-<ref>: no such path in committed output` — the same law as an
+unresolvable `inputs` ref. A leg that has not committed merely loses its key under `"any"`. A
+harvest-on-death `partial` parent blocks the plain after-edge exactly as for any other descendant
+(`blocked_by_partial_ancestor`): `after_partial` is outside the join's closed set, so only a
+producer-declared-released partial can ever feed the merge.
+
+```json
+{ "id": "merge", "type": "join", "after": ["arm_a", "arm_b"], "wait": "any",
+  "keys": { "left": "arm_a.verdict", "right": "arm_b.verdict" } }
+```
+
 ## Read-only residency audit
 
 `python3 scripts/argv_residency.py --json` scans the active Hermes home, profile

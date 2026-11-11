@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Docs: `references/grammar.md` gains the join-node section — terminal/any merge
+  semantics, the failed-leg loud fail, the author-typo law, the JOIN_KEYS reject
+  set, and the zero-token cost (hw-211). tests/test_docs_hw-211.py pins the
+  section against the shipped validator.
+
 ## 1.4.8 — 2026-11-11
 
 Patch release from ten merged pull requests since v1.4.7. The door no longer
