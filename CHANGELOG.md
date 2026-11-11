@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix: `library` gains opt-in `check:true` shelf digest recompute (hw-2mb) — shelf
+  provenance was write-only: `save` stamped `source_digest` once and every read
+  replayed it verbatim. Each row now echoes `digest_match` (stored stamp vs a
+  recompute over the shelved bytes), `author_source: match|drift` when
+  `provenance.source` names a readable graph file, and a top-level `unstamped`
+  names rows with no stamp; without the flag the response bytes are unchanged
+  (golden-bytes law). `tests/test_library_check_digest_hw2mb.py`.
+
 ## 1.4.8 — 2026-11-11
 
 Patch release from ten merged pull requests since v1.4.7. The door no longer
