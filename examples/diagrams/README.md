@@ -58,6 +58,8 @@ code, not docs — no diagram (rung zero). Census command for the scope:
 `git ls-tree -r --name-only HEAD | grep '\.json$' | grep -v '^graphify-out/'
  | grep -v '^examples/diagrams/' | grep -v '\.cards\.json$'` —
 every file whose parsed JSON has a non-empty `nodes` array must have a
+table row or queue row in this table (receipt at build: examples/ 18
+= 18 table + 0 queue).
 table row or queue row in this table (receipt at build: examples/ 21
 = 21 table + 0 queue).
 
