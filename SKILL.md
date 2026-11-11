@@ -54,7 +54,7 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
   [grammar](references/grammar.md).
 - A `gate` with `question`+`options` holds until you present it and `release` the
   owner's answer; a decorative gate self-releases on `hold_timeout`+`default_option`;
-  machine waits use `gate.wait`. Agents and gates share bounded `when`/`on_skip`: a false
+  machine waits use `gate.wait`. A release commits `{"answer": ...}` — route on `out.<gate>.answer` only (`_machine: "auto_release"` marks a defaulted answer; a pruned gate commits `{"gate": "skipped"}`); any other field resolves to None and silently prunes both equality arms. Agents and gates share bounded `when`/`on_skip`: a false
   predicate prunes the node and exclusively dependent arms (agents spawn nothing);
   `on_skip:"pass"` lets descendants run. Malformed or non-ancestor-head predicates are refused
   before write/spawn; echo/join reject both. Examples `approve-publish`, `branch-on-verdict`: [grammar](references/grammar.md).
