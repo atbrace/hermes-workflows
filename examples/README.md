@@ -51,13 +51,13 @@ repo docs tree; the runtime zip ships maps and graphs, not art.
 | [`release-lifecycle.workflow.json`](release/release-lifecycle.workflow.json) | preflight → prep → **verify** → publish → **await-ci** ‖ channel checks → closeout | Fail-closed drift: an *independent* verify node catches a bump that touched one artifact but not another and structurally halts; await-ci is a **machine gate** parking on a fixed probe argv while CI finishes (zero tokens while parked). |
 | [`submit-pr.workflow.json`](release/submit-pr.workflow.json) | preflight → validate → draft → gate → submit → **verify** | The reusable *→PR stub: whatever built the branch (issue-to-pr, a hand session, anything), this owns 'code done' → 'PR verified live' — secret-scan preflight, the repo's own validation re-run by the workflow itself, a human submit gate, and an independent API read-back that never trusts the submitter's word. Plug it in wherever; never merges. |
 | [`gated-publish.workflow.json`](release/gated-publish.workflow.json) | draft → owner gate → one arm | The template-of-templates for human-authorized publishes. |
-| [`machine-watch.workflow.json`](release/machine-watch.workflow.json) | zero-token poll → release on exit 0 | Scheduled watching: `until_argv` machine gate, `lane_key` dedup for cron double-fire. |
+| [`machine-watch.workflow.json`](release/machine-watch.workflow.json) | zero-token poll → release on exit 0 | Scheduled watching: `until_argv` machine gate, `lane_key` dedup for cron double-fire. Parallel lanes must never share one global scratch — path-bind `MW_STATE_ROOT` per lane at the shelf launch ([state roots](../references/example-tour.md#state-roots--the-handoff-file-law-for-machine-gates)). |
 
 ## ops/ — incident & fleet
 
 | File | Shape | Teaches |
 |---|---|---|
-| [`incident-response.json`](ops/incident-response.json) | alert → sweep → verdict-branch → recovery probe → close | Full incident lifecycle: verdict-branch gate pair, machine recovery probe with human escalation, merge-gated close. Adapt the lanes to your stack. |
+| [`incident-response.json`](ops/incident-response.json) | alert → sweep → verdict-branch → recovery probe → close | Full incident lifecycle: verdict-branch gate pair, machine recovery probe with human escalation, merge-gated close. Adapt the lanes to your stack; one state root per incident — path-bind `IR_STATE_ROOT`, never a shared global scratch. |
 
 ## Running one
 
