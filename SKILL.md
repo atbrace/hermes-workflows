@@ -53,11 +53,11 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
   billing another model; opt into the ladder with `require_route:false`. See
   [grammar](references/grammar.md).
 - A `gate` with `question`+`options` holds until you present it and `release` the
-  owner's answer; a decorative gate self-releases on `hold_timeout`+`default_option`;
-  machine waits use `gate.wait`. Agents and gates share bounded `when`/`on_skip`: a false
-  predicate prunes the node and exclusively dependent arms (agents spawn nothing);
-  `on_skip:"pass"` lets descendants run. Malformed or non-ancestor-head predicates are refused
-  before write/spawn; echo/join reject both. Examples `approve-publish`, `branch-on-verdict`: [grammar](references/grammar.md).
+  owner's answer; a decorative gate self-releases on `hold_timeout`+`default_option` (inert on wait gates).
+  Machine waits use `gate.wait`: probes exec raw (no tilde expansion), cwd = the run dir.
+  Agents and gates share bounded `when`/`on_skip`: a false predicate prunes the node and
+  exclusively dependent arms (agents spawn nothing); `on_skip:"pass"` lets descendants run.
+  Malformed or non-ancestor-head predicates are refused before write/spawn; echo/join reject both. Examples `approve-publish`, `branch-on-verdict`: [grammar](references/grammar.md).
 - `profile` runs a node AS a named teammate: DELEGATION, not isolation — same UID,
   the target's SOUL/memory/`.env`/tools; the target's `workflow_team.json` must list
   the launcher in `accept_from`; `default` is never a target.
