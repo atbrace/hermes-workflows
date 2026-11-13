@@ -722,6 +722,27 @@ def _ready_pid(rd):
             return int(tok) if tok.isdigit() else None
 
 
+# sys-5yocl2: transient systemd user scope for the daemonize hop. The double-
+# fork/setsid hop escapes the CALLER TREE but never the CGROUP (claim boundary
+# in _spawn_runner's docstring), so runners sat in whichever hermes-*.service
+# launched them and every unit restart (the 6h swap-reclaim timer, gateway
+# restarts, desktop handoffs) SIGTERM'd the fleet's in-flight lanes. --scope,
+# NOT service mode: the command stays the spawner's own descendant — env, cwd,
+# the ready-pipe fd and the double-fork hop all unchanged, and the admitted
+# runner still stamps wf.pid alone (sole-owner law). The scope's lifetime is
+# the run's; --collect drops it when the run exits; children inherit it.
+def _user_manager_reachable():
+    """user@.service alive: its private socket exists under XDG_RUNTIME_DIR."""
+    xrd = os.environ.get("XDG_RUNTIME_DIR")
+    return bool(xrd) and os.path.exists(os.path.join(xrd, "systemd", "private"))
+
+def _scope_prefix(rid):
+    """argv prefix for the daemonize hop; [] = today's plain double-fork."""
+    if shutil.which("systemd-run") and _user_manager_reachable():
+        unit = "wf-" + re.sub(r"[^A-Za-z0-9_.@:-]", "-", str(rid))
+        return ["systemd-run", "--user", "--scope", "--collect", f"--unit={unit}"]
+    return []
+
 def _spawn_runner(r):
     """Spawn the run's runner process — DAEMONIZED out of the caller's tree (#8).
 
@@ -738,8 +759,11 @@ def _spawn_runner(r):
     double-fork/setsid does NOT change cgroup membership — a sweep that kills by
     cgroup membership (e.g. the unit-cgroup ExecStopPost SIGKILL a gateway
     restart runs) still reaches caller, runner and children alike. Surviving an
-    enclosing service/cgroup cleanup is external supervision's job (a mitigation
-    outside this diff), not what this hop claims.
+    enclosing service/cgroup cleanup is not this hop's claim: sys-5yocl2 supplies
+    the mitigation one level up — _scope_prefix wraps the hop in a transient
+    `wf-<run_id>.scope` unit (systemd-run --user --scope --collect) so the run
+    leaves every hermes-*.service cgroup. Without systemd-run or a reachable
+    user manager the prefix is empty and unit cleanup still reaches the runner.
 
     Admission stays the runner-side kernel flock (loser exits WORKFLOW_BUSY
     before touching any state). SOLE-OWNER stamp law (#8 review, findings 3+4):
@@ -790,7 +814,7 @@ def _spawn_runner(r):
             try:
                 rd, wd = os.pipe()
                 proc = subprocess.Popen(
-                    [sys.executable, "-c", _DAEMON_INTERMEDIATE,
+                    [*_scope_prefix(r.name), sys.executable, "-c", _DAEMON_INTERMEDIATE,
                      str(HERE / "wf.py"), r.name, str(wd)],
                     stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                     env=env, pass_fds=(wd,), start_new_session=True, cwd=str(HERE))
