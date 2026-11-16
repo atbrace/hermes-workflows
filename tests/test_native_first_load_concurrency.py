@@ -13,6 +13,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import wf
 
 
+def probe_graph_lock(run, hold=None):
+    # Shared probe: flock on separate opens conflicts even inside one
+    # process, so two committer threads must not probe EXclusively; SH|NB
+    # is still refused while the product retains graph.lock exclusively.
+    # Since #647 the module's own deliver retries through a sibling's
+    # momentary EX probe (that landed as the flake fix); this helper stays
+    # exported as the carrier test_harness_probe_and_park_races.py proves
+    # shared-probe coexistence against.
+    with (run / "graph.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        if hold is not None:
+            hold()
+
+
 def concurrent_failures():
     with tempfile.TemporaryDirectory(prefix="wf-native-concurrent-") as tmp:
         run = Path(tmp)

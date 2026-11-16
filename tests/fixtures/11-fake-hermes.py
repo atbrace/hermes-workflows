@@ -51,6 +51,20 @@ if 'SLEEP' in prompt:
         time.sleep(float(prompt.split('SLEEP', 1)[1].split()[0]))
     except (ValueError, IndexError):
         pass
+if 'WAIT' in prompt:
+    # Park until the harness releases the named file, so the child can never
+    # outrun a kill that races it. Unbounded on purpose: a bounded park lets
+    # a stalled shard reach done before the kill — the very race the verb
+    # removes. A vanished release directory also releases the park: harness
+    # teardown can delete the file between the finally's touch and the next
+    # poll, and an orphan must drain then, not spin forever on a path that
+    # no longer exists.
+    try:
+        target = Path(prompt.split('WAIT', 1)[1].split()[0])
+        while not target.exists() and target.parent.exists():
+            time.sleep(0.01)
+    except IndexError:
+        pass
 if 'JSON:' in prompt:
     payload = next(line.split('JSON:', 1)[1].strip() for line in prompt.splitlines() if 'JSON:' in line)
 else:
