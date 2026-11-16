@@ -1490,11 +1490,15 @@ def _wake_deliver(rec, sid, text, tid, owner=None):
 
     A missing native owner may use legacy compatibility. Refused, unready or
     unidentifiable native owners must not fall through to another transport.
+    An owner with no platform stamp (desktop chats, WF_OWNER_SESSION launches)
+    tries native admission first; it keeps the legacy route when the adapter
+    cannot load or session.resume reports the session unknown. A not_found
+    from a later admission step is not a fallback: a turn may already exist.
     """
     platform = owner.get("platform") if isinstance(owner, dict) else None
-    if platform == "local":
+    if platform in ("local", None):
         nw = _native_wake()
-        if nw is None and (Path(__file__).resolve().parent / "wake_native.py").is_file():
+        if nw is None and platform == "local" and (Path(__file__).resolve().parent / "wake_native.py").is_file():
             rec["error"] = "native adapter failed to load"
             rec["error_class"] = "native_retry"
             return False
@@ -1506,6 +1510,8 @@ def _wake_deliver(rec, sid, text, tid, owner=None):
                 rec["admission_id"] = out.get("admission_id")
                 rec["native_status"] = out.get("status")
                 return True
+            if platform is None and oc == "refused" and out.get("reason") == "session_unknown":
+                oc = "unavailable"
             if oc in ("refused", "retry"):
                 # fail closed: typed, try-later, NO legacy bypass for this row
                 rec["error"] = _wake_safe(f"native {oc}: {out.get('reason', '')}")

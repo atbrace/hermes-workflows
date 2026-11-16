@@ -58,8 +58,17 @@ def _same_session(snapshot, sid):
             and snapshot.get("stored_session_id") == sid)
 
 
+def _reason(exc):
+    return str(exc).strip().split(":", 1)[0].split(" ", 1)[0]
+
+
 async def _admit(client, sid, text, input_id):
-    snapshot = await client.rpc("session.resume", session_id=sid, _timeout=RPC_TIMEOUT_S)
+    try:
+        snapshot = await client.rpc("session.resume", session_id=sid, _timeout=RPC_TIMEOUT_S)
+    except Exception as exc:
+        if _reason(exc) == "not_found":
+            raise NativeAdmissionError("session_unknown", retry=False) from exc
+        raise
     if not _same_session(snapshot, sid):
         raise NativeAdmissionError("session_identity_mismatch", retry=False)
     receipt = await client.rpc("prompt.submit", session_id=sid, text=text,
@@ -92,7 +101,7 @@ def deliver(sid, text, tid, home):
     except NativeAdmissionError as exc:
         return {"outcome": "retry" if exc.retry else "refused", "reason": exc.reason}
     except Exception as exc:
-        code = str(exc).strip().split(":", 1)[0].split(" ", 1)[0]
+        code = _reason(exc)
         if code in REFUSAL_REASONS:
             return {"outcome": "refused", "reason": code}
         return {"outcome": "retry", "reason": "transport_error"}
