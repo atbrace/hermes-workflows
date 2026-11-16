@@ -67,7 +67,7 @@ def mk_run(run_id, platform):
     (r / "gates").mkdir()
     (r / "run.json").write_text(json.dumps(
         {"concurrency": 1, "node_timeout": 60,
-         "owner": {"session_id": STORED_SID if platform == "local" else f"{platform}-sid",
+         "owner": {"session_id": STORED_SID if platform in ("local", None) else f"{platform}-sid",
                    "ui_session_id": None, "platform": platform}}))
     return r
 
@@ -308,6 +308,67 @@ try:
     check("api_server owner: legacy route intact, native seam never consulted",
           out == "delivered" and rows[0].get("delivered") is True
           and len(posts) == before10 + 1, str(rows))
+
+    # Desktop chats and WF_OWNER_SESSION launches stamp no platform. The live
+    # API server refuses those sessions (409 permission_denied), so they must
+    # take the gateway path, not the HTTP sink.
+    unstamped = FakeClient({
+        "session.resume": exact_sid_resume(STORED_SID),
+        "prompt.submit": {"admission_id": "adm-u", "status": "queued"},
+        "prompt.receipt": {"admission_id": "adm-u", "status": "queued", "ref": {"session_id": STORED_SID}},
+    })
+    nw.discover = lambda home: "EP-SENTINEL"
+    nw._connect = fake_connect(unstamped, [])
+    r11 = mk_run("nv-11-unstamped", None)
+    before11 = len(posts)
+    out = wf.notify(r11, "node.action_required", key="n1", node="n1")
+    rows = ledger(r11)
+    check("unstamped owner: native admission delivers, legacy sink untouched",
+          out == "delivered" and rows[0].get("protocol") == nw.SCHEMA
+          and len(posts) == before11, str(rows))
+
+    # A session the gateway does not know keeps the route it had before.
+    nw._connect = fake_connect(FakeClient({"session.resume": exact_sid_resume("some-other-session")}), [])
+    r12 = mk_run("nv-12-unstamped-unknown", None)
+    before12 = len(posts)
+    out = wf.notify(r12, "node.action_required", key="n1", node="n1")
+    rows = ledger(r12)
+    check("unstamped owner unknown to the gateway: legacy POST delivers",
+          out == "delivered" and "protocol" not in rows[0]
+          and len(posts) == before12 + 1 and posts[-1]["session"] == STORED_SID, str(rows))
+
+    # not_found after an accepted submit: a turn may exist, so no second transport.
+    nw._connect = fake_connect(FakeClient({
+        "session.resume": exact_sid_resume(STORED_SID),
+        "prompt.submit": {"admission_id": "adm-late", "status": "queued"},
+        "prompt.receipt": FakeRPCError("not_found"),
+    }), [])
+    r15 = mk_run("nv-15-unstamped-late-notfound", None)
+    before15 = len(posts)
+    out = wf.notify(r15, "node.action_required", key="n1", node="n1")
+    rows = ledger(r15)
+    check("unstamped owner, not_found after submit: no legacy POST, typed refusal",
+          out == "undelivered" and len(posts) == before15
+          and rows[0].get("error_class") == "native_refused", str(rows))
+
+    nw.discover = lambda home: None
+    nw._connect = fake_connect(FakeClient({}), [], tripwire=True)
+    r13 = mk_run("nv-13-unstamped-nogateway", None)
+    before13 = len(posts)
+    out = wf.notify(r13, "node.action_required", key="n1", node="n1")
+    rows = ledger(r13)
+    check("unstamped owner, no gateway: legacy POST delivers",
+          out == "delivered" and len(posts) == before13 + 1, str(rows))
+
+    wf._WAKE_NATIVE = None
+    wf._WAKE_NATIVE_TRIED = True
+    r14 = mk_run("nv-14-unstamped-broken-module", None)
+    before14 = len(posts)
+    out = wf.notify(r14, "node.action_required", key="n1", node="n1")
+    rows = ledger(r14)
+    check("unstamped owner, unloadable adapter: legacy POST delivers",
+          out == "delivered" and len(posts) == before14 + 1, str(rows))
+    wf._WAKE_NATIVE = nw
 
     use_sink()
     before_broken = len(posts)
