@@ -15,7 +15,7 @@ Fix contract:
     WORKFLOW_MAX_SEATS env > config workflows.max_seats (core-first
     load_config_readonly, stdlib lite-scan on bare hosts) > SEATS_DEFAULT.
     An operator-named cap must be an integer in [SEAT_CAP_FLOOR=4,
-    SEAT_CAP_CEILING=16] or the explicit 0 off-sentinel (the documented
+    SEAT_CAP_CEILING=64] or the explicit 0 off-sentinel (the documented
     est-g255 WORKFLOW_MAX_SEATS=0 guidance); anything else raises
     SeatCapError naming the knob. bool is a typo shape, not a cap.
   __init__.py act_run: the DOOR resolves the cap and refuses the whole launch
@@ -85,8 +85,11 @@ check("C1c: explicit 0 is the documented semaphore-off sentinel (est-g255), not 
 got, err = env_cap(3, home=_tmp)
 check("C1d: cap below the floor (3) raises SeatCapError naming the knob — never a silent default",
       got is None and err and "WORKFLOW_MAX_SEATS" in err and "3" in err, f"got={got} err={err}")
-got, err = env_cap(17, home=_tmp)
-check("C1e: cap above the ceiling (17) raises SeatCapError", got is None and err and "17" in err,
+got, err = env_cap(32, home=_tmp)
+check("C1e-a: a deliberate raise (32) is admitted by the widened bracket (hw-e65)",
+      got == 32 and err is None, f"got={got} err={err}")
+got, err = env_cap(65, home=_tmp)
+check("C1e: cap above the ceiling (65) raises SeatCapError", got is None and err and "65" in err,
       f"got={got} err={err}")
 got, err = env_cap("banana", home=_tmp)
 check("C1f: unparseable cap raises with 'not an integer'",
@@ -127,7 +130,7 @@ with patch.dict(sys.modules, {"hermes_cli.config": None, "hermes_constants": Non
         got = wfc.seat_max_seats()
     except wfc.SeatCapError as e:
         err = str(e)
-check("C2b: config cap outside [4,16] raises naming config workflows.max_seats",
+check("C2b: config cap outside [4,64] raises naming config workflows.max_seats",
       got is None and err and "config workflows.max_seats" in err and "99" in err,
       f"got={got} err={err}")
 (_cfg_home / "config.yaml").write_text("model:\n  default: x\n\nworkflows:\n  max_seats: 6\n")
@@ -352,7 +355,7 @@ shutil.rmtree(HOME_W, ignore_errors=True)
 # Three error strings advertise "the per-run opt-out is graph/run.json max_seats
 # : 0" (door submit refusal, runner seat_cap, runner seat_wait). An advertised
 # contract must be TRUE: the graph key is accepted by the structural validator
-# (integer in [4,16] or 0), act_run bakes it into run.json, and the runner's
+# (integer in [4,64] or 0), act_run bakes it into run.json, and the runner's
 # _max_seats honours it (C1 already proves meta wins and 0 disables). A plain
 # run NEVER grows the key (solo golden key-set law).
 with tempfile.TemporaryDirectory(prefix="cap856-d2-") as td:

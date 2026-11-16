@@ -2,16 +2,245 @@
 
 ## Unreleased
 
-- Error classification (sys-989kek, field report krb4cx): the CLI's stdout prose
-  "reached the iteration limit" now classifies `cap_exhausted` — added to
-  `_CAP_TOKENS` (typed report) and to a new shared `_CAP_PROSE_TOKENS` that feeds
-  both the marker gate and the cap branch of `_classify_rc_output` (the inline
-  duplicate is what drifted); the node rides the existing bounded re-drive
-  instead of dying `unknown` and falling to hand-build.
-- Seat-pool admission (sys-dk4164, endorse hw-bgb): a run.json `max_seats` ceiling
-  ABOVE the pool's recorded `.cap` now rejects admission typed `seat_cap_mismatch`
-  (node fails `error_class=seat_cap`) instead of going silently inert; the pool
-  never auto-raises — remove `<seats>/.cap` while the pool is idle to re-seed.
+## 1.4.10 — 2026-11-15
+
+Patch release from four merged pull requests since v1.4.9. The lifecycle
+wake clause turns bidirectional: a failure notice told the woken owner only
+what it did NOT authorize ("does not authorize repair, resume or a new
+launch"), which an agent-user read as a stop order mid-task — but the
+launch-time mandate already covers assess, repair and relaunch. Every wake
+body now closes with "This notice grants no new scope and revokes no
+existing authority", and the failure bodies name the expected action
+affirmatively. AUTHORITY LAW r5 (finite runner-authored table, zero caller
+text) is untouched. Three test batches closed the zero-reference census on
+the remaining `wfcommon` callables.
+
+- Fix: bidirectional wake clause across the five `_WAKE_TEMPLATES` bodies,
+  the catch-all, and the doc family in SKILL.md / AGENTS.md /
+  references/operations.md; four template pins updated (owner ruling
+  2026-11-15, PR#643).
+- Tests: direct contract pins for five zero-reference wfcommon callables,
+  batches 4-6 (`on_exit`-era census closure, PRs #639, #640, #641).
+
+## 1.4.9 — 2026-11-13
+
+Patch release from eleven merged pull requests since v1.4.8. The manifest now
+declares the spawn-env-gated `post_api_request` telemetry hook (the upstream
+catalog review at NousResearch/hermes-agent#154476 caught the declaration gap
+— validation only sees what `provides_hooks` lists), and the catalog
+disclosure and README tell the truth about the self-terminating watchdog tick
+cron the runner arms at launch. A docs wave shipped the grammar gate-output
+shape, the wake-route admission law, the posture layer, the operator playbook,
+the worked-example set and four field-scarred operations laws; the door gained
+a shelf-drift `library check` verb with a census husks bucket,
+`defaults.schema` content passes the ONE schema law at the door, batch-3
+direct contract pins cover five more zero-reference `wfcommon` validators,
+and the dashboard /runs census left the event loop.
+
+- Fix: `plugin.yaml` declares `post_api_request`, marked gated on the
+  `HERMES_WF_TELEMETRY` spawn env; `node_telemetry.py` registers it only in
+  runner-spawned workflow children (upstream review #154476, PR#638).
+- Docs: pr-body / disclosure-check / README disclose the watchdog tick cron;
+  the catalog draft entry mirrors the full 13-hook declared surface (PR#638).
+- Docs: grammar gate-output shape and hyphen/bare-path law (PR#626);
+  wake-route admission law (PR#627); posture layer (PR#628); operations:
+  self-wake guard, wake-lane reply contract, pack-adoption, FIFO seat-queue
+  fairness (PR#629); operator playbook (PR#630); worked-example wave
+  (PR#631).
+- Door: `library check:true` digest re-check verb + shelf-census husks bucket
+  (est-dv8q4, PR#632).
+- Fix: `defaults.schema` content passes the ONE schema law — boot-refused
+  shapes never reach spawn (est-j14j3, PR#633).
+- Tests: batch-3 direct contract pins for five zero-reference validators
+  (est-ckxqk, PR#635).
+- Perf: the /runs census leaves the event loop — threadpool dispatch + TTL
+  snapshot; /health p95 during scans 666ms -> 74ms (est-ey31s, PR#636).
+
+## 1.4.8 — 2026-11-11
+
+Patch release from ten merged pull requests since v1.4.7. The door no longer
+re-shelves launch concurrency widths it cannot honor, typed error classification
+for completed-seat deaths got two fixes, the seat-cap operator band was
+corrected to [4, 64], merge proof moved from stamps to ancestry, the CI core pin
+rolled to v0.23.1, and ten zero-reference `wfcommon` validators/predicates
+acquired direct contract pins in two batches.
+
+- Fix: `wf` types rc=1 completed-seat deaths with a missing answer schema as
+  `answer_schema_invalid` and strips dead-session noise (PR#616).
+- Fix: `wf` strips+types `malformed_turn` and adopted schema-miss verdicts (PR#617).
+- Tests: lock the inputs suppression direction — dotted-only picks remove the
+  parent's whole-output block (est-4neu8, PR#615).
+- Seat cap: widen the operator band to [4, 64] — typo bracket, not capacity
+  model (hw-e65, PR#618).
+- Gate: `release_merge_gate` proves merges by ancestry, not stamps (est-xihc8, PR#619).
+- chore(ci): drop the `pr-feed.yml` observer workflow — never green at
+  workflow-load (PR#622).
+- Tests: direct contract pins for five more wfcommon validators/predicates
+  (on_exit, params totality, quote-JSON error window, model-names, budget token
+  sum) — zero direct references at tip cb1fd1e; production untouched.
+  tests/test_wfcommon_validator_contracts_batch2_vq9.py.
+- Door: `save(run_id)` no longer shelves arg-channel concurrency widths (est-yka3m,
+  PR#500 shelf-leak residual). #498 merged launch-time `concurrency`/`item_concurrency`
+  args into the graph channel before the run-dir write, so a re-shelve silently froze
+  widths the author never wrote onto the shelf entry and the forged key made every
+  later `from=<entry>` + width-arg launch refuse as co-declaration. The door now
+  stamps the injected keys into `run.json` (`knob_arg_keys`); `save(run_id)` strips
+  exactly those keys and echoes `knobs_stripped`; author-written widths stay, an
+  unstamped (pre-fix) run dir keeps its bytes verbatim, and an amend drops the stamp
+  with the bytes it described. Pinned by `tests/test_save_knob_strip_yka3m.py` (T1-T5).
+- Tests: direct contract pins for five `wfcommon` validators (grammar, budget shape,
+  model policy, fingerprint rule-matching, dead-end forks) — zero direct references at
+  tip `b5988cd`; production untouched. `tests/test_wfcommon_validator_contracts_par_c9k.py`.
+- chore(ci): roll HERMES_PIN v0.23.0 -> v0.23.1 (current stable). Re-pin probe
+  2026-11-10: every consumed symbol exists at the tag and the contract suites
+  pass at it (private-imports 14/14 exact, hook contract, validate 57/57);
+  VALID_HOOKS gained only additive entries.
+
+### PR authors
+
+- #615 — @jacobhausler.
+- #616 — @atbrace.
+- #617 — @jacobhausler.
+- #618 — @atbrace-hermes.
+- #619 — @jacobhausler.
+- #620 — @jacobhausler.
+- #621 — @jacobhausler.
+- #622 — @jacobhausler.
+- #623 — @jacobhausler.
+- #624 — @jacobhausler.
+
+## 1.4.7 — 2026-11-07
+
+Patch release from four merged pull requests since v1.4.6. A failure wake
+now fires while healthy siblings still run, the store-clip helper finally has
+direct branch coverage, and the catalog rule-6 row is recounted for the
+post-#599 hook surface. The CI core pin rolls to the
+v0.23.0 contract release.
+
+- Notify actionable node failures before sibling drain: committed unhandled
+  failures emit `node.action_required` through the existing wake transport and
+  identity ledger instead of waiting for the whole wave to drain; healthy
+  sibling execution, handled-failure suppression, replay identity and final
+  run notifications are preserved, and cooperative steering plus durable
+  amendments stay admitted during a live wave. Deterministic
+  failure-before-drain and concurrent-initialization regressions added.
+  Fixes #610 (#612).
+- Direct coverage for `wf.clip_head_tail` (`tests/test_clip_head_tail_par_qx7.py`).
+  The store-clip helper had zero direct test references; the new serial test pins every
+  branch at tip `026edf0` — boundary pass-through, retention marker and ceiling hold,
+  the tiny-ceiling truncation, the tail=0 odd-budget leg (guards the `text[-0:]`
+  whole-string leak), and re-clip idempotence. Production untouched (#609, est-tscez).
+- Recount the catalog rule-6 row for the post-#599 hook surface
+  (`docs/catalog/pr-body.md`) (#607, est-gl6a4).
+- CI core pin raised v0.22.6 -> v0.23.0 (`2bd378ed1b`, peeled; current stable).
+  Re-pin probe 2026-11-07: all consumed symbols present at the tag;
+  `test_upstream_hook_contract`, `test_private_core_imports` (14/14),
+  `test_validate_0923` (57/57) and the soft-guard variant pass with the core
+  resolved at the tag. `hermes_cli/plugins.py` and `sdk/areas.ts` are
+  byte-identical pin->tag; the `model_switch.py` and SDK deltas are additive
+  or symbol-preserved. `requires_hermes` floor unchanged (>=0.21.4).
+- CI: core pin rolled v0.22.6 -> v0.23.0 (`2bd378ed`, peeled). Nightly re-pin probe
+  2026-11-07: consumed core/SDK symbols verified at the tag (contract suites green at
+  it: hook contract, private-imports 14/14, validate_0923 57/57); `plugins.py` and
+  `areas.ts` byte-identical pin->tag; SDK delta additive; `model_switch.py` deltas
+  preserve `_ensure_direct_aliases`/`DIRECT_ALIASES` (consumption already guarded).
+
+### PR authors
+
+- #607 — @jacobhausler.
+- #609 — @jacobhausler.
+- #612 — @jacobhausler.
+- #613 — @jacobhausler.
+
+## 1.4.6 — 2026-11-05
+
+Patch release from five merged pull requests since v1.4.5. Session-delete
+orphan release, a measured classifier retime, and size-cap-first retention
+ship together with two CI core-pin raises that track the adopted contract.
+
+- Subscribe `orphan_watch` to the core `on_session_delete` observer: owner
+  sessions removed through single, bulk, retention-prune, or ghost-prune
+  paths now release held gates instead of parking forever; fail-open like
+  its sibling hooks, one `mark_session` scan for `deleted_ids` sets
+  (#599, est-afeea).
+- Retime the config-input classifier window to the estate-derived 3500 ms:
+  the ~1 s window let the estate spawn floor push arg-parse-class deaths
+  outside it — the harvest-on-death path claimed the capture first and
+  fenced config deaths landed `partial/unknown`. Three consecutive nightly
+  ledgers of deterministic reds, a 36-sample corpus, measured cure
+  (#602, est-f6a4i).
+- Size-cap-first run-dir retention plus assurance-drill scratch:
+  `scripts/retention.py` prunes with the per-run SIZE CAP as the first-class
+  criterion (age-only cleanup cannot bound a seat disk), a never-delete law
+  for run dirs referenced by unfinished work, and a per-class rule table in
+  `docs/retention.md`; first apply returned 71.1 GiB and cleared the
+  forecast disk alert within one 15 s eval window (#605, est-fxpsl).
+- CI core pin raised v0.22.0 -> v0.22.5 (`bf0203a794`, peeled): the plugin
+  adopted the v0.22.5 `on_session_delete` observer, so CI now tests against
+  the contract release we actually rely on. Re-pin probe 2026-11-02: all
+  consumed symbols present at the tag; `test_upstream_hook_contract`,
+  `test_private_core_imports` (15/15) and `test_validate_0923` (57/57) pass
+  with the core resolved at the tag. `requires_hermes` floor unchanged
+  (>=0.21.4). CI installs the pinned core with
+  `uv pip install --system --override` (`Pillow==13.0.0`) at both install
+  points: core v0.22.5 requires Pillow 13 on py>=3.14 while browser-harness
+  0.1.13 pins pillow==12.3.0, and plain pip — blind to core's
+  `[tool.uv] override-dependencies` — died at `ResolutionImpossible` in all
+  8 shards (run 41441923619). The mirror drops when browser-harness allows
+  Pillow 13 (#601).
+- CI core pin raised v0.22.5 -> v0.22.6 (`f0d94882e8`, peeled; current
+  stable). Re-pin probe 2026-11-03: all consumed symbols present at the
+  tag; `test_upstream_hook_contract`, `test_private_core_imports` (14/14)
+  and `test_validate_0923` (57/57) pass with the core resolved at the tag.
+  The allow-list shed one row: v0.22.6 promoted
+  `gateway.session_context:get_session_env` to the public surface, so the
+  private-import lint no longer reports our import. Pillow/browser-harness
+  pins unchanged at the tag, so the CI uv-override mirror stays.
+  `requires_hermes` floor unchanged (>=0.21.4) (#604).
+
+### PR authors
+
+- #599 — @jacobhausler.
+- #602 — @jacobhausler.
+- #605 — @jacobhausler.
+- #601 — @jacobhausler.
+- #604 — @jacobhausler.
+
+## 1.4.5 — 2026-10-31
+
+Patch release from seven merged pull requests since v1.4.4:
+
+- Fix producer-declared partial results releasing plain after-edges, and record
+  zero attempts for precondition refusals (#522).
+- Keep killed runs from being reported as done: terminal records or completed
+  work are required by the read model (#504).
+- Express pinned routes at spawn time and refuse `route_inexpressible` before
+  a child starts when the requested route cannot be honored (#590).
+- Align the operations guide and armed-strip tests with effective `require_route`
+  policy, including the route-refusal branch (#591).
+- Raise the suite's per-file wall from 90 s to a measured 180 s hang backstop
+  with a `--per-file-timeout` override and anti-truncation test legs, and cure
+  the machine-watch load-window flake at its probe-kill root — the gate-wait
+  `timeout=min(every,300)` bound SIGKILLed the probe at `every_s=.15` estate
+  latency; budgets raised, assertions unchanged (#592).
+- Deliver local-owner wake transitions through the native gateway: discovery
+  without starting a daemon, one stable input id, session verification —
+  completion notices reach the owner's exact session even when the legacy
+  API-server wake endpoint is unconfigured (#594).
+- One sidecar schema: install.json grows source_repo so an installed seat
+  answers "what am I pinned to" cold; the door accepts the legacy 3-key and
+  current 4-key generations without rewriting old archives, and pack/door
+  sanitize the origin pin exactly as they sanitize the commit pin (#597).
+
+### PR authors
+
+- #522 — @atbrace.
+- #504 — @atbrace.
+- #590 — @jacobhausler.
+- #591 — @jacobhausler.
+- #592 — @jacobhausler.
+- #594 — @jacobhausler.
+- #597 — @jacobhausler.
 
 ## 1.4.4 — 2026-10-29
 
@@ -43,25 +272,6 @@ canary walls retimed (#581), amend re-bind law narrowed in docs (#575).
 
 ### Carried ship fragments
 
-
-Door:
-- fix(door): sys-vrovdu — an unbound `{run.KEY}` now refuses the LAUNCH, not
-  just a missing key in a supplied map. Before, a graph with `{run.KEY}` refs
-  and NO `run_context` (or a seed instead of a map) spawned nodes with the
-  literal placeholder baked into their prompts, and `dry_run` passed the same
-  hole (measured 10-04, run 20261004-150243-bindability-probe-real).
-  `_unbound_run_refs` sweeps the shared `_include_text_fields` surface after
-  binding and before the dry_run return — the refusal names node + key and
-  writes nothing. The seed-less literal-spawn leniency is retired for plain
-  graphs (composites were already fail-closed since 2026-09-30). Literal-free
-  graphs and fully-bound launches are byte-unchanged. Tests:
-  `tests/test_unbound_run_refs_vrovdu.py` (13 contracts, RED first); D9b/D16b/
-  D19b in `tests/test_include_door.py` flipped from leniency to refusal. The
-  map binder now renders the SHARED text surface on every launch (inline
-  included), not only library-sourced ones — a supplied binding reaches every
-  ref the survivor gate polices, so gate and renderer cannot drift (a supplied
-  pin referenced only in echo output launches and renders). Command argv keeps
-  the #293 split: a plain launch never renders it, a library launch does.
 
 Ops/chore:
 - fix(read model) est-t7yod (the #583 peer-review residual): the est-mqp1f

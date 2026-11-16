@@ -99,7 +99,7 @@ workflow { "action": "stop",   "run_id": "<id>" }         → terminal, not roll
 `wait` blocks while a verified runner is live and self-yields ~330 s with a
 "call wait again" note to stay under the harness tool deadline. **Stay in the loop.**
 Push delivery is best-effort, not guaranteed. `wait` can resume an interrupted run;
-`status` is read-only. Completion grants no new authority, and cards/curation are optional.
+`status` is read-only. A wake grants no new scope and revokes no existing authority — a failed run is assessed and, under the mandate already on the table, repaired, amended or relaunched; cards/curation stay optional.
 
 ### 3b. Minimal graph
 
@@ -178,21 +178,18 @@ See [grammar](references/grammar.md#terminal-postmortem-optional) for validation
 publication guards, and crash recovery.
 
 - `node.failed` events carry `error_class` from the closed set defined in code
-  (`wf.py ERROR_CLASSES`) — `bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | declared_failure | early_death | effect_receipt |
+  (`wf.py ERROR_CLASSES`) — `answer_schema_invalid | bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | declared_failure | early_death | effect_receipt |
   fanout_empty | fatal_quota | forbidden_model | incomplete_work |
   inputs | item_record | killed | lane_wreckage | lease_busy | left_live_descendants | malformed_turn | precondition | provider_400 | quorum |
   ratelimit |
-  route_substitution_denied | route_unavailable | schema | seat_cap | seat_unsupported | seat_wait | spawn | stale_graph | timeout | transport | transport_exhausted |
+  route_inexpressible | route_substitution_denied | route_unavailable | schema | seat_cap | seat_unsupported | seat_wait | spawn | stale_graph | timeout | transport | transport_exhausted |
   unresolved_model`, plus `unknown` (the harvest-time default) — plus `attempts`. Read the
   class, not the prose; the exit-0-is-not-success settle law (`declared_failure`, transient
   sentinels) is in references/operations.md. `cancelled` (a `stop`, or a fan-out
   straggler at quorum) is never a failure: the run reads `stopped`, and a `wait` re-drives it.
-  `budget_exhausted` (est-3acn): a RunBudget cap (graph-root or node `budget:{tokens:N}`; tokens-only —
-  USD is excluded per the repo cost-trust law, issue #124) refused the spawn BEFORE submit, logged as
-  `dispatch.refused` and never billing (zero attempts); the runner closes the run gracefully as
-  `partial` and `budget_ledger.json` names the never-launched nodes. Terminal: outside every retry ladder.
-  A capped fan-out that DID harvest is a committing record: it rides the boundary gates (est-ps8i9); a
-  gate-demote's `node.failed` names the cap (`budget_cause=budget_exhausted`, est-6ig3s).
+  `budget_exhausted` (est-3acn): a RunBudget cap refused the spawn BEFORE submit and billed nothing;
+  the cap law — tokens-only, the capped-commit boundary gates (est-ps8i9), and
+  `budget_cause=budget_exhausted` on gate-demotes (est-6ig3s) — is in references/operations.md.
   `seat_wait` (est-g2xx): no global agent seat (`WORKFLOW_MAX_SEATS`) freed within the node wall — the spawn never happened.
   `seat_unsupported` (est-g255): the semaphore was full and the host exposes no process-ancestry
   channel (neither `/proc` nor `ps`), so a nested runner cannot prove which held seat is its own
@@ -200,7 +197,7 @@ publication guards, and crash recovery.
   a host are unsupported (set `WORKFLOW_MAX_SEATS=0` there). A fan-out item waiting on a seat when
   `quorum` is met ends `cancelled` and never spawns.
   `seat_cap` (est-2ek.1.856): the seat-cap knob (`WORKFLOW_MAX_SEATS` env or config
-  `workflows.max_seats`) named a non-integer or a value outside [4, 16]. The door refuses the
+  `workflows.max_seats`) named a non-integer or a value outside [4, 64]. The door refuses the
   whole launch before any write or spawn; an already-running runner fails the node. Never
   retried, never silently defaulted to `SEATS_DEFAULT`.
   `left_live_descendants` (#61): the runner is process-tree aware — an exit-0 spawn is
@@ -336,6 +333,7 @@ publication guards, and crash recovery.
   [references/example-tour.md](references/example-tour.md) §Lane hygiene.
 - Steering: `steer` queues text; a running child pulls it via `inbox` at its next
   seam. It does not interrupt a child mid-turn.
+- Unhandled node failures wake before sibling drain. Live-wave steer and amend timing: [operations](references/operations.md).
 
 ### 3e. Reporting a finished run
 
@@ -419,8 +417,9 @@ Optional AST-only exploration aid, folded to [references/graphify-navigation.md]
    named). Enumerate `laps[]` with run_ids; let clauses cite it.
 10. **A run's fingerprint lives in `runner_exit.json` (with `reason` +
     `fp_rule_version`); `run.json` carries no fingerprint.** Same-shape trap:
-    a shelf row saved from a *run-id* carries the run-dir digest (budgets baked
-    in), only save-from-*file* carries the template's own `source_digest`. The
+    A shelf row saved from a *run-id* carries the run-dir digest (budgets baked
+    in; arg-channel launch widths stripped — the run.json `knob_arg_keys` stamp
+    names them, est-yka3m), only save-from-*file* carries the template's own `source_digest`. The
     door writes `source` only when passed explicitly — a null-source row is a
     bare save, not a broken shelf.
 11. **Changed an example graph? Its diagram is derived, never drawn.** Edit the

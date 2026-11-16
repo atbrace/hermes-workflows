@@ -22,7 +22,26 @@ PACKAGE_NAME = f"hermes-workflows-{VERSION}"
 # installed seat can tell "still broken" from "fixed, not deployed". Test seam:
 # HERMES_WF_PACK_COMMIT pins the commit (sanitized: 40-hex only, never raw);
 # SOURCE_DATE_EPOCH pins packaged_at for reproducibility.
+# est-opuob (one sidecar schema): the record also names its ORIGIN —
+# source_repo "owner/repo" — so an installed seat answers "what am I" cold and
+# sidecar / live manifest / qualified archive stop disagreeing without a
+# re-resolve. The repo pin obeys the same sanitize law as the commit pin:
+# HERMES_WF_PACK_REPO is echoed only when it already matches owner/repo, else
+# the git remote read answers, else "unknown" — never a raw caller string.
+# The git fallback accepts ONLY host-carrying URLs (scheme://[user@]host/... or
+# scp-style user@host:...): a bare path or file:// origin has no host, so no
+# trustworthy owner — it answers "unknown" rather than fabricate one from
+# directory names. The owner segment is GitHub grammar, dots excluded (an
+# IP/dotted-host remote never echoes verbatim into a shipped sidecar the scrub
+# audit never reads).
+# Build inputs for the sidecar bytes: the tree, the date pins, and THIS clone's
+# reported origin (HERMES_WF_PACK_REPO, else the packing clone's `origin`
+# remote) — two clones of one commit can ship different source_repo, so the
+# byte-identity test leg pins HERMES_WF_PACK_REPO and the claim stays honest.
+# Readers must tolerate sidecars written BEFORE this field: the door reads the
+# gap as null, never an invented origin (tests/test_version_truth_159.py D10).
 _COMMIT_PIN = re.compile(r"^[0-9a-f]{40}$")
+_REPO_PIN = re.compile(r"^[A-Za-z0-9_-]+/[A-Za-z0-9._-]+$")
 
 
 def _source_commit() -> str:
@@ -41,10 +60,40 @@ def _source_commit() -> str:
     return "unknown"
 
 
+def _source_repo() -> str:
+    pin = os.environ.get("HERMES_WF_PACK_REPO", "").strip()
+    if _REPO_PIN.fullmatch(pin):
+        return pin
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"], cwd=ROOT,
+            capture_output=True, text=True, timeout=10,
+        )
+        u = url.stdout.strip() if url.returncode == 0 else ""
+        if u.endswith("/"):
+            u = u[:-1]
+        if u.endswith(".git"):
+            u = u[:-4]
+        # Host-carrying URLs only: scheme://[user@]host/owner/repo or scp-style
+        # user@host:owner/repo (re-run through the sanitizer, so a dotted owner
+        # is refused here too). A bare path or file:// origin carries no host
+        # and no trustworthy owner — fall through to "unknown", never fabricate
+        # an owner from directory names.
+        m = (re.fullmatch(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/@\s]+@)?[^/@\s]+/([^/:]+)/([A-Za-z0-9._-]+)", u)
+             or re.fullmatch(r"[^/@\s]+@[^/@\s]+:([^/:]+)/([A-Za-z0-9._-]+)", u))
+        if m and _REPO_PIN.fullmatch(f"{m.group(1)}/{m.group(2)}"):
+            return f"{m.group(1)}/{m.group(2)}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unknown"
+
+
 def _packaged_at() -> str:
     # Reproducibility law: no wall-clock byte may ever enter the ZIP. Pinned by
     # SOURCE_DATE_EPOCH, else the HEAD commit's own committer date (deterministic
-    # per tree — two packs of one tree stay byte-identical), else "unknown".
+    # per tree — two packs of one tree from one reported origin stay
+    # byte-identical; origin is a build input too, see the sidecar note above),
+    # else "unknown".
     epoch = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
     if epoch.isdigit():
         # Explicit UTC: astimezone()/local conversion lets the HOST timezone leak
@@ -64,9 +113,11 @@ def _packaged_at() -> str:
 
 
 def install_provenance() -> bytes:
+    # One sidecar schema (est-opuob): {version, source_commit, packaged_at,
+    # source_repo}. Appended last — readers grow tolerant-first.
     return (json.dumps(
         {"version": VERSION, "source_commit": _source_commit(),
-         "packaged_at": _packaged_at()},
+         "packaged_at": _packaged_at(), "source_repo": _source_repo()},
         separators=(",", ":"),
     ) + "\n").encode("utf-8")
 
@@ -83,13 +134,13 @@ INCLUDE_FILES = (
     "gate_index.py",  # PR-3: imported by __init__.py at bind time
     "docs/admission-gates.md",
     "orphan_watch.py",  # PR-4: imported by __init__.py at bind time — a packaged plugin without it dies at import
-    "seat_bg_reap.py",  # sys-tiismh: imported by __init__.py at bind time — a packaged plugin without it dies at import
     "card_enforcement.py",  # #157: imported by __init__.py at bind time — a packaged plugin without it dies at import
     # P1 (PR #432): wf.py spec-loads this by file path (_outbound_bridge) — absent from the ZIP, a
     # packaged install silently loses the outbound bridge (bridge resolves None) and the shipped
     # tests/test_hooks_outbound_bridge.py (tests glob) crashes at the unpacked root: the exact
     # est-4vnq finding-4 shape. Stdlib-only, so the ZIP side stays honest.
     "hooks_outbound.py",
+    "wake_native.py",
     # P3 (est-w86l0 lane, #430): __init__.py spec-loads this by file path when the
     # `subagent_accounting` token is allowed — absent from the ZIP the module simply
     # fails to load and the lane dies silently (est-4vnq finding-4 pack law).
@@ -237,7 +288,6 @@ SOURCE_ONLY_TESTS = {
     "tests/test_plugin_resolution_live_not_old.py": "loads source-only scripts/lane_recover.py",
     "tests/test_scrub_yml_166b.py": "executes source-only scripts/make_public.py",
     "tests/test_stuck_node_finalize_733.py": "executes source-only scripts/lane_recover.py (main's #235)",
-    "tests/test_banked_recovery_6whhun.py": "executes source-only scripts/lane_recover.py (--banked)",
     # #248 r3 (rebase onto main's #298): executes source-only make_public.py + reads scripts/scrub-list.txt
     "tests/test_personal_path_scrub_867.py": "executes source-only scripts/make_public.py, reads scripts/scrub-list.txt",
     # est-xwvu9 (upstream #133387 accepted ask): the post-exit hook is NOT shipped;
@@ -280,6 +330,11 @@ SOURCE_ONLY_SCRIPTS = {
     # make_public.py imports it at the refuse seam, so it travels with make_public.
     "scripts/gate_lint.py": "publish-door gate lint (#477); refuse seam of source-only make_public.py, not release surface",
     "scripts/admission_ledger.py": "estate consent/dissent ledger normalizer for receipts/workflow-mechanic/ (issue #104 item-3; not release surface)",
+    # est-fxpsl: run-dir + drill-scratch retention speaks estate vocabulary
+    # (the unclosed-row tracker export, the disk-janitor receipt spine); the
+    # seat gets it as a deployed copy refreshed from this repo. Not release
+    # surface — the plugin's own tooling does not import it.
+    "scripts/retention.py": "estate retention pruner (tracker-fed never-delete law + janitor receipt spine; deployed-copy distribution path)",
 }
 
 

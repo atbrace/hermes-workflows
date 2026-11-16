@@ -1,6 +1,6 @@
 # Hermes Workflows
 
-![Version](https://img.shields.io/badge/version-1.4.4-blue)
+![Version](https://img.shields.io/badge/version-1.4.10-blue)
 
 **Agent-owned workflow graphs for [Hermes Agent](https://github.com/NousResearch/hermes-agent).**
 Your agent authors a JSON graph of agent nodes, fan-outs and gates; a background
@@ -50,7 +50,8 @@ not re-paid.
 ## Offline checkout drift probe
 
 `python3 scripts/drift_check.py --repo <checkout>` (default: this checkout).
-On demand only — no fetch, daemon, or cron. Final stdout line:
+On demand only — the probe itself fetches nothing, starts no daemon and registers no
+cron (the runner's watchdog tick is disclosed under Install). Final stdout line:
 `installed_version`, `upstream_latest` (nearest local release tag by
 `git describe --tags`, not the remote's newest), `local_only_commits`,
 `trailers_missing`, `verdict`. Exit 0 = `clean`; exit 1 = drift
@@ -82,7 +83,7 @@ One tool, action-routed — the complete surface, with the flags that matter:
 | `submit` | Quarantine a hand-rolled graph the library didn't cover for human-gated study — requires a `why_not_library` receipt (≥80 chars); never joins the library. |
 | `library` | List shelved graphs richly (nodes, gates, fan-outs, description, tags, provenance), filterable by ALL-match tags; an empty filtered result says which tag starved. `name:"<name>"` returns required inputs and an instantiate command. |
 | `validate` | Dry-run the door's validation pipeline (defaults fill, defect collection, model/route policy) with no ping and no writes — `{ok, errors:[{node,field,msg}], resolved_routes}`. Same pipeline on argv, for heads that have no tool in reach (CI, pre-commit, plain shells): `python3 wf.py validate [--json] <graph.json>` — exit 0 ok, 1 red (the `errors[]` rows print), 2 usage/IO fault. No `--plugin-dir`: `wf.py` binds its own siblings. |
-| `doctor_version` | Read-only version truth for THIS install: `{live_version, newest_packaged, source_commit, drift}` — plugin.yaml vs the `install.json` provenance `pack.py` stamps at build time; one read, no network. |
+| `doctor_version` | Read-only version truth for THIS install: `{live_version, newest_packaged, source_commit, source_repo, drift}` — plugin.yaml vs the one sidecar schema `pack.py` stamps at build time (`install.json`: `version`, `source_commit`, `packaged_at`, `source_repo`); one read, no network. A sidecar predating `source_repo` loads with that field null — never an invented origin. |
 
 Plus a `/wf` slash command: bare `/wf` lists the library; `/wf <name> [note]`
 returns the atomic run instruction for that graph, carrying the note as its
@@ -157,11 +158,16 @@ procedures:
 
 ```sh
 hermes plugins install hermes-workflows      # from the catalog (pinned SHA)
-hermes plugins install <git-url>@v1.4.4      # fallback until the catalog entry merges (see INSTALL.md for the zip)
+hermes plugins install <git-url>@v1.4.10      # fallback until the catalog entry merges (see INSTALL.md for the zip)
 hermes plugins enable hermes-workflows
 ```
 
 Restart the backend (`hermes serve`) so the tool and dashboard routes mount.
+Every accepted launch arms one self-terminating core cron watchdog,
+`hermes-workflows-tick` (`no_agent` — it wakes no agent; default cadence
+`every 2m`, tunable via `WF_TICK_SCHEDULE` or config `workflows.tick_schedule`);
+it revives runners whose process died mid-run and deletes itself once no run
+stays active — between runs there is no job and nothing fires.
 Before disabling or removing the plugin, stop live runs: use `workflow {"action":"list"}`
 to find their run IDs, then `workflow {"action":"stop","run_id":"<id>"}` for each.
 Detached runners can outlive a session, gateway restart, or plugin disable until a

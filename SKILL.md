@@ -1,13 +1,13 @@
 ---
 name: workflow
 description: "Workflow fan-out audit and census: run agent graphs"
-version: 1.4.4
+version: 1.4.10
 metadata:
   hermes:
     tags: [workflows, fan-out, audit, census, orchestration]
 ---
 
-# Workflow authoring (1.4.4)
+# Workflow authoring (1.4.10)
 
 Requires Hermes Agent v2026.9.21 or newer (package >=0.21.4). A Desktop gate answer
 reaches the run owner's chat via the composer SDK; on older builds it may only insert
@@ -57,7 +57,7 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
   machine waits use `gate.wait`. Agents and gates share bounded `when`/`on_skip`: a false
   predicate prunes the node and exclusively dependent arms (agents spawn nothing);
   `on_skip:"pass"` lets descendants run. Malformed or non-ancestor-head predicates are refused
-  before write/spawn; echo/join reject both. Examples `approve-publish`, `branch-on-verdict`: [grammar](references/grammar.md).
+  before write/spawn; echo/join reject both; `when` heads are hyphen-free (`out.<id>.answer`). Route arms on `out.<gate>.answer` — any other field name resolves to None and prunes the arm SILENTLY (green run, zero wake). Probes read `out.<gate>.answer` too: `_machine: "auto_release"` marks a default, not a human. Examples `approve-publish`, `branch-on-verdict`: [grammar](references/grammar.md).
 - `profile` runs a node AS a named teammate: DELEGATION, not isolation — same UID,
   the target's SOUL/memory/`.env`/tools; the target's `workflow_team.json` must list
   the launcher in `accept_from`; `default` is never a target.
@@ -84,26 +84,26 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
 - Lint before launching with `workflow{action:"validate", graph:…}` — the door's
   whole validation, zero writes, no liveness ping.
 - Optional recipes: `library` lists; `run` with `from:<name>` replays; `save` explicitly shelves reusable graphs and always stamps provenance.
-  The save source shapes the row: `save(run_id)` shelves the run's baked `graph.json` — defaults/shape budgets concrete, `source: null` unless passed —
+  The save source shapes the row: `save(run_id)` shelves the run's baked `graph.json` — defaults/shape budgets concrete, arg-channel launch widths stripped (`knobs_stripped` names them; author-written widths stay), `source: null` unless passed —
   so its `source_digest` (sha256 over the canonical `nodes`, budgets included) never equals the author file's digest; a `graph`/`graph_path` save
   shelves author bytes and the digests match. A `run_context:{required?,defaults?}` contract refuses a launch missing a key, pre-write. One-off `run` needs no library lookup, tags, save or `why_not_library`. Explicit study-only `submit` retains its receipt requirement. A composite run refuses `save(run_id)` — shelf the author form. [grammar](references/grammar.md).
 - Optional typed `params` contract (pin/tune) with node `where`/`by` door-time seams: the door materializes, refuses every violation in one answer, and stamps the reproducibility triple. [grammar](references/grammar.md#params--the-typed-contract-and-the-door-time-seam-optional).
 - No double-dispatch for pollers: `run` with `lane_key:<key>` — while an UNFINISHED
   incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume`
-  means `wait` it — never replace it; `stop` is the explicit abandonment. A FAILED
-  incumbent is refused at the door too: a relaunch returns `{error, blocked_by, reason, deduped:true, run_id}` naming the failed node(s) — never a silent new run; the hatch is to `amend` the failed node or launch under a new lane_key (`stopped`/`done` keep fresh-run semantics). Keys are global per runs root; prefix `<team>/` yourself. Details:
+  means `wait` it — never replace it; `stop` is the explicit abandonment. Keys are
+  global per runs root; prefix `<team>/` yourself. Details:
   [operations](references/operations.md).
 - Report a finished run by metrics (token in/out, api calls, tool calls), not the
   dollar figure: `estimated_cost_usd` is a price-table estimate (subscription routes
   report `included`) and reads badly as spend.
 - Cards are optional desktop presentation; CLI text and returned run IDs suffice.
-  Completion is execution state, not task verification or authority for more work.
-  The owner wake is the delivery contract, fail-open (`wake.jsonl` is the ledger). `wait` = inline blocking/revive.
+  Completion is execution state, not task verification; a wake grants no new scope and revokes no existing authority.
+  The owner wake is the delivery contract, fail-open (`wake.jsonl` is the ledger). `wait` = inline blocking/revive. Event wakes carry an admission law: [event admission](docs/event-admission.md).
 - `graph_path` replaces embedding on run/save/amend/validate: a caller-authorized
   absolute JSON file, exactly one graph source. [grammar](references/grammar.md).
   File-shareable graphs: [portable](references/portable.md).
 
 The graph vocabulary lives in [grammar](references/grammar.md); read-model/recovery in
 [operations](references/operations.md); build lanes and babysitting in the [operator
-playbook](references/operator-playbook.md); skills-repo→pack in [wofification](references/wofification.md).
-[Development checks](references/development.md) are for contributors, not user prerequisites.
+playbook](references/operator-playbook.md); skills-repo→pack in [wofification](references/wofification.md);
+the stance behind them in [posture](docs/posture.md). [Development checks](references/development.md) are for contributors.

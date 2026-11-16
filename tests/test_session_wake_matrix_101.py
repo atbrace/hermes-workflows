@@ -236,9 +236,9 @@ try:
         check("wake factually points at the held human gate and status",
               "HELD at a human gate" in msg["content"]
               and "Status contains the question" in msg["content"], msg["content"])
-        check("wake requires a human decision and grants no answer/work authority",
+        check("wake requires a human decision; clause grants none, revokes none",
               "release requires the human's decision" in msg["content"]
-              and "does not authorize choosing an answer or additional work" in msg["content"],
+              and "grants no new scope and revokes no existing authority" in msg["content"],
               msg["content"])
     r = RUNS / rid if rid else None
     if r:
@@ -336,13 +336,16 @@ try:
                                            "output": "fixed again"}]})
     ok4 = wait_until(lambda: len([x for x in wakes(r) if x.get("event") == "run.done"]) == 2)
     w = wakes(r)
+    terminal = [x for x in w if x.get("event") in ("run.failed", "run.done")]
     idem = [x["idem"] for x in A[b:]]
     check("F->D->F->D: four terminal decisions = four delivered wakes",
-          ok1 and ok2 and ok3 and ok4 and len(w) == 4
+          ok1 and ok2 and ok3 and ok4 and len(terminal) == 4
           and all(x.get("delivered") for x in w),
           f"steps={ok1}{ok2}{ok3}{ok4} rows={w}")
-    check("F->D->F->D: four distinct Idempotency-Keys (no suppressed transition)",
-          len(set(idem)) == 4 and len(idem) == 4, str(idem))
+    check("F->D->F->D: each failure also has one distinct node transition",
+          [x.get("event") for x in w] == ["node.action_required", "run.failed", "run.done",
+                                          "node.action_required", "run.failed", "run.done"]
+          and len(set(idem)) == len(idem) == len(w), str(idem))
 
     # ================= 4. catchable crash, BOTH exception nets: exactly one wake =========
     r = mk("wake-mx-crash", [{"id": "a", "type": "agent", "goal": "LIST: go"}])

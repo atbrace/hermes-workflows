@@ -105,6 +105,7 @@ find_run = wfcommon.find_run
 blocked_legibility = wfcommon.blocked_legibility
 residue = wfcommon.residue
 release_law = wfcommon.release_law
+released_partials = wfcommon.released_partials
 publisher_gate_check = wfcommon.publisher_gate_check
 suite_proof_token_path = wfcommon.suite_proof_token_path
 confidence_substrate = wfcommon.confidence_substrate
@@ -317,6 +318,81 @@ def _route_substitution_refusal(meta, node, spawn_no):
                      f"the door's ping.",
             "error_class": "route_substitution_denied", "raw": "", "ms": 0,
             "attempts": 1, "spawn": spawn_no}
+
+def _spawn_expressibility_refusal(meta, node, cmd, spawn_no, index=None,
+                                  model_override=None):
+    """#483: BEFORE submit — the spawn-time expression gate for a pinned seat.
+    The door's liveness ping probes RAW credentials; the child routes through
+    the spawn argv. When neither argv face can carry the node's pin — no
+    profile evidence (no `-p`), and the est-yq2xq creation overrides `-m`/
+    `--provider` are absent from the launch argv or consumed by the armed
+    strip — the legacy path spawned BARE, silently served the seat default,
+    and died post-work at the `_route_hold` billing gate after 10-25 tool
+    calls on the wrong model. Refuse typed here instead: same posture as that
+    hold, moved to before the child starts. Effective require_route follows
+    the #25 precedence verbatim (node key > graph `defaults` > True only on
+    an authored model pin) — an author who accepted fallback (require_route:
+    false) rides the seat default UNREFUSED, exactly the est-yq2xq design
+    intent; a node that pins nothing is auto-route by contract. The truth is
+    read off the FINAL argv (after `_omit_policy_flags_if_enabled`), so every
+    expressible pin — profile-carried or override-surfacing — is behavior-
+    preserved byte-identically. The refusal never touches the seat (zero
+    attempts) and logs dispatch.refused like the budget gate beside it."""
+    run = meta.get("_run")
+    pin_p = str(node.get("provider") or "")
+    pin_m = str(node.get("model") or "")
+    if not (pin_p or pin_m):
+        return None                             # nothing pinned: auto-route is the ask
+    eff_m = str(model_override) if model_override is not None else pin_m
+    rq = node.get("require_route")
+    if rq is None:
+        try:
+            rq = (json.loads((run / "graph.json").read_text(encoding="utf-8"))
+                  .get("defaults") or {}).get("require_route")
+        except Exception:
+            rq = None
+    if rq is None:
+        rq = bool(pin_m)                        # #25: default-true on an authored model pin
+    if not rq:
+        return None                             # the author accepted fallback: legacy path
+    def carried(flag, want):                    # does the LAUNCH argv actually bear the pin?
+        if flag not in cmd:
+            return False
+        i = cmd.index(flag)
+        return i + 1 < len(cmd) and str(cmd[i + 1]) == want
+    gaps = []
+    if eff_m and not carried("-m", eff_m):
+        gaps.append(f"model {eff_m!r} (-m)")
+    if pin_p and not carried("--provider", pin_p):
+        gaps.append(f"provider {pin_p!r} (--provider)")
+    if not gaps:
+        return None                             # expressible: launch byte-identical
+    if _omit_policy_flags_armed():
+        why = ("the est-yq2xq creation-override strip is armed (WF_OMIT_POLICY_FLAGS=1 "
+               f"or {hermes_home()}/workflows/omit-policy-flags.on) and consumed the "
+               "flags before Popen" + (", while the node declares no profile to carry "
+               "the route" if not node.get("profile") else ""))
+    elif not node.get("profile"):
+        why = "the node declares no profile (no -p route evidence) and the launch argv " \
+              "carries no creation override for the pin"
+    else:
+        why = "the launch argv does not carry the pin this node declares"
+    pin = f"{pin_p}/{pin_m}".strip("/")
+    err = (f"route_inexpressible: node {node['id']!r} pins {pin!r} but this host's spawn "
+           f"argv CANNOT EXPRESS it: {' and '.join(gaps)} — {why}. The child would serve "
+           f"the seat's default model while the door believes the pin (#483). Refused "
+           f"BEFORE the child started (zero attempts) — same posture as the route "
+           f"billing hold, moved earlier. Fix: point the node at a profile this host "
+           f"resolves, lift the omit-policy-flags override so -m/--provider ride, repin "
+           f"a seat this host can express, or accept fallback explicitly with "
+           f"require_route: false ON THAT NODE (a `defaults` flip opts the whole graph in).")
+    ev = {"node": node["id"], "error_class": "route_inexpressible",
+          "error": err, "pin": pin}
+    if index is not None:
+        ev["index"] = index
+    log(run, "dispatch.refused", **ev)
+    return {"status": "failed", "error": err, "error_class": "route_inexpressible",
+            "raw": "", "ms": 0, "attempts": 1, "spawn": spawn_no}
 
 def _stale_route_receipt_clear(meta, node, spawn_no):
     """route-hold escalation (w56): a RE-DRIVE (spawn_no > 1) whose run already
@@ -661,13 +737,28 @@ def _clip_record(rec):
 # failed_node_logs (the efp-valid committed records' log_path set) when
 # resolvable. The bodies above stay verbatim; the table stays the ONLY author
 # of owner prose. Absent pointer = unresolvable, never a fabricated value.
+# OWNER RULING 2026-11-15 (clause inversion): the closing sentence of every body is
+# bidirectional — "grants no new scope and revokes no existing authority". The old
+# prohibition clause ("does not authorize repair, resume or a new launch") read to a
+# woken agent as a stop order mid-task: an operator who launched a run never planned
+# for its failure, so a failure notice must induce assess -> repair/amend -> relaunch
+# under the mandate already on the table, not silence. The r5 law itself is unchanged:
+# finite runner-authored table, zero caller text.
 _WAKE_TEMPLATES = {
+    "node.action_required": "A workflow node has a committed unhandled failure. "
+                            "The run is not necessarily finished; independent siblings may still be running. "
+                            "Inspect status once, then act under your existing mandate; steering remains "
+                            "cooperative and amendments may wait for the wave boundary. This notice grants "
+                            "no new scope and revokes no existing authority.",
     "gate.held": "The workflow is HELD at a human gate. Status contains the question "
-                 "and options; release requires the human's decision. This notification "
-                 "does not authorize choosing an answer or additional work.",
+                 "and options; release requires the human's decision. Your other work under "
+                 "the existing mandate continues. This notice grants no new scope and "
+                 "revokes no existing authority.",
     "run.failed": "The workflow execution FAILED. Status contains failed nodes, exit "
-                  "records and original error details. This notification does not authorize "
-                  "repair, resume or a new launch. Push delivery is optional; wait is the "
+                  "records and original error details. Assess the failure and act under "
+                  "the existing user mandate: repair, amend or relaunch when the task "
+                  "still needs the run. This notice grants no new scope and revokes no "
+                  "existing authority. Push delivery is optional; wait is the "
                   "blocking path and may resume an interrupted run.",
     # est-fanout-straggler (sys-nxrhxo): mid-flight observation, NOT a node state.
     # The fan-out wave loop's cohort watchdog fires this once per driven wave when
@@ -682,13 +773,16 @@ _WAKE_TEMPLATES = {
                          "run — then stop. Do not poll: completion and failure still "
                          "wake this session.",
     "run.done": "The workflow execution is DONE. Status contains node outputs; summary.md "
-                "contains the run summary. Execution completion is not verification of the "
-                "user's task and does not authorize additional work. Research-only work "
-                "can end with its report; no dispatch, publication or curation is required.",
+                "contains the run summary. Verify the outputs against the user's task before "
+                "building on them — execution completion is not verification of the user's "
+                "task. This notice grants no new scope and revokes no existing authority. "
+                "Research-only work can end with its report; no dispatch, publication or "
+                "curation is required.",
     "run.partial": "The workflow execution ended PARTIAL — a graceful RunBudget cap: the "
-                   "ledger names what never launched, banked verdicts are committed. This "
-                   "notification does not authorize additional work; re-launch under a "
-                   "larger budget or amend if the capped work must finish.",
+                   "ledger names what never launched, banked verdicts are committed. When "
+                   "the capped work must finish, relaunch under a larger budget or amend, "
+                   "under your existing mandate. This notice grants no new scope and "
+                   "revokes no existing authority.",
 }
 
 # CLOSED registry of lifecycle events a call site may pass to notify()
@@ -696,7 +790,7 @@ _WAKE_TEMPLATES = {
 # run 20261016-172339-iron-gravity). Drift — a call site waking an event not
 # listed here — is a CLASS GAP: it still wakes on the fixed catch-all body
 # below and prints WORKFLOW_WAKE_UNMAPPED_EVENT; it never goes silent again.
-_WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done", "run.partial",
+_WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done", "run.partial", "node.action_required",
                           # runner-emitted mid-flight class (est-fanout-straggler
                           # sys-nxrhxo; registered at rebase onto the est-jbcrw
                           # registry so the mapped template carries no alarm)
@@ -710,10 +804,10 @@ _WAKE_EVENTS = frozenset({"gate.held", "run.failed", "run.done", "run.partial",
 _WAKE_CATCHALL_BODY = (
     "The workflow recorded a lifecycle event outside the runner's emitted-event "
     "registry — a wake-router class gap. Status contains the run state; inspect it "
-    "once. This notification is a drift alarm and does not authorize repair, "
-    "dispatch or new work.")
+    "once and report the gap. This notice is a drift alarm: it grants no new scope "
+    "and revokes no existing authority.")
 
-def _wake_owner_text(run_id, event, run_dir=None, failed_node_logs=None):
+def _wake_owner_text(run_id, event, run_dir=None, failed_node_logs=None, transition=None):
     """The runner-authored owner turn. Known events use their template; an
     event with no template uses the fixed catch-all body (est-jbcrw: never
     None — silence on an unmapped class was the gravity hole the dead-landing
@@ -732,6 +826,8 @@ def _wake_owner_text(run_id, event, run_dir=None, failed_node_logs=None):
     if body is None:
         body = _WAKE_CATCHALL_BODY
     pointers = ""
+    if transition is not None:
+        pointers += f" transition={json.dumps(transition)}"
     if run_dir is not None:
         pointers += f" run_dir={json.dumps(str(run_dir))}"
     if failed_node_logs:
@@ -1264,6 +1360,10 @@ def _wake_identity(run, event, key, graph=None):
       run.failed     -> the committed failed-node set + graph fingerprint + rev.
     A failed decision whose node records/graph cannot be read returns None:
     silence is safer than a duplicate paid owner turn."""
+    if event == "node.action_required":
+        # The commit observer captured the revision under graph.lock. Delivery
+        # may invoke an owner amend, so never re-bind this transition to its head.
+        return f"{event}|x:{key}" if key is not None else None
     rev = _wake_rev(run)
     if key is not None:
         return f"{event}|x:{key}|r{rev}"
@@ -1297,28 +1397,31 @@ def _wake_identity(run, event, key, graph=None):
 # or broken hooks_outbound.py means NO bridge: the run loop is byte-identical.
 _OUTBOUND = None
 _OUTBOUND_TRIED = False
+_OUTBOUND_INIT_LOCK = threading.Lock()
 
 def _outbound_bridge():
     """Load + bind hooks_outbound once, lazily; None = no bridge (feature off by
     absence or by a broken file — both the same byte-identical degradation)."""
     global _OUTBOUND, _OUTBOUND_TRIED
-    if _OUTBOUND_TRIED:
+    with _OUTBOUND_INIT_LOCK:
+        if _OUTBOUND_TRIED:
+            return _OUTBOUND
+        try:
+            _p = Path(__file__).resolve().parent / "hooks_outbound.py"
+            if not _p.is_file():
+                return None
+            _spec = importlib.util.spec_from_file_location("_hermes_workflows_hooks_outbound", _p)
+            if _spec is None or _spec.loader is None:
+                return None
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            _mod.bind(wfcommon, _wake_identity, log)   # ONE discriminant fn, the runner's own log voice
+            _OUTBOUND = _mod
+        except Exception:
+            _OUTBOUND = None
+        finally:
+            _OUTBOUND_TRIED = True
         return _OUTBOUND
-    _OUTBOUND_TRIED = True
-    try:
-        _p = Path(__file__).resolve().parent / "hooks_outbound.py"
-        if not _p.is_file():
-            return None
-        _spec = importlib.util.spec_from_file_location("_hermes_workflows_hooks_outbound", _p)
-        if _spec is None or _spec.loader is None:
-            return None
-        _mod = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        _mod.bind(wfcommon, _wake_identity, log)   # ONE discriminant fn, the runner's own log voice
-        _OUTBOUND = _mod
-    except Exception:
-        _OUTBOUND = None
-    return _OUTBOUND
 
 _NODE_TELEMETRY = None
 _NODE_TELEMETRY_TRIED = False
@@ -1356,25 +1459,59 @@ def _wake_tid(run_name, event, disc):
         return _ob.instance_id(run_name, event, disc)
     return hashlib.sha256(f"{run_name}\0{event}\0{disc}".encode()).hexdigest()[:32]
 
-def _wake_body_snip(readable):
-    """sys-8uhkwo: the refused wake POST's body, bounded to the first 512 bytes
-    and bearer-redacted HERE (the persist-time loop in _wake_append covers only
-    text/error — body is a second untrusted field). A read failure or empty body
-    records nothing: the row must survive a broken body (fail-open law unchanged)."""
-    try:
-        raw = readable.read(512)
-    except Exception:
-        return None
-    body = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)).strip()
-    return _wake_safe(body) if body else None
+_WAKE_NATIVE = None
+_WAKE_NATIVE_TRIED = False
+_WAKE_NATIVE_INIT_LOCK = threading.Lock()
 
-def _wake_deliver(rec, sid, text, tid):
-    """Attempt ONE wake POST; return the tri-state outcome: True = delivered
-    (2xx), False = try-later (the endpoint answered wrongly, redirected, timed
-    out, or the transport raised — the retry re-drives under the SAME instance
-    id), None = nowhere-ever (the host configures no reachable API server, so
-    no retry can ever land and the marker settles). Typed failure detail lands
-    on rec (error / error_class) for the probe row; never raises."""
+def _native_wake():
+    """Load the optional native wake adapter without changing import paths."""
+    global _WAKE_NATIVE, _WAKE_NATIVE_TRIED
+    with _WAKE_NATIVE_INIT_LOCK:
+        if _WAKE_NATIVE_TRIED:
+            return _WAKE_NATIVE
+        try:
+            _p = Path(__file__).resolve().parent / "wake_native.py"
+            if not _p.is_file():
+                return None
+            _spec = importlib.util.spec_from_file_location("_hermes_workflows_wake_native", _p)
+            if _spec is None or _spec.loader is None:
+                return None
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            _WAKE_NATIVE = _mod
+        except Exception:
+            _WAKE_NATIVE = None
+        finally:
+            _WAKE_NATIVE_TRIED = True
+        return _WAKE_NATIVE
+
+def _wake_deliver(rec, sid, text, tid, owner=None):
+    """Return native admission acceptance or the legacy HTTP delivery outcome.
+
+    A missing native owner may use legacy compatibility. Refused, unready or
+    unidentifiable native owners must not fall through to another transport.
+    """
+    platform = owner.get("platform") if isinstance(owner, dict) else None
+    if platform == "local":
+        nw = _native_wake()
+        if nw is None and (Path(__file__).resolve().parent / "wake_native.py").is_file():
+            rec["error"] = "native adapter failed to load"
+            rec["error_class"] = "native_retry"
+            return False
+        if nw is not None:
+            out = nw.deliver(sid, text, tid, wfcommon.hermes_home())
+            oc = out.get("outcome")
+            if oc == "delivered":
+                rec["protocol"] = nw.SCHEMA
+                rec["admission_id"] = out.get("admission_id")
+                rec["native_status"] = out.get("status")
+                return True
+            if oc in ("refused", "retry"):
+                # fail closed: typed, try-later, NO legacy bypass for this row
+                rec["error"] = _wake_safe(f"native {oc}: {out.get('reason', '')}")
+                rec["error_class"] = f"native_{oc}"
+                return False
+            # unavailable: no ready canonical owner — legacy below, unchanged
     ep = _wake_endpoint()
     if ep is None:
         rec["error"] = ("no reachable api_server (enable platforms.api_server"
@@ -1401,15 +1538,9 @@ def _wake_deliver(rec, sid, text, tid):
             if 200 <= status < 300:
                 return True
             rec["error"] = f"HTTP {status}"
-            snip = _wake_body_snip(resp)
-            if snip:
-                rec["body"] = snip
             return False
     except urllib.error.HTTPError as e:
         rec["error"] = f"HTTP {e.code}"
-        snip = _wake_body_snip(e)
-        if snip:
-            rec["body"] = snip
         return False
     except (socket.timeout, TimeoutError):
         # F5: a read timeout is NOT a delivery — we never saw a status line,
@@ -1604,7 +1735,8 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
         failed_logs = (_wake_failed_node_logs(run, graph)
                        if event == "run.failed" else None)
         text = _wake_owner_text(run.name, event, run_dir=run_dir,
-                                failed_node_logs=failed_logs)
+                                failed_node_logs=failed_logs,
+                                transition=disc if event == "node.action_required" else None)
         # never None since est-jbcrw: unmapped classes take the fixed catch-all
         # body — the template table remains the ONLY author of owner text.
         text = _wake_safe(text)          # second net: the fixed templates carry no secret,
@@ -1638,7 +1770,7 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
                "id": tid, "wake_protocol": proto, "text": text}
         if event not in _WAKE_TEMPLATES:
             rec["catchall"] = True      # probe row is typed: template vs catch-all distinguishable
-        rec["delivered"] = _wake_deliver(rec, sid, text, tid)   # tri-state row mirrors the outcome
+        rec["delivered"] = _wake_deliver(rec, sid, text, tid, owner=owner)   # tri-state row mirrors the outcome
         _wake_append(run, rec)
         # park-watch verdict feed on the est-7rudf tri-state: delivered -> nothing
         # to see; False -> the ONE strike class; None (nowhere-ever) -> bare — a
@@ -1867,6 +1999,56 @@ def save_node(run, node, byid, rec):
     tmp.write_text(json.dumps(rec, ensure_ascii=False, default=str))
     os.replace(tmp, p)  # atomic: a completed node file is a committed fact
     _mint_suite_proof(run, node, rec, byid)   # est-2ek.1.603 (no-op unless declared)
+    if rec.get("status") == "failed":
+        _notify_node_failure(run, node["id"])
+
+
+def _on_fail_handles(node, byid):
+    """Whether the existing catch policy tolerates this agent's failure."""
+    if node.get("type") != "agent":
+        return False
+    policy = node.get("on_fail")
+    if policy == "skip":
+        return True
+    if not isinstance(policy, str) or policy == "abort":
+        return False
+    fallback = byid.get(policy)
+    ancestors, stack = set(), list(node.get("after", []))
+    while stack:
+        ancestor = stack.pop()
+        if ancestor in ancestors or ancestor not in byid:
+            continue
+        ancestors.add(ancestor)
+        stack.extend(byid[ancestor].get("after", []))
+    return (fallback is not None and fallback.get("type") == "agent"
+            and policy not in ancestors and policy != node["id"])
+
+
+def _notify_node_failure(run, node_id):
+    """Observe canonical commits only, never retry attempts or fan-out items."""
+    try:
+        with (run / "graph.lock").open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            graph = jload(run / "graph.json", {}) or {}
+            byid = {n["id"]: n for n in graph.get("nodes", [])}
+            node = byid.get(node_id)
+            if node is None:
+                return
+            status, rec = node_rec(run, node, byid)
+            if status != "failed" or rec.get("error_class") in (
+                    "cancelled", "stale_graph", "budget_exhausted"):
+                return
+            empty_abort = rec.get("error_class") == "fanout_empty" and node.get("on_fail") == "skip"
+            if _on_fail_handles(node, byid) and not empty_abort:
+                return
+            key = json.dumps({"node": node_id, "efp": rec.get("efp"),
+                              "skey": rec.get("skey"), "attempts": rec.get("attempts", 0),
+                              "graph": graph_fingerprint(graph), "rev": _wake_rev(run)},
+                             sort_keys=True, separators=(",", ":"))
+        # No door lock during delivery: a synchronous owner may steer or amend.
+        return notify(run, "node.action_required", key=key, node=node_id, graph=graph)
+    except Exception:
+        return None  # observation must never replace a committed verdict
 
 # ---------- effect-receipt gate (est-pygyy, issue #56) ----------
 # A node whose stated purpose is EXTERNAL publication declares the postconditions
@@ -2982,28 +3164,20 @@ _MODEL404_TOKENS = ("error code: 404", "http 404")
 # loop's own max_iterations_reached( stamp (report TEXT only — stdout prose
 # naming a cap stays unpinnable, the 0923 law).
 _CAP_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
-               "max_turns", "max_iterations_reached(",
-               "reached the iteration limit")
-# sys-989kek (krb4cx): the cap markers stdout PROSE may claim. The 0923 law
-# keeps max_turns/max_iterations_reached( report-TEXT-only, but the CLI's own
-# "I reached the iteration limit and couldn't generate a summary." wording is a
-# stdout fact; the prose fallback must trust it or the node dies `unknown` and
-# skips the bounded re-drive. The cap branch of _classify_rc_output consults
-# this tuple (the old inline duplicate is what drifted) — but ONLY via a
-# marker already pinned by another gate rule; this tuple does NOT gate.
-_CAP_PROSE_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
-                     "reached the iteration limit")
-# sys-989kek review: the ONLY prose allowed to self-pin as a marker is the
-# CLI's anchored first-person cap sentence. Legacy tokens ("turn limit" etc.)
-# in plain prose stay unpinnable (0923 law) — "stayed under the turn limit"
-# must not mask an Error code: 400 into a re-drivable cap_exhausted.
-_CAP_PROSE_GATE = ("i reached the iteration limit",)
+               "max_turns", "max_iterations_reached(")
 # The CLOSED set every node.failed (record + event) must carry (sprint101 #3).
 ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
                            "fatal_quota", "ratelimit", "route_unavailable",
                            "incomplete_work", "early_death", "cancelled",
                            "schema", "spawn", "inputs", "killed",
+                           # sys-bknard: rc!=0 death whose capture carries a fenced
+                           # answer that PARSES but fails the node schema (the #4
+                           # harvest declined a parseable answer). Terminal like
+                           # `schema` — the answer defect is the child's own, not
+                           # a transport wound; the error text names the validate()
+                           # errors instead of dead-session CLI noise.
+                           "answer_schema_invalid",
                            "quorum", "fanout_empty", "crashed", "unknown",
                            # est-13z1: the node's output claims an estate bead was
                            # closed; the runner read the store itself (`bd show`)
@@ -3033,7 +3207,7 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "declared_failure",
                            # est-2ek.1.856 (B3): the seat-cap knob (WORKFLOW_MAX_SEATS
                            # env / config workflows.max_seats) named a non-integer or
-                           # a value outside [4, 16]. The door refuses the whole launch
+                           # a value outside [4, 64]. The door refuses the whole launch
                            # with it; a runner that sees it flip invalid mid-run fails
                            # the node with it. Operator input error: never retried,
                            # never silently defaulted.
@@ -3074,6 +3248,15 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            # post-admission route substitution is a denial, never a
                            # silent re-billing (runs 20261004-070649-zap-night-*).
                            "route_substitution_denied",
+                           # #483: a spawn refused BEFORE the child starts because the
+                           # node's pinned provider/model cannot be expressed in this
+                           # host's launch argv (profile-less AND the -m/--provider
+                           # creation overrides absent or strip-consumed). The legacy
+                           # path spawned bare, served the seat default silently, and
+                           # died post-work at the _route_hold billing gate. Terminal:
+                           # deterministic on argv + host state — outside every retry
+                           # ladder, same posture as budget_exhausted.
+                           "route_inexpressible",
                            # lease-busy: rc=130 death on the CLI's session-lease wait
                            # (see _is_lease_busy) — bounded transient, one FRESH-session
                            # re-drive, never terminal on a lease collision.
@@ -3520,17 +3703,13 @@ def _classify_rc_output(out):
     exception str) — never grep prose.
     `timeout` is a fact the runner knows (it killed the child); `max_turns` comes
     ONLY from _typed_error_class() reading the child's core -Q turn report —
-    nothing on stdout can prove it (the usage-file report is -z-only). The
-    exception (sys-989kek): the CLI's own "reached the iteration limit" prose
-    is a stdout cap claim the fallback trusts — anchored via _CAP_PROSE_GATE,
-    classified via _CAP_PROSE_TOKENS."""
+    nothing on stdout can prove it (the usage-file report is -z-only)."""
     lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     marker = None
     for l in reversed(lines):  # the LAST machine-readable marker line wins
         low = l.lower()
         if low.startswith(_AGENT_FAIL_PREFIX) or low.startswith(_PROVIDER_SAID) or "error code: " in low \
-                or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT) \
-                or low.startswith(_CAP_PROSE_GATE):   # sys-989kek: only the anchored CLI cap sentence self-pins
+                or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT):
             marker = l
             break
     if marker is None:
@@ -3549,7 +3728,7 @@ def _classify_rc_output(out):
     if _RATELIMIT_BANNER_RE.search(low):
         return "ratelimit", marker      # est-t0vz (issue #54): credential-window 429 —
                                         # its own bounded park, not the 5s/20s ladder
-    if any(t in low for t in _CAP_PROSE_TOKENS):
+    if any(t in low for t in ("tool-call limit", "tool call limit", "turn limit")):
         return "cap_exhausted", marker
     if any(t in low for t in _TRANSPORT_TOKENS):
         return "transport", marker
@@ -3570,7 +3749,8 @@ def _classify_rc_output(out):
 #
 # Two facts must BOTH hold — neither alone is sufficient:
 #   1. the child died rc!=0 within _CONFIG_INPUT_WINDOW_MS of spawn (wall,
-#      runner-known; the report measures ~0.1s, the window is 1s with slack);
+#      runner-known; the CI report measures ~0.1s — the estate host floor is
+#      slower and load-dependent, see the est-f6a4i retime note below);
 #   2. its capture carries the config-error marker line (core emits these to
 #      stdout — hermes_cli/main.py:2036, providers.py, tools_config_providers.py).
 # The window is the precision guard: a provider-registry failure at session START
@@ -3579,7 +3759,17 @@ def _classify_rc_output(out):
 # its existing classification. The tokens are CLI config messages, deliberately
 # disjoint from _UNRESOLVED_MODEL_TOKENS ("unknown model" is a dead model id, a
 # different fact) and from the transient transport markers.
-_CONFIG_INPUT_WINDOW_MS = 1000
+#
+# est-f6a4i retime (2026-11-02, estate-host measurement): the estate corpus of
+# fenced config deaths (nightly ledgers 10-31..11-02 + lane node records, n=36)
+# measures warm p50 ~0.5s, max ~3.0s (two RED tails recorded at 2925/2982 ms).
+# Three consecutive nightlies died PAST the old 1s window while CI stayed green
+# at the same tip. The window is a host-timing bound, not a law number: derive
+# it from the slowest honest arg-parse-class death seen on the estate (2982 ms
+# + ~17% headroom). The OUT-window harvest twins (jam8 T9, tmuu (d)) are
+# window-relative so the control keeps its meaning on any host. Set
+# WF_CONFIG_INPUT_WINDOW_MS to retime without a code change.
+_CONFIG_INPUT_WINDOW_MS = int(os.environ.get("WF_CONFIG_INPUT_WINDOW_MS", "3500"))
 _CONFIG_INPUT_TOKENS = ("unknown provider", "not a known provider",
                         "provider not found", "no provider named")
 
@@ -3686,6 +3876,23 @@ def _harvest_death(out, schema):
     return {"output": parsed,
             "remaining": _remaining_steps(out),
             "harvest": {"declared_status": declared if isinstance(declared, str) and declared else None}}
+
+def _schema_failed_answer(out, schema):
+    """The #4 harvest DECLINED a PARSEABLE answer: the capture carries a fenced
+    json block that parses to a dict but fails the node schema. Returns the
+    validate() error list (non-empty), None when no fenced block parses to a
+    dict — mirrors _harvest_death's accept rule exactly (fenced-only, last
+    fence, dict-only) so the two can never disagree (sys-bknard)."""
+    fences = JSON_FENCE.findall(out or "")
+    if not fences:
+        return None
+    try:
+        parsed = json.loads(fences[-1])
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return validate(parsed, schema) or None
 
 def _cancel_evidence(run, nid, index, lp):
     """Snapshot after a quorum kill. Byte/file counts are raw disk evidence,
@@ -4364,12 +4571,7 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
     back to arbitrating the caller's own seed (honest degradation).
     ceiling (run.json meta max_seats — a per-RUN declaration, not env) acts as
     a CEILING under the pool cap: the run may hold fewer seats than the pool
-    allows, never more, and at admission a declaration ABOVE the recorded cap
-    RAISES SeatCapError (seat_cap_mismatch: names pool cap, declared cap, and
-    the .cap reset path — sys-dk4164: loud at the door, never a silent clamp
-    that queues until the horizon answers seat_wait). A read-only peek
-    (seed=None) still just reports the recorded truth, never fatal.
-    WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
+    allows, never more. WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
     and never touches pool state (_seat_acquire returns before this runs).
     Operators change a live pool's cap by removing <seats>/.cap while idle."""
     f = Path(seats) / ".cap"
@@ -4389,15 +4591,9 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
         except OSError:
             cap_v = seed                   # unrecordable pool: arbitrate locally
     if (cap_v is not None and isinstance(ceiling, int) and not isinstance(ceiling, bool)
-            and 0 < ceiling):
-        if ceiling <= cap_v:
-            return ceiling                 # per-run ceiling rides UNDER the pool truth
-        if seed is not None:               # sys-dk4164: AT ADMISSION a declaration ABOVE
-            raise SeatCapError(            # the recorded truth is a typed reject — never
-                f"seat_cap_mismatch: run.json max_seats={ceiling} exceeds the pool's recorded "
-                f"cap {cap_v} at {f}. The pool never auto-raises (est-mg5o2 first-writer-wins); "
-                f"lower the run's max_seats, or remove {f} while idle to re-seed the pool.")
-    return cap_v                           # read-only peek (seed=None): the truth, not fatal
+            and 0 < ceiling < cap_v):
+        return ceiling                     # per-run ceiling rides UNDER the pool truth
+    return cap_v
 
 def _seat_pool_seed():
     """est-mg5o2 x est-2ek.1.856: the process-side SEED for the pool cap — the
@@ -6591,8 +6787,21 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
             rec.update(hv)
         return rec
     if errs is not None:
+        # est-fjac6 (#616 residual 2 — path-invariance, est-2ek.1.541 R8): the
+        # sys-bknard branch on the rc!=0 path types a FENCED answer that parses
+        # but misses the node schema `answer_schema_invalid`; the identical
+        # capture on an adopted death (rc unobservable) must land the identical
+        # class, not the exit-0 `schema`. The accept rule is
+        # _schema_failed_answer's, line for line (fenced-only, last fence,
+        # dict-only) — the two can never disagree, same as its rc!=0 twin.
+        # AUTHOR NOTE (the review's "defensible for partial captures"): a
+        # prose-coerced miss (extract_json's {result} fallback, no valid last
+        # fence) KEEPS `schema` — answer_schema_invalid names a DECLINED
+        # ANSWER, and a coercion is not one; the harvest law never sees it.
+        _asi = _schema_failed_answer(out, harvest_schema)
         return {"status": "failed", "error": f"adopted child answer failed schema validation: {errs}",
-                "error_class": "schema", "output": parsed, "raw": (out or "")[-2000:],
+                "error_class": "answer_schema_invalid" if _asi else "schema",
+                "output": parsed, "raw": (out or "")[-2000:],
                 "ms": ms, "final": final_reply, **evd}
     hv = _harvest_death(out, harvest_schema)   # #4 law applies to adopted deaths too
     if hv:
@@ -6615,14 +6824,22 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         # same class, whatever path the runner reaches it by. The bounded ladder
         # may not be available here (the attempt already committed its spend and
         # the rc is unobservable); the classification law itself is path-invariant.
-        verdict = _verdict_lines(final_reply or out)
+        # est-fjac6 (#616 residual 1): the QUOTING law is path-invariant too —
+        # when final_reply is empty the capture is quoted, and the capture can
+        # carry the #102 banner. _clean_capture first, exactly like the generic
+        # death fallback below; a banner-only capture names its shape instead
+        # of quoting the noise back.
+        verdict = _verdict_lines(_clean_capture(final_reply or out)) \
+            or "capture held only dead-session noise (no verdict lines)"
         return {"status": "failed",
                 "error": "adopted child died with a malformed turn: reply is a "
                         "serialized tool call rendered as text (tool-call-as-text; "
                         f"typed malformed turn; not harvestable). Verdict: {verdict}",
                 "error_class": "malformed_turn", "raw": (out or "")[-2000:], "ms": ms,
                 "final": final_reply, **evd}
-    verdict = _verdict_lines(marker if marker else out)
+    # sys-bknard: adopted deaths carry the same #102 noise risk as rc!=0 deaths.
+    verdict = _verdict_lines(_clean_capture(marker if marker else out)) \
+        or "capture held only dead-session noise (no verdict lines)"
     rec = {"status": "failed", "error": f"adopted child died (rc unobservable — runner was "
             f"respawned): {verdict}", "error_class": eclass, "raw": (out or "")[-2000:],
             "ms": ms, "final": final_reply, **evd}
@@ -6701,17 +6918,28 @@ _FROZEN_ROUTE_FLAGS = ("--max-turns", "--run-budget", "--reasoning",
                        "-t", "-m", "--provider")
 
 
+def _omit_policy_flags_armed(home=None, env=None):
+    """est-yq2xq's enable law as ONE predicate (#483): the strip is armed when
+    env WF_OMIT_POLICY_FLAGS=1 or the marker file
+    <hermes_home>/workflows/omit-policy-flags.on exists. Consulted by the
+    strip itself AND by the spawn-time expressibility refusal, whose message
+    names the armed override — a second spelling of this condition is the
+    drift. `home`/`env` are test seams."""
+    env = os.environ if env is None else env
+    if env.get("WF_OMIT_POLICY_FLAGS") == "1":
+        return True
+    root = Path(home) if home is not None else hermes_home()
+    return (root / "workflows" / "omit-policy-flags.on").exists()
+
+
 def _omit_policy_flags_if_enabled(cmd, home=None, env=None):
     """Strip frozen-route creation-override flag PAIRS from a child spawn argv
     (est-yq2xq). Enabled when env WF_OMIT_POLICY_FLAGS=1 or the marker file
     <hermes_home>/workflows/omit-policy-flags.on exists; otherwise returns the
     argv byte-identical. Each flag consumes its own value token — exactly how
     the argv builder materializes them above. `home`/`env` are test seams."""
-    env = os.environ if env is None else env
-    if env.get("WF_OMIT_POLICY_FLAGS") != "1":
-        root = Path(home) if home is not None else hermes_home()
-        if not (root / "workflows" / "omit-policy-flags.on").exists():
-            return list(cmd)
+    if not _omit_policy_flags_armed(home, env):
+        return list(cmd)
     out, i = [], 0
     while i < len(cmd):
         if cmd[i] in _FROZEN_ROUTE_FLAGS:
@@ -6849,6 +7077,16 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # on. Turn off: unset the env, delete the marker (byte-identical stock argv
     # returns). Absent both, this line changes nothing.
     cmd = _omit_policy_flags_if_enabled(cmd)
+    # #483: the same seam, one question later — can the launch argv carry this
+    # node's pinned route at all? If neither face can (no profile evidence, and
+    # -m/--provider absent or strip-consumed), the spawn would silently serve
+    # the seat default and die post-work at the _route_hold billing gate;
+    # refuse typed BEFORE the child starts instead. Every expressible pin
+    # returns None here and spawns byte-identical.
+    _rx = _spawn_expressibility_refusal(meta, node, cmd, spawn_no, index=index,
+                                        model_override=model_override)
+    if _rx is not None:
+        return _rx
     lp = spawn_log_path(run, node, index, spawn_no)   # Q1: per-spawn stdout capture
     report_path = lp.with_name(lp.name.replace(".log", ".turn.json"))  # core -Q turn report
     # B1 cooperative steer (feedback #13/#40): bake this node's addressed inbox
@@ -6862,11 +7100,6 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     wall = wall_s if wall_s is not None else node.get("timeout", meta.get("node_timeout", 900))
     env = dict(os.environ, HERMES_HOME=str(hermes_home()),
                HERMES_QUIET_TURN_REPORT_FILE=str(report_path),
-               # sys-tiismh: seat-scoped bg reap — arm the plugin's on_session_end
-               # reaper (seat_bg_reap.py) so the seat's answer is terminal. Stamped
-               # here only (the seat spawn), never in the door/gateway env; the
-               # routed-child env filter below keeps HERMES_WF_* by prefix.
-               HERMES_WF_SEAT_BG_REAP="1",
                HERMES_WF_STEER_FILE=steer_file,
                HERMES_WF_STEER_CURSOR=steer_cur,
                HERMES_WF_STEER_HWM=str(steer_hwm),
@@ -6977,28 +7210,17 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                         "or unset; the per-run opt-out is run.json max_seats: 0)",
                 "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
                 "spawn": spawn_no, "attempts": 1, **route}
-    try:
-        seat = _seat_acquire(
-            _seats_dir(), f"{run.name}.{node['id']}", _seat_cap,
-            _seat_wall if isinstance(_seat_wall, (int, float)) else None,
-            on_wait=lambda: log(run, "seat.wait", node=node["id"], index=index,
-                                spawn=spawn_no,
-                                # est-mg5o2: the event carries the POOL truth (read-only);
-                                # _seat_cap is the already-validated fallback (no re-resolve
-                                # inside the callback: it must never raise SeatCapError).
-                                cap=_seat_pool_cap(_seats_dir()) or _seat_cap),
-            abort=_cancelled, admit_lock=seat_admit_lock,
-            pool_seed=_pool_seed, pool_ceiling=_seat_pool_ceiling(meta))
-    except SeatCapError as e:
-        # sys-dk4164: run.json max_seats declared ABOVE the recorded pool .cap.
-        # The est-2ek.1.856 law: the broken declaration fails the NODE closed,
-        # typed (error_class seat_cap; the message is typed seat_cap_mismatch),
-        # at the admission instant — never a silent clamp that burns the queue
-        # horizon and dies as seat_wait (measured: fan-out lane b73cc5).
-        return {"status": "failed",
-                "error": f"seat_cap: {e}",
-                "error_class": "seat_cap", "ms": int((time.time() - _seat_w0) * 1000),
-                "spawn": spawn_no, "attempts": 1, **route}
+    seat = _seat_acquire(
+        _seats_dir(), f"{run.name}.{node['id']}", _seat_cap,
+        _seat_wall if isinstance(_seat_wall, (int, float)) else None,
+        on_wait=lambda: log(run, "seat.wait", node=node["id"], index=index,
+                            spawn=spawn_no,
+                            # est-mg5o2: the event carries the POOL truth (read-only);
+                            # _seat_cap is the already-validated fallback (no re-resolve
+                            # inside the callback: it must never raise SeatCapError).
+                            cap=_seat_pool_cap(_seats_dir()) or _seat_cap),
+        abort=_cancelled, admit_lock=seat_admit_lock,
+        pool_seed=_pool_seed, pool_ceiling=_seat_pool_ceiling(meta))
     if seat is _SEAT_UNSUPPORTED:
         return {"status": "failed",
                 "error": "seat_unsupported: the global agent-seat semaphore is full and this "
@@ -7596,7 +7818,12 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             # NOT a generic unknown death: type it, carry the verbatim diagnostic, and let
             # the bounded (tool-progress) ladder re-drive it exactly once — a turn that
             # rendered its call as the answer made real tool calls by definition.
-            verdict = _verdict_lines(final_reply or out)
+            # est-fjac6 (#616 residual 1): the quoting is #102-clean, the sibling
+            # law of the adopted-death site and of the generic fallback below —
+            # an empty turn report with a banner-carrying capture must not have
+            # the startup noise quoted back as the verdict.
+            verdict = _verdict_lines(_clean_capture(final_reply or out)) \
+                or "capture held only dead-session noise (no verdict lines)"
             return {"status": "failed",
                     "error": f"child exited rc={rc} with a malformed turn: reply is a "
                              "serialized tool call rendered as text (tool-call-as-text; "
@@ -7675,7 +7902,26 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                 eclass, marker = "transport", _ov["detail"]
             elif _ov["outcome"] == "failure" and _otok == "failure":
                 eclass = "declared_failure"
-        verdict = _verdict_lines(marker if marker else out)
+        if eclass == "unknown":
+            # sys-bknard: the harvest above declined a PARSEABLE fenced answer
+            # (schema miss) — name that, with the validate() errors, instead of
+            # letting a completed seat's rc=1 land `unknown` with an error that
+            # quotes dead-session CLI noise back at the operator.
+            serr = _schema_failed_answer(out, harvest_schema)
+            if serr:
+                return {"status": "failed",
+                        "error": f"child exited rc={rc}: answer_schema_invalid — the "
+                                 f"capture carries a fenced json answer that parses but "
+                                 f"fails the node schema ({'; '.join(map(str, serr))}); "
+                                 f"verdict: {_verdict_lines(_clean_capture(out))}",
+                        "error_class": "answer_schema_invalid",
+                        "raw": (out or "")[-2000:], "ms": ms, "final": final_reply,
+                        **sk, **evd}
+        # sys-bknard: strip the #102 dead-session noise BEFORE quoting the
+        # capture — an rc=1 exit over a completed session printed that line and
+        # the runner presented pure startup noise as the death verdict.
+        verdict = _verdict_lines(_clean_capture(marker if marker else out)) \
+            or "capture held only dead-session noise (no verdict lines)"
         rec = {"status": "failed", "error": f"child exited rc={rc}: {verdict}",
                "error_class": eclass, "raw": (out or "")[-2000:], "ms": ms, "final": final_reply, **sk, **evd}
         if eclass == "ratelimit":   # est-t0vz: keep the verbatim banner for the park's
@@ -9496,16 +9742,19 @@ def _unmet_requires(node, outputs, provenance=None):
     return missing
 
 
-def _unmet_partial(node, states):
+def _unmet_partial(node, states, released=()):
     """e68544a37be37657: plain after-edges block on a harvest-on-death partial.
     Returns the blocking ancestor ids ([]) — the opt-in (`after_partial: true`)
-    consumes the harvest instead. A TYPED verdict at the wave boundary: the
-    descendant never spawns and never hangs (fb-fix-2dd8de73: a dead impl's
-    `partial` released verify+suite onto an uncommitted candidate)."""
+    consumes the harvest instead, and so does a producer-declared release
+    (hw-sq1 ruling 2: `released` from wfcommon.released_partials). A TYPED
+    verdict at the wave boundary: the descendant never spawns and never hangs
+    (fb-fix-2dd8de73: a dead impl's `partial` released verify+suite onto an
+    uncommitted candidate)."""
     if node.get("after_partial"):
         return []
     oo = set(node.get("order_only") or ())   # est-ij0: an ordering edge consumes no harvest
-    return [a for a in node.get("after", []) if states.get(a) == "partial" and a not in oo]
+    return [a for a in node.get("after", [])
+            if states.get(a) == "partial" and a not in oo and a not in released]
 
 
 def _dead_letter(run, failed, byid):
@@ -9530,8 +9779,11 @@ def _dead_letter(run, failed, byid):
 
 
 def _fail_precondition(run, node, byid, missing, why="precondition unmet: "):
+    # hw-sq1 ruling 3: attempts=0 ON THE RECORD (not just the log event) —
+    # _dead_letter's rec.get("attempts") splits never-spawned victims (0) from
+    # real deaths (>0). status stays failed: a read-model fix, not a rename.
     save_node(run, node, byid, {"status": "failed", "error_class": "precondition",
-                                "error": why + missing[0],
+                                "error": why + missing[0], "attempts": 0,
                                 "output": {"missing": missing}})
     log(run, "node.failed", node=node["id"], reason="precondition",
         error_class="precondition", error=why + missing[0], attempts=0)
@@ -9618,18 +9870,10 @@ def _on_fail_catch(run, rs, states):
                 caught_error_class=(rec or {}).get("error_class"))
             caught = True
             continue
-        if of != "skip":
-            fb = rs.byid.get(of)
-            anc, stack = set(), list(n.get("after", []))
-            while stack:
-                a = stack.pop()
-                if a in anc or a not in rs.byid:
-                    continue
-                anc.add(a); stack.extend(rs.byid[a].get("after", []))
-            if fb is None or fb.get("type") != "agent" or of in anc or of == n["id"]:
-                log(run, "node.on_fail_invalid", node=n["id"], on_fail=of,
-                    reason="fallback must exist, be an agent, and not be an ancestor")
-                continue
+        if not _on_fail_handles(n, rs.byid):
+            log(run, "node.on_fail_invalid", node=n["id"], on_fail=of,
+                reason="fallback must exist, be an agent, and not be an ancestor")
+            continue
         _, rec = node_rec(run, n, rs.byid)
         save_node(run, n, rs.byid,
                   {"status": "skipped",
@@ -10568,13 +10812,11 @@ def main(run_id):
         for n in rs.nodes:
             st, rec = node_rec(run, n, rs.byid)
             states[n["id"]] = st
+            if st == "failed":
+                _notify_node_failure(run, n["id"])
             if st in ("done", "partial"): outputs[n["id"]] = (rec or {}).get("output")  # #4: partial output IS output
             # e68544a37be37657; est-ggqs: a validate-clamped harvest is the node's
             # own vouched `done` — its declared schema already held the answer.
-            # sys-wt3cck: only the clamped arm is vouched — an unvouched
-            # harvest-on-death stays prov True so _unmet_requires keeps gating
-            # the requires-gate on `<ancestor>.harvested` (e68544a; a GRANT
-            # here would be outside completion-honesty scope).
             prov[n["id"]] = bool((rec or {}).get("harvest")) and not (rec or {}).get("clamped")
             # A committed `partial` whose class is budget_exhausted (capped
             # fan-out WITH harvest) is a RunBudget death too — the class, not
@@ -10608,7 +10850,7 @@ def main(run_id):
             save_node(run, rs.byid[nid], rs.byid, {"status": "skipped", "output": {"skipped": "all deps pruned"}})
             log(run, "node.skipped", node=nid, reason="all deps pruned")
         # e68544a37be37657 (partial blocks a plain edge) + #4 (partial resolves) +
-        # est-ij0 (a dead order_only predecessor is spliced out of the convoy) —
+        # est-ij0 (a dead order_only predecessor is spliced) —
         # wfcommon.release_law, shared with the read model.
         # e68544a37be37657: harvest-on-death partials block plain after-edges —
         # every wave-releasable node gets its typed verdict BEFORE anything
@@ -10616,20 +10858,27 @@ def main(run_id):
         # release of verify/suite onto an incomplete candidate). An explicit
         # pass, never folded into deps_ok: the gate pick and the terminal
         # `blocked` list both read deps_ok and must keep seeing the truth.
+        # hw-sq1 ruling 2: producer-declared partials (answer-only shape, empty
+        # remaining tail, no blocking declared status) release plain edges —
+        # one released set, consulted by BOTH the typed pass and release_law.
+        released = released_partials(
+            rs.nodes, states,
+            {n["id"]: (node_rec(run, n, rs.byid)[1] or {})
+             for n in rs.nodes if states[n["id"]] == "partial"})
         for n in rs.nodes:
             if states[n["id"]] != "pending":
                 continue
-            blocked_by = _unmet_partial(n, states)
+            blocked_by = _unmet_partial(n, states, released)
             if blocked_by:
                 _fail_precondition(run, n, rs.byid, blocked_by,
                                    why="blocked_by_partial_ancestor: ")
                 states[n["id"]] = "failed"   # the wave's own view sees the verdict now
 
         # e68544a37be37657 (partial blocks a plain edge) + #4 (partial resolves) +
-        # est-ij0 (a dead order_only predecessor is spliced out of the convoy) —
-        # wfcommon.release_law, shared with the read model. Built AFTER the typed
-        # partial pass so its dead set sees this wave's new failures.
-        deps_ok, deps_res, spliced = release_law(rs.nodes, states)
+        # est-ij0 (a dead order_only predecessor is spliced) — wfcommon.release_law,
+        # shared with the read model. Built AFTER the typed partial pass so its dead
+        # set sees this wave's new failures.
+        deps_ok, deps_res, spliced = release_law(rs.nodes, states, released)
         for n in rs.nodes:
             if states[n["id"]] == "pending" and n["id"] not in splice_logged and deps_ok(n):
                 past = spliced(n)

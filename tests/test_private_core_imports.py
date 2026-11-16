@@ -87,9 +87,6 @@ ALLOW_LIST = {
     # --- agent.retry_utils: backoff parsing for liveness retries.
     ("__init__.py", "agent.retry_utils.parse_retry_after_seconds"):
         "_ping_retry_after: except Exception -> None (caller uses default backoff)",
-    # --- gateway.session_context: per-session env overlay for lane scopes.
-    ("__init__.py", "gateway.session_context.get_session_env"):
-        "_session_env: except ImportError -> plain os.environ value",
     # --- toolsets / hermes_cli.plugins: child toolset name validation is an
     # optional garnish; pass-through is the guarded path.
     ("wf.py", "toolsets.validate_toolset"):
@@ -100,17 +97,16 @@ ALLOW_LIST = {
     # guarded fallbacks so the plugin still reads graphs without core.
     ("wfcommon.py", "hermes_yaml.safe_load"):
         "_yaml_load: except ImportError -> ruamel, then PyYAML",
-    # --- tools.process_registry: the seat bg reaper's kill seam (sys-tiismh).
-    # The plugin ctx surface exposes no registry kill_all with consume_output,
-    # and the reap must hit the SAME singleton the linger drains — no public
-    # substitute reaches it (v0.22.x _PUBLIC checked, same split as #456).
-    ("seat_bg_reap.py", "tools.process_registry.process_registry"):
-        "reap(): lazy import inside except Exception -> pass (fail-open: no "
-        "reap, core's agent_close lifecycle kill unchanged)",
     # --- cron.jobs: tick-job lifecycle (landed by #534 after #456's table).
     ("cron_bridge.py", "cron.jobs"):
         "_jobs: except Exception -> None + callable surface check, never a "
         "half-bound module; tests inject a fake at this seam",
+    ("wake_native.py", "hermes_cli.gateway_runtime.discover_gateway_endpoint"):
+        "discover: except ImportError -> native unavailable (legacy compatibility); "
+        "missing module and missing symbol exercised in test_wake_native_identity",
+    ("wake_native.py", "hermes_cli.gateway_client.connect_gateway"):
+        "_connect import failure is caught by deliver -> retry/transport_error, "
+        "never another transport; missing module and symbol both exercised",
 }
 
 
