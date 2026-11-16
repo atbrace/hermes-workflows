@@ -52,10 +52,16 @@ def main() -> None:
         temp = Path(temp_dir)
         first = temp / "first.zip"
         second = temp / "second.zip"
+        # Determinism's named build inputs (est-opuob reconcile F3): the tree,
+        # the date pins, and the REPORTED ORIGIN — pack.py's sidecar reads the
+        # packing clone's origin unless pinned, so the byte-identity claim only
+        # holds for a fixed origin. Pin the seam; two clones of one commit with
+        # different remotes stay honestly outside this guarantee.
+        pack_env = {**os.environ, "HERMES_WF_PACK_REPO": "octo/fake-workflows"}
         for target in (first, second):
             result = subprocess.run(
                 [sys.executable, str(ROOT / "scripts/pack.py"), "--output", str(target)],
-                cwd=ROOT, capture_output=True, text=True,
+                cwd=ROOT, capture_output=True, text=True, env=pack_env,
             )
             if result.returncode != 0:
                 raise AssertionError(
@@ -72,7 +78,8 @@ def main() -> None:
             root = f"hermes-workflows-{VERSION}/"
             check("archive includes runtime, docs, skill, examples, tests, and checksum manifest",
                   all(root + rel in members for rel in (
-                      "plugin.yaml", "__init__.py", "wf.py", "wfcommon.py",
+                      "plugin.yaml", "__init__.py", "wf.py", "wfcommon.py", "wake_native.py",
+                      "tests/test_wake_native_identity.py", "tests/test_wake_native_admission.py",
                       "dashboard/manifest.json", "dashboard/index.js", "dashboard/plugin_api.py", "desktop/plugin.js",
                       "README.md", "INSTALL.md", "SKILL.md", "examples/README.md", "examples/basics/smoke.json",
                       "examples/basics/approve-publish.json", "examples/review/blind-council.workflow.json",
@@ -93,7 +100,7 @@ def main() -> None:
                       # part of the shipped surface — desktop contributors read it from
                       # the package. Mandatory new-file pack-surface gate: an unshipped
                       # doc is invisible to every install.
-                      "docs/card-toolresult-hook.md", "docs/orphan-held.md", "orphan_watch.py", "seat_bg_reap.py", "SHA256SUMS")))
+                      "docs/card-toolresult-hook.md", "docs/orphan-held.md", "orphan_watch.py", "SHA256SUMS")))
             check("fake child retains executable mode in ZIP",
                   (archive.getinfo(root + "tests/fake").external_attr >> 16) & 0o111 == 0o111)
             # est-4vnq finding 4 (pack-list omission, made explicit — pack_choice=INCLUDED):
@@ -171,7 +178,8 @@ def main() -> None:
   # #477 (est-xl5n5): the gate lint is the refuse seam of source-only
   # make_public.py; declared source-only in pack.py SOURCE_ONLY_SCRIPTS.
   "gate_lint.py",
-  "admission_ledger.py"})
+  "admission_ledger.py",
+    "retention.py"})
             else:
                 print("SKIP pack-list repo-side half: no .git — running from an "
                       "unpacked ZIP/archive, where the premise does not exist")

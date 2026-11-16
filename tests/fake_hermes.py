@@ -127,6 +127,33 @@ def _fake_state_row(n):
 if os.environ.get("FAKE_API_CALLS"):
     _fake_state_row(os.environ["FAKE_API_CALLS"])
 _FAKE_MODE = os.environ.get("FAKE_MODE")
+if _FAKE_MODE == "transition_latch":
+    import importlib.util as _iu
+    from pathlib import Path as _Path
+    _run = _Path(os.environ["HERMES_WF_RUN_DIR"])
+    _role = "sibling" if "LATCH-SIBLING" in q else "failure" if "LATCH-FAIL" in q else "next"
+    with open(_run / "latch-spawns.jsonl", "a") as _f:
+        _f.write(json.dumps({"role": _role, "pid": os.getpid()}) + "\n")
+    _spec = _iu.spec_from_file_location("latch_door", _Path(__file__).resolve().parents[1] / "__init__.py")
+    assert _spec is not None and _spec.loader is not None
+    _door = _iu.module_from_spec(_spec)
+    _spec.loader.exec_module(_door)
+    if _role == "failure":
+        with open(_run / "failure.fifo") as _f:
+            _f.readline()
+        print('```json\n{"result":"failed"}\n```\n{"node_outcome": "failure"}', flush=True)
+    elif _role == "sibling":
+        (_run / "sibling.started").write_text(str(os.getpid()))
+        with open(_run / "sibling.fifo") as _f:
+            for _command in _f:
+                if _command.strip() == "pull":
+                    (_run / "sibling.pulled").write_text(json.dumps(_door.act_inbox({})))
+                elif _command.strip() == "release":
+                    break
+        print('```json\n{"result":"sibling complete"}\n```', flush=True)
+    else:
+        print("```json\n" + json.dumps({"result": "ok", "inbox": _door.act_inbox({})}) + "\n```", flush=True)
+    sys.exit(0)
 # ---- #8 item 3 (crash-respawn idempotence): the effect-executing child ----
 # FAKE_MODE=effect_once: the child executes an EXTERNAL side effect (one line
 # into FAKE_EFFECT_FILE, keyed by `EFFECTKEY=<k>` in its prompt) and journals
@@ -567,6 +594,18 @@ if _FAKE_MODE == "retry_hint":   # #130: transport death (0 api calls) that BANK
         pass
     print("hermes -z: agent failed: openai.APIConnectionError. Connection error.")
     sys.exit(2)
+if "DEADSEAT" in q:
+    # sys-bknard (completed-seat rc=1): DEADSEAT <path|NONE> — replay the real
+    # capture of a seat that ANSWERED but whose CLI exit path returned rc=1:
+    # the #102 dead-session noise line FIRST, then the session's real output
+    # (the capture file; NONE = noise only), then exit FAKE_RC (default 1).
+    # Prompt-scoped marker (QFLUSH/CLOSE-CLAIM precedent) so one run mixes shapes.
+    _dsp = q.split("DEADSEAT", 1)[1].split()[0]
+    print("Session local-deadseat0000000000000000000000000000000000000000000000 "
+          "found but has no messages. Starting fresh.", flush=True)
+    if _dsp != "NONE":
+        print(open(_dsp).read(), flush=True)
+    sys.exit(int(os.environ.get("FAKE_RC", "1")))
 if _FAKE_MODE == "lease_busy":
     # lease-busy (2026-10-03 field shape): attempt 1 prints the CLI's dead-session
     # banner + the CLI's fail-closed lease notice verbatim and exits 130 (the CLI's

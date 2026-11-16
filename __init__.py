@@ -45,15 +45,6 @@ assert _ow_spec is not None and _ow_spec.loader is not None
 _orphan_watch = importlib.util.module_from_spec(_ow_spec)
 _ow_spec.loader.exec_module(_orphan_watch)
 _orphan_watch.bind(_common)
-# sys-tiismh: seat background reaper (seat_bg_reap.py) — kills a workflow seat's
-# own bg children at the final answer so completion notices can't re-drive it.
-# Env-gated (HERMES_WF_SEAT_BG_REAP, stamped by wf.py at the seat spawn only):
-# off everywhere else, the hook is a no-op. Defs-only exec; fail-open by design.
-_sbr_spec = importlib.util.spec_from_file_location("_hermes_workflows_seat_bg_reap",
-                                                   Path(__file__).resolve().parent / "seat_bg_reap.py")
-assert _sbr_spec is not None and _sbr_spec.loader is not None
-_seat_bg_reap = importlib.util.module_from_spec(_sbr_spec)
-_sbr_spec.loader.exec_module(_seat_bg_reap)
 
 
 def _coerce_graph(graph):
@@ -855,18 +846,19 @@ WORKFLOW_PARAMS = {
         "action": {
             "type": "string",
             "enum": ["run", "status", "wait", "release", "release_lock", "steer", "inbox", "amend", "diff", "stop", "kill", "list", "save", "submit", "library", "doctor_version", "validate"],
-            "description": "run=launch a graph; wait=OPTIONAL blocking observation (not the default loop: lifecycle transitions wake the owner session on their own — end your turn after run); read state, RESPAWNING an idle runner if work is pending (blocks to the next boundary when one is live; when the lock is PROVEN wedged — Errno 11 with the kernel ledger showing zero holders and the admission lease dead — wait heals it first, the #44 escape hatch); status=read-model of a run; release=answer a held human gate; release_lock=operator hatch for a wedged runner.lock (#44): renames the stranded inode aside under the admission heal-barrier and hands the lane a fresh lock path — REFUSES unless zero live holders are proven (never heals on EACCES or a live holder); steer=queue steering text for a node; inbox=(child-side, cooperative) pull late steering lines baked for THIS spawn — call once at a natural seam; amend=replace the graph (invalidates changed nodes + all downstream by fingerprint), or pass patch to edit a few node fields without resubmitting the whole graph; submitted node text carrying {run.KEY} re-binds from the run's persisted launch binding (run_context_binding) or the amend refuses before any write (est-qohvi); diff=confirm surface: runs the amend door with dry_run FORCED (accepts patch or graph), returns the preview + graph_diff and touches nothing; stop=request stop; kill=node-targeted lane kill (node required): that lane's in-flight children are SIGKILLed, the node finishes failed error_class=killed, siblings and the run keep going; list=all runs; save=shelve a graph in the library under a name (from run_id or inline graph); library=list shelved graphs richly (name, description, tags, provenance, path-relative id). validate=dry-run the door's validation pipeline (defaults fill + defect collection + model/route policy) with no ping and no writes; returns {ok, errors:[{node,field,msg}], resolved_routes}. run from=<name> replays a shelved graph. submit=quarantine a hand-rolled graph for study (requires why_not_library >=80 chars; never joins the library — the quartermaster's human-gated loop decides); inbox kind=submissions lists them newest-first. doctor_version=read-only version truth for THIS install: {live_version, newest_packaged, source_commit, drift} comparing plugin.yaml against the install.json provenance that pack.py stamps at build time \u2014 one read, no network.",
+            "description": "run=launch a graph; wait=OPTIONAL blocking observation (not the default loop: lifecycle transitions wake the owner session on their own — end your turn after run); read state, RESPAWNING an idle runner if work is pending (blocks to the next boundary when one is live; when the lock is PROVEN wedged — Errno 11 with the kernel ledger showing zero holders and the admission lease dead — wait heals it first, the #44 escape hatch); status=read-model of a run; release=answer a held human gate; release_lock=operator hatch for a wedged runner.lock (#44): renames the stranded inode aside under the admission heal-barrier and hands the lane a fresh lock path — REFUSES unless zero live holders are proven (never heals on EACCES or a live holder); steer=queue steering text for a node; inbox=(child-side, cooperative) pull late steering lines baked for THIS spawn — call once at a natural seam; amend=replace the graph (invalidates changed nodes + all downstream by fingerprint), or pass patch to edit a few node fields without resubmitting the whole graph; submitted node text carrying {run.KEY} re-binds from the run's persisted launch binding (run_context_binding) or the amend refuses before any write (est-qohvi); diff=confirm surface: runs the amend door with dry_run FORCED (accepts patch or graph), returns the preview + graph_diff and touches nothing; stop=request stop; kill=node-targeted lane kill (node required): that lane's in-flight children are SIGKILLed, the node finishes failed error_class=killed, siblings and the run keep going; list=all runs; save=shelve a graph in the library under a name (from run_id or inline graph); library=list shelved graphs richly (name, description, tags, provenance, path-relative id); optional check:true echoes a digest re-check block — the shelf-vs-author drift verb (est-dv8q4). validate=dry-run the door's validation pipeline (defaults fill + defect collection + model/route policy) with no ping and no writes; returns {ok, errors:[{node,field,msg}], resolved_routes}. run from=<name> replays a shelved graph. submit=quarantine a hand-rolled graph for study (requires why_not_library >=80 chars; never joins the library — the quartermaster's human-gated loop decides); inbox kind=submissions lists them newest-first. doctor_version=read-only version truth for THIS install: {live_version, newest_packaged, source_commit, source_repo, drift} comparing plugin.yaml against the install.json provenance that pack.py stamps at build time (one sidecar schema; a sidecar predating source_repo loads and reads null) \u2014 one read, no network.",
         },
         "run_id": {"type": "string", "description": "Run id (required for every action except run/list)."},
         "name": {"type": "string", "description": "run: overrides graph.name (default workflow); save: library name overrides graph.name (lowercase, [-_.]); library: return one entry with refs-derived required params and an instantiate command. amend: set graph.name in the replacement graph; omitting it retains the run name."},
         "from": {"type": "string", "description": "run: library graph name to replay (instead of graph or graph_path)."},
         "retry_backoff": {"type": "array", "items": {"type": "number"}, "description": "run only: two non-negative seconds [first, second] replacing the transient ladder's retry schedule (default: exponential, 2 s base, 30 s ceiling; est-9ceqc persists the backoff deadline + attempt count per node so a restart honors the window). The runner reads them from run.json meta; the node-level `retry` key caps attempts."},
         "retry_budget": {"type": "integer", "description": "run only: non-negative cap on total retry draws across ALL ladders for the run (default 6). A storm beyond the budget fails typed retry_skipped, never silently retries on."},
-        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Every map launch renders the shared text surface — node goals/contexts, gate questions, agent profile/repo lanes, fan-out goals/item goals, echo string output, gate options, wait.until_argv and fan-out precheck_argv (inline and library alike); every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string, or a graph with {run.KEY} refs launched with NO run_context (the door names the key; literal placeholders never spawn, dry_run included). Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
+        "run_context": {"type": ["string", "object"], "description": "run only: non-empty string seed appended to every first-wave agent (including agents behind gate-only paths), OR non-empty map of identifier keys to non-empty strings replacing only explicit {run.KEY} in node goals/contexts, agent repo lanes, fan-out goals/item goals and gate questions. Library-sourced launches also render profile, echo string output, gate options, wait.until_argv and fan-out precheck_argv; every surviving ref refuses before any write. Inline argv retains its existing unbound-placeholder refusal. Missing keys/malformed bindings reject before any run write — as does a seed against a graph with {run.KEY} refs, or a JSON-encoded map passed as a string. Values are persisted in prompts; do not supply secrets. A seed cannot replace baked literals. A graph may declare its binding contract as the graph-level run_context key {required:[KEY...], defaults:{KEY:val}} — a missing required key rejects before any run write with error_type missing_run_context_keys. The door persists an effective MAP to run.json run_context_binding; an amend whose submitted node text still carries {run.KEY} re-binds from it, and refuses fail-closed (error_type amend_run_context_unbound / amend_run_context_rebind) when the run has no persisted binding to re-bind from (est-qohvi)."},
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "params": {"type": "object", "additionalProperties": {"type": "object"}, "description": "save: optional meta.params descriptions/default suggestions for run_context keys. Required keys derive from graph refs, never this metadata. Omission retains prior params; {} deliberately clears them. Missing/dead declarations warn, never prevent saving."},
         "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). For explicit curation, library exposes tag_vocab for optional reuse. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
         "why_not_library": {"type": "string", "description": "submit (REQUIRED, >=80 chars): why no library graph covered this task — name the entries you checked and the shape you needed. Only explicit study submissions require this field; ordinary run does not."},
+        "check": {"type": "boolean", "description": "library (optional, default false): true = echo a `check` block — the shelf-vs-author drift verb (est-dv8q4). For every echoed row recompute wfcommon.source_digest over the entry's own canonical nodes and compare against the stored provenance.source_digest; when provenance.source resolves to a readable local graph file, recompute from that file's nodes too. Echo: {checked, ok, drifted:[{id, stored, recomputed, source_digest_match}], unstamped, unresolvable_source}; source_digest_match is null when no source-side measurement was possible (no source, or an unresolvable one). Read-only — never mutates the shelf; the response is byte-identical when the flag is absent. A drifted row is a shelf that no longer matches the bytes its author source carries."},
         "lane": {"type": "string", "description": "submit (optional, <=128 chars): lane label carried beside the submission for the quartermaster's triage; no scheduling effect."},
         "kind": {"type": "string", "enum": ["submissions"], "description": "inbox (optional): 'submissions' = list workflow submit study items newest-first (read-only; promotion is a human decision). Omit inside a child spawn to pull baked steering as before."},
         "team": {"type": "string", "description": "run (optional, <=64 chars): team label stamped into run.json and shown by list; no effect on scheduling."},
@@ -2014,9 +2006,9 @@ def _unbound_include_refs(graph, provenance):
     """Fail-closed check for composite runs (live composite-run receipt, 2026-09-30): after include
     seeds and run_context binding, NO {run.KEY} may survive inside an included
     subtree. The check is alias-scoped — the subtree's refs come from shelved
-    bytes the parent author never sees. Parent-authored nodes are covered by
-    the general _unbound_run_refs gate (sys-vrovdu: seed-less literal spawns
-    are retired). Returns an error envelope naming alias, node, and key.
+    bytes the parent author never sees — while parent-authored nodes keep the
+    plain-graph behavior (seed-less literal spawns are their documented
+    leniency). Returns an error envelope naming alias, node, and key.
 
     PR#84 review F-3: the text surface is the SHARED _include_text_fields
     traversal (goal/context/question/profile/repo, fan-out goal + item goals, AND an
@@ -2102,28 +2094,6 @@ def _unbound_gate_argv_refs(graph):
                         "contexts, questions and profile only, never command argv; write the "
                         "value into the argv element literally (or hand it to the probe through "
                         "a file); refused before any write or spawn")}
-
-def _unbound_run_refs(graph):
-    """sys-vrovdu: fail-closed launch gate for PLAIN graphs — every {run.KEY}
-    surviving the binding pass refuses the launch before any write or spawn,
-    naming the node and the key. The old seed-less leniency spawned nodes with
-    literal placeholders in their prompts (measured 10-04: run
-    20261004-150243-bindability-probe-real launched a graph whose {run.KEY}
-    refs had nothing to bind against), and dry_run passed the same hole. The
-    map-binding path already names missing keys; this closes the absent-
-    context/seed-binding gap. Text surface is the SHARED _include_text_fields
-    traversal, so goal/context/question/profile, echo output, gate options and
-    fan-out goals cannot drift apart. dry_run shares the gate: it returns AFTER
-    every gate above it, so a preview refuses exactly what the launch refuses."""
-    for node in graph.get("nodes") or []:
-        for text in _common._include_texts(node):
-            m = _RUN_REF.search(text)
-            if m:
-                return {"error": (
-                    f"run placeholder unbound: node {node.get('id', '?')!r} still references "
-                    f"{{run.{m.group(1)}}} and no run_context binding supplied it — pass "
-                    f'run_context {{"{m.group(1)}": "<value>"}} (or an include seeds map) '
-                    "or remove the placeholder; refused before any write or spawn")}
     return None
 
 
@@ -2253,10 +2223,14 @@ def act_save(args):
     Overwrites — a library entry is the CURRENT best version of that graph.
     #50: `description` (<=200) and `tags` (1-10 flat or #70 `facet:value` tokens) ride
     in the entry's `meta` envelope; a save carrying NEITHER keeps writing the pre-#50
-    BARE bytes. #70: omitting a field carries the previous envelope's value forward."""
+    BARE bytes. #70: omitting a field carries the previous envelope's value
+    forward. est-yka3m: a run_id save STRIPS arg-channel widths (the run.json
+    `knob_arg_keys` stamp names them) and echoes `knobs_stripped`.
+    """
     graph, bad = _input_graph(args, run_id=True)
     if bad:
         return bad
+    stripped_knobs = []   # est-yka3m: arg-channel widths stripped (run_id source only)
     if graph is None and args.get("run_id"):
         graph = jload(run_dir(args["run_id"]) / "graph.json")
         # A composite run's graph.json is the EXPANDED, include-stripped truth —
@@ -2271,6 +2245,20 @@ def act_save(args):
                              "freeze the shelf. Save the AUTHOR graph instead: "
                              "save(graph=...) or save(graph_path=...) with the graph's "
                              "`include` annotation intact"}
+        # est-yka3m (PR#500 shelf-leak residual): widths the launch ARGS channel
+        # injected (stamped at submit into run.json `knob_arg_keys`) are door
+        # bytes, not author bytes — re-shelving them would silently freeze a
+        # per-run width on the shelf (against launch-only law #580 B1) and turn
+        # the entry's forged key into a co-declaration refusal on the next
+        # from=<entry> + concurrency launch. Strip exactly the stamped keys;
+        # author-written graph keys never carry the stamp, and an unstamped
+        # (pre-fix) run dir keeps its bytes verbatim — no retroactive strip.
+        _arg_knobs = _run_meta.get("knob_arg_keys")
+        if graph is not None and isinstance(_arg_knobs, list):
+            for _ck in _arg_knobs:
+                if (isinstance(_ck, str) and _ck in _CONCURRENCY_CAPS
+                        and graph.pop(_ck, None) is not None):
+                    stripped_knobs.append(_ck)
     if graph is None:
         return {"error": "save needs graph, graph_path or run_id of an existing run"}
     # Composite graphs: a shelved composite keeps the AUTHOR form (include key on
@@ -2428,6 +2416,10 @@ def act_save(args):
     saved = _lib_rel_name(p)   # #50: a general/<name> save must echo the replayable name
     out = {"saved": saved, "nodes": len(graph["nodes"]),
            "hint": f"re-run any time: workflow run from={saved}  |  /wf {saved}"}
+    if stripped_knobs:
+        # est-yka3m: warn-and-surface, the save channel's own idiom — a clean
+        # save's response stays byte-identical (no empty key, golden bytes).
+        out["knobs_stripped"] = sorted(stripped_knobs)
     # est-2ek.1.245: warn-and-surface on a shelved graph that hard-codes
     # launch-varying literals while carrying ZERO {run.KEY} binding points —
     # such entries silently replay the launch that froze them. NON-FATAL by
@@ -2549,7 +2541,78 @@ def _library_rows():
             rows.append(row)
     return rows, skipped, quarantined
 
+def _lib_entry_path(name):
+    """READ resolver for listing rows: the file that produced a listed name.
+    Mirrors the _library_rows walk (roots in _library_roots order; `general/`
+    is part of the name, so the same relative join addresses it) — first
+    existing match wins, which is exactly the first-seen `seen` law the walk
+    applies, so the check can never examine a different file than the row
+    came from."""
+    rel = str(name) + ".json"
+    for root in _library_roots():
+        p = root / rel
+        if p.is_file():
+            return p
+    return None
+
+
+def _library_digest_check(rows):
+    """est-dv8q4 (WOF study council s3_engine, PR-6 shelf tooling): the
+    shelf-vs-author drift verb. For each listed row recompute
+    wfcommon.source_digest over the row's own canonical nodes and compare
+    against the stored provenance.source_digest; when provenance.source
+    resolves to a readable local graph file, recompute from that file's nodes
+    too. A drifted row is a shelf that no longer matches the bytes its author
+    source carries — today only a hand-compare finds it. Read-only: NOTHING
+    mutates; a bare save (source never passed, rule 10) is unstamped-or-not,
+    never a broken shelf, and an unresolvable source names itself rather than
+    fabricating a match (honest degradation). Collapse-to-one: `drifted` is
+    name-ASC — a total order keyed on unique listing names.
+    `ok` is CONFIRMED match only: an unreadable row file lands in `drifted`
+    with recomputed=null (drift is the complement of a confirmed match)."""
+    checked = ok = unstamped = unresolvable = 0
+    drifted = []
+    for row in rows:
+        stored = row.get("source_digest")
+        if not isinstance(stored, str) or not stored:
+            unstamped += 1
+            continue
+        checked += 1
+        recomputed = None
+        p = _lib_entry_path(row.get("name"))
+        if p is not None:
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = None
+            graph = _common.library_entry(data).get("graph") if data is not None else None
+            if isinstance(graph, dict):
+                recomputed = _common.source_digest(graph)
+        match = None
+        src = row.get("source")
+        if isinstance(src, str) and src.strip():
+            try:
+                sdata = json.loads(Path(src.strip()).expanduser().read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                sdata = None
+            sgraph = _common.library_entry(sdata).get("graph") if sdata is not None else None
+            if isinstance(sgraph, dict):
+                match = _common.source_digest(sgraph) == stored
+            else:
+                unresolvable += 1
+        if recomputed != stored or match is False:
+            drifted.append({"id": row.get("id") or str(row.get("name")),
+                            "stored": stored, "recomputed": recomputed,
+                            "source_digest_match": match})
+    ok = checked - len(drifted)
+    drifted.sort(key=lambda d: str(d["id"]))
+    return {"checked": checked, "ok": ok, "drifted": drifted,
+            "unstamped": unstamped, "unresolvable_source": unresolvable}
+
+
 def act_library(args):
+    if "check" in args and not isinstance(args["check"], bool):
+        return {"error": "check must be a boolean"}
     rows, skipped, quarantined = _library_rows()
     if args.get("name") is not None:
         name = args["name"]
@@ -2568,7 +2631,9 @@ def act_library(args):
         if row.get("params"):
             launch["run_context"] = {k: v.get("default", "") for k, v in row["params"].items()}
         return {"entry": dict(row, instantiate=launch, unfilled=unfilled,
-                              command="workflow " + json.dumps(launch, ensure_ascii=False))}
+                              command="workflow " + json.dumps(launch, ensure_ascii=False)),
+                              **({"check": _library_digest_check([row])}
+                                 if args.get("check") else {})}
     # Preserve the bare-library hint; populated recipes remain optional reuse.
     hinted = "workflow run from=<name> replays one; workflow save graph=... shelves a new one"
     if any(("id" in r) for r in rows):
@@ -2635,6 +2700,11 @@ def act_library(args):
                            "co-occur; drop the rarest term (" + rarest
                            + ") or union with two calls")
             out["hint"] = hinted   # out was built pre-diagnosis; refresh it
+    if args.get("check"):
+        # est-dv8q4: the drift verb covers exactly the rows this listing echoes
+        # (a tags filter narrows it) and lands no key when the flag is absent —
+        # golden-bytes law untouched.
+        out["check"] = _library_digest_check(rows)
     if skipped:
         out["skipped"] = skipped
     if quarantined:   # F-2 (#62): every refused entry is named WITH its typed reason;
@@ -2862,40 +2932,45 @@ def _bind_run_context(graph, binding, *, library_sourced=False):
                         f"run_context[{key!r}] must not contain braces when bound into a "
                         "fan-out goal — the runner re-interpolates fan-out goals per item")
         return out
-    # sys-vrovdu: map binding renders the SHARED text surface on EVERY launch,
-    # inline or library-sourced — the same traversal the survivor gates police
-    # (_unbound_run_refs / _unbound_include_refs). The old library-only
-    # asymmetry left echo output / gate options / until_argv / precheck_argv
-    # unrendered for inline graphs: a supplied binding could not reach them and
-    # the survivor gate then refused a fully-bound launch (T8b class drift).
-    # 1.1 (RATIFY F2): `profile` is rendered here, BEFORE profile validation, so a
-    # graph can name its teammate per launch ({"profile": "{run.reviewer}"}).
-    # #459 G2 (est-rza3t): `repo` mirrors profile exactly — rendered before the
-    # runner's lane-boot gate reads it, so a traveling pack can name its git lane
-    # per launch and the mechanical lane guards (incomplete_work/lane_wreckage)
-    # reach portable graphs.
+    if library_sourced:
+        nodes = []
+        for original in graph["nodes"]:
+            n = original
+            fan = isinstance(n.get("fanout"), dict)
+            for label, path in _common._include_text_fields(original):
+                n = _common._include_set(n, path, render(
+                    _common._include_get(original, path),
+                    fanout=label.startswith("fanout.") or (label == "goal" and fan)))
+            nodes.append(n)
+        return dict(graph, nodes=nodes)
     nodes = []
     for original in graph["nodes"]:
-        n = original
-        fan = isinstance(n.get("fanout"), dict)
-        for label, path in _common._include_text_fields(original):
-            if not library_sourced and (label.startswith("wait.until_argv")
-                                        or label.startswith("fanout.precheck_argv")):
-                # #293 (est-2ek.1.792): a plain launch NEVER renders command
-                # argv — a supplied binding must not silently rewrite an exec'd
-                # command, and the survivor's #293 refusal is the pinned law
-                # here. Library launches do render argv (D19: seeded renders
-                # into the committed bytes).
-                continue
-            # issue #7: a fan-out node's OWN goal is the runner's fallback
-            # template (wf.py: fo.goal or node.goal -> fmt_goal) whenever
-            # items resolve without their own goals — and with items_from
-            # the door cannot know that at launch. Treat it as fan-out
-            # territory: braces-bearing bound values reject like any
-            # other fan-out binding instead of re-interpolating per child.
-            n = _common._include_set(n, path, render(
-                _common._include_get(original, path),
-                fanout=label.startswith("fanout.") or (label == "goal" and fan)))
+        n = dict(original)
+        fan = n.get("fanout") if isinstance(n.get("fanout"), dict) else None
+        # 1.1 (RATIFY F2): `profile` is rendered here, BEFORE profile validation, so a
+        # graph can name its teammate per launch ({"profile": "{run.reviewer}"}).
+        # #459 G2 (est-rza3t): `repo` mirrors profile exactly — rendered before the
+        # runner's lane-boot gate reads it, so a traveling pack can name its git lane
+        # per launch and the mechanical lane guards (incomplete_work/lane_wreckage)
+        # reach portable graphs.
+        for field in ("goal", "context", "question", "profile", "repo"):
+            if isinstance(n.get(field), str):
+                # issue #7: a fan-out node's OWN goal is the runner's fallback
+                # template (wf.py: fo.goal or node.goal -> fmt_goal) whenever
+                # items resolve without their own goals — and with items_from
+                # the door cannot know that at launch. Treat it as fan-out
+                # territory: braces-bearing bound values reject like any
+                # other fan-out binding instead of re-interpolating per child.
+                n[field] = render(n[field], fanout=(field == "goal" and fan is not None))
+        if fan is not None:
+            fanout = dict(n["fanout"])
+            if isinstance(fanout.get("goal"), str):
+                fanout["goal"] = render(fanout["goal"], fanout=True)
+            if isinstance(fanout.get("items"), list):
+                fanout["items"] = [dict(item, goal=render(item["goal"], fanout=True))
+                                   if isinstance(item, dict) and isinstance(item.get("goal"), str)
+                                   else item for item in fanout["items"]]
+            n["fanout"] = fanout
         nodes.append(n)
     return dict(graph, nodes=nodes)
 
@@ -3143,19 +3218,9 @@ def _lane_state(key, entry):
         state = "orphaned"
     live = st.get("runner_live", False) if st else False   # A2 one-read law
     unfinished = state not in ("done", "partial", "failed", "stopped")   # est-3acn: partial is terminal
-    out = {"lane_key": key, "run_id": rid, "state": state,
+    return {"lane_key": key, "run_id": rid, "state": state,
             "runner_live": live, "unfinished": unfinished,
             "needs_resume": unfinished and not live, "last_event_ts": _last_event_ts(r)}
-    if state == "failed":
-        # sys-6uk25s: a blocked run owes the launcher its WHY at the door — the
-        # attribution run_state already computed, surfaced verbatim.
-        node_states = (st or {}).get("nodes") or {}
-        out["failed_nodes"] = sorted(nid for nid, v in node_states.items()
-                                     if isinstance(v, dict) and v.get("status") == "failed")
-        out["blocked_by"] = sorted({e for v in node_states.values()
-                                    for e in (v.get("blocked_by") or [])})
-        out["runner_exit"] = (st or {}).get("runner_exit")
-    return out
 
 def _lane_key_error(key):
     if not isinstance(key, str) or not key.strip() or len(key) > 128:
@@ -3390,11 +3455,13 @@ def act_run(args):
     # #498: launch-time concurrency args join the graph channel BEFORE validation, so the
     # existing law applies unchanged (shape, owner clamp, bake, fingerprint exemption);
     # one channel per key — co-declaration is refused, silence is not an option.
+    _arg_knobs = []   # est-yka3m: the merged keys ride the stamp (see _create_run)
     for _ck in _CONCURRENCY_CAPS:
         if _ck in args:
             if _ck in graph:
                 return {"error": f"run: {_ck} declared both as a run arg and a graph key (one channel per key)"}
             graph = {**graph, _ck: args[_ck]}
+            _arg_knobs.append(_ck)
     bad = _validation_error(graph) or _team_args_error(args)
     if bad:
         return bad
@@ -3516,8 +3583,10 @@ def act_run(args):
     if _includes:
         # Composite runs are fail-closed on unbound refs (live composite-run receipt,
         # 2026-09-30): a shelved sub-graph's {run.KEY} contract is invisible to a
-        # parent author. Alias-scoped first for the better subtree message; the
-        # general gate below then covers parent-authored nodes alike (sys-vrovdu).
+        # parent author, so the plain-graph leniency (literal placeholder spawns)
+        # silently seats a placeholder verdict when run_context is absent or a
+        # seed value missed a key. Every {run.*} surviving include seeds +
+        # run_context binding is a refusal before any write/spawn.
         bad = _unbound_include_refs(graph, _includes)
         if bad:
             return bad
@@ -3540,14 +3609,6 @@ def act_run(args):
                         "(WORKFLOW_MAX_SEATS env or config workflows.max_seats; an integer "
                         f"in [{_common.SEAT_CAP_FLOOR}, {_common.SEAT_CAP_CEILING}], or unset "
                         "for the default; the per-run opt-out stays graph max_seats: 0)"}
-
-    # sys-vrovdu: plain graphs are fail-closed too — a {run.KEY} surviving the
-    # binding pass (typically: no run_context at all) refuses the launch naming
-    # the key. Sits AFTER binding and BEFORE the dry_run return, so dry_run
-    # refuses exactly what the launch would.
-    bad = _unbound_run_refs(graph)
-    if bad:
-        return bad
     # 1.1 (RATIFY F2): profile validation runs on the RENDERED graph ({run.KEY} resolved).
     bad = _profile_error(graph)
     if bad:
@@ -3610,30 +3671,16 @@ def act_run(args):
                             # Keep the incumbent's optional card presentation.
                             "lifecycle_notice": _lifecycle_notice(incumbent["run_id"]),
                             "hint": f"wait run_id={incumbent['run_id']} resumes it"}
-                if incumbent["state"] == "failed":
-                        # sys-6uk25s: fail fast at the door. A relaunch against a
-                        # blocked-by-failed incumbent is REFUSED with the block
-                        # attribution (blind retries re-hit the same block — the
-                        # 8x burst of 2026-10-19); no new run, no spawn, the lane
-                        # entry stays pointed at the blocked run.
-                        failed = incumbent.get("failed_nodes") or []
-                        exit_rec = incumbent.get("runner_exit") or {}
-                        return {"error": f"run {incumbent['run_id']} is blocked by failed "
-                                         f"node(s): {', '.join(failed) or 'unknown'} — amend the "
-                                         f"failed node to retry, or launch under a new lane_key",
-                                "blocked_by": incumbent.get("blocked_by") or [f"{nid}: failed" for nid in failed],
-                                "reason": exit_rec.get("reason") or "failed",
-                                "deduped": True, "lane_key": key, "run_id": incumbent["run_id"]}
             out = _create_run(args, graph, lib_name, models, routes, _liveness_notes, path,
                               includes=_includes, include_notes=_include_notes,
                               concurrency_meta=concurrency_meta, retry_meta=retry_meta,
-                              binding=_binding)
+                              binding=_binding, arg_knobs=_arg_knobs)
         _arm_from_launch(out)   # OUTSIDE the flock — see _arm_from_launch's law
         return out
     out = _create_run(args, graph, lib_name, models, routes, _liveness_notes,
                       includes=_includes, include_notes=_include_notes,
                       concurrency_meta=concurrency_meta, retry_meta=retry_meta,
-                      binding=_binding)
+                      binding=_binding, arg_knobs=_arg_knobs)
     _arm_from_launch(out)
     return out
 
@@ -3708,7 +3755,8 @@ def _prove_run_dir(r, extra_dirs=()):
 
 
 def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_path=None,
-                *, concurrency_meta=None, retry_meta=None, includes=None, include_notes=None, binding=None):
+                *, concurrency_meta=None, retry_meta=None, includes=None, include_notes=None, binding=None,
+                arg_knobs=None):
     """Under the lane flock: complete run dir, atomic registry entry, then spawn."""
     name = graph["name"]
     base = time.strftime("%Y%m%d-%H%M%S") + "-" + "".join(
@@ -3754,6 +3802,16 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
             "owner": _owner_stamp()}
     if concurrency_meta:
         meta.update(concurrency_meta)
+    if arg_knobs:
+        # est-yka3m (PR#500 shelf-leak residual): the arg-channel stamp. #498
+        # merged launch-time run args into the graph channel BEFORE the run-dir
+        # write, so graph.json is not author bytes for those keys and a later
+        # save(run_id) cannot tell which widths the door injected. The stamp
+        # names them; save(run_id) strips exactly those (launch-only law #580
+        # B1 — per-run widths never ride the shelf) and act_amend drops it (it
+        # describes the launched bytes an amend replaces). Absent args => no
+        # key: legacy run.json bytes preserved.
+        meta["knob_arg_keys"] = sorted(arg_knobs)
     # hw-23c (est-mcwq6): author-reachable retry knobs, VALIDATED AT THE DOOR
     # before any write — the bake runs in act_run beside _concurrency_bake and
     # arrives as retry_meta (parity with the sibling; the first #497 shape
@@ -3785,7 +3843,7 @@ def _create_run(args, graph, lib_name, models, routes, _liveness_notes, lane_pat
         meta["plugin_version"] = _pv
     # est-2ek.1.856 deep review D2: the advertised per-run seat-cap opt-out is
     # baked where the runner reads it — run.json meta max_seats (the structural
-    # pass has already validated the value: integer in [4,16] or the explicit 0
+    # pass has already validated the value: integer in [4,64] or the explicit 0
     # off-sentinel; _max_seats honours meta over env/config). Absent = key never
     # written: a plain run keeps the exact golden key set.
     if "max_seats" in graph:
@@ -4531,7 +4589,9 @@ def act_steer(args):
     node_status = (st.get("nodes", {}).get(node["id"]) or {}).get("status")
     if kind(node).spawns is not True:
         return {"ok": False, "error": "gate nodes do not accept steering; use release for a held gate"}
-    if run_status in ("done", "partial", "failed", "stopped"):
+    live_failure = (run_status == "failed" and st.get("runner_live")
+                    and not (r / "stop.request").exists() and not _common.run_abort_flag(r))
+    if run_status in ("done", "partial", "failed", "stopped") and not live_failure:
         # est-3acn: `partial` joins the terminal refusals — a capped run has no
         # runner that will ever spawn that node either; the ledger + harvest are
         # the report, and amend/re-run is the correct verb.
@@ -4809,14 +4869,12 @@ def act_amend(args):
     # node_rec), computed on the RESOLVED defs (what lands in graph.json), read-only.
     # dry_run returns here WITHOUT touching graph.json, amends.jsonl, or the runner.
     preview = amend_preview(r, new["nodes"])
-    # #366: this amend resets EVERY node whose record is a live spawn record, def or
-    # no def (node_rec reads status=running as pending, and the solo branch never
-    # adopts — only the fan-out `_spawn` calls active_child). Name that in the hint,
-    # not only in the key: the shape that hid the destruction was a response that read
-    # as "1 changed / 1 will rerun" and said nothing about the children dying.
+    # A live wave drains before reload. If recovery needs a fresh runner instead,
+    # the preview's live records identify work that may need a new spawn.
     _rz = preview.get("will_reset_running") or []
-    _rz_note = (f" — WARNING: {len(_rz)} RUNNING node(s) reset by this amend "
-                f"(live children die, their work re-runs from zero): {', '.join(_rz)}") if _rz else ""
+    _rz_note = (f" — {len(_rz)} RUNNING node(s) at admission: {', '.join(_rz)}. "
+                "A live wave drains before reload; unchanged commits replay-skip. "
+                "Recovery with a fresh runner may reset live work.") if _rz else ""
     if args.get("dry_run"):
         return {"ok": True, "dry_run": True, "models": _models, "routes": _routes, **preview,
                 "graph_diff": _graph_unified_diff(old, new),
@@ -4845,6 +4903,9 @@ def act_amend(args):
         tmp.write_text(json.dumps(new, ensure_ascii=False, indent=2))
         os.replace(tmp, r / "graph.json")
         _new_rev = _graph_revision(r)
+        with open(r / "events.jsonl", "a") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                "event": "graph.amended"}) + "\n")
     # est-2ek.1.641: an applied amend re-proves routes through this submit's
     # ping — bake the proved-alive receipts for the NEW defs (frozen replay-skip
     # nodes keep their committed receipt: the file is merged, never rewritten).
@@ -4892,14 +4953,20 @@ def act_amend(args):
         meta["max_seats"] = new["max_seats"]
     else:
         meta.pop("max_seats", None)
+    # est-yka3m: the arg-channel stamp (run.json `knob_arg_keys`) describes the
+    # LAUNCHED bytes. An amend replaces graph.json with author truth and the
+    # widths stay frozen anyway (#580 B1), so the stamp dies with the bytes it
+    # described — set-or-drop, the same law as the include notes and max_seats
+    # above. A save(run_id) after an amend re-shelves re-shelves the amended
+    # author bytes unstripped.
+    _kab_before = meta.get("knob_arg_keys", _MS_MISSING)
+    meta.pop("knob_arg_keys", None)
     if (_name_changed or _includes or _include_notes
-            or _ms_before != _ms_now):
+            or _ms_before != _ms_now
+            or _kab_before is not _MS_MISSING):
         mtmp = r / f"run.json.{os.getpid()}.tmp"
         mtmp.write_text(json.dumps(meta, ensure_ascii=False))
         os.replace(mtmp, r / "run.json")
-    with open(r / "events.jsonl", "a") as f:
-        f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            "event": "graph.amended"}) + "\n")
     (r / "restart.request").write_text("1")
     mode = _resume_after_action(r, consumed=lambda: not (r / "restart.request").exists())
     # est-gexk5 restart leg (hw-83v): promise continuation only for what the
@@ -5041,7 +5108,12 @@ def act_doctor_version(args):
     plugin.yaml version against the install.json provenance pack.py stamped at build
     time. drift:true means "fixed upstream, not deployed here" (the 1.0.1-seat vs
     1.1.0-source shape); a missing install.json says null provenance, never an
-    invented version."""
+    invented version. est-opuob one sidecar schema: the same read surfaces
+    source_repo — the ORIGIN pack.py stamped ({version, source_commit,
+    packaged_at, source_repo} is the whole sidecar, installed with the single
+    package copy — one copy, no separate write step). A sidecar predating the
+    field still loads: source_repo:null,
+    honest absence, never an invented origin."""
     d = Path(args["plugin_dir"]).expanduser() if args.get("plugin_dir") else HERE
     yaml_p, inst_p = d / "plugin.yaml", d / "install.json"
     if not yaml_p.is_file():
@@ -5050,7 +5122,7 @@ def act_doctor_version(args):
     m = re.search(r"(?m)^version:\s*(\S+)\s*$", yaml_p.read_text(encoding="utf-8", errors="replace"))
     if m:
         live = m.group(1)
-    packaged = commit = None
+    packaged = commit = repo = None
     if inst_p.is_file():
         try:
             rec = json.loads(inst_p.read_text(encoding="utf-8", errors="replace"))
@@ -5059,8 +5131,11 @@ def act_doctor_version(args):
         if isinstance(rec, dict):
             packaged = rec.get("version")
             commit = rec.get("source_commit")
+            # est-opuob: a legacy three-key sidecar has no source_repo — .get
+            # reads it null; the door never fabricates an origin.
+            repo = rec.get("source_repo")
     return {"live_version": live, "newest_packaged": packaged,
-            "source_commit": commit,
+            "source_commit": commit, "source_repo": repo,
             "drift": bool(packaged is not None and live is not None and packaged != live)}
 
 
@@ -5319,8 +5394,7 @@ def _hook_surface():
             ("pre_llm_call", _card_enforcement._pre_llm_call),
             ("transform_llm_output", _card_enforcement._card_hook),
             ("post_gateway_admission", _admission_handler),
-            ("pre_gateway_dispatch", _dispatch_witness),
-            ("on_session_end", _seat_bg_reap.reap)) + tuple(_orphan_watch.HOOKS.items())
+            ("pre_gateway_dispatch", _dispatch_witness)) + tuple(_orphan_watch.HOOKS.items())
 
 # The card ledger's three hooks: registered at literal, allow-list-gated sites in register().
 _CARD_HOOKS = ("post_tool_call", "pre_llm_call", "transform_llm_output")

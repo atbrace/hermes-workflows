@@ -1,4 +1,4 @@
-# Manual installation — Hermes Workflows 1.4.4
+# Manual installation — Hermes Workflows 1.4.10
 
 The catalog path (`hermes plugins install hermes-workflows`) is the recommended install; see [README.md](README.md). This file covers installing from a release zip, or by hand from a checkout. Backend and desktop app may be on different machines.
 
@@ -7,10 +7,10 @@ The catalog path (`hermes plugins install hermes-workflows`) is the recommended 
 Place the ZIP and `.zip.sha256` sidecar together. Use `python3` (or an explicit Python 3 interpreter path) and `unzip`; on macOS `shasum -a 256` substitutes for `sha256sum`:
 
     cd "$HOME"
-    if command -v sha256sum >/dev/null; then sha256sum -c hermes-workflows-1.4.4.zip.sha256; else shasum -a 256 -c hermes-workflows-1.4.4.zip.sha256; fi
+    if command -v sha256sum >/dev/null; then sha256sum -c hermes-workflows-1.4.10.zip.sha256; else shasum -a 256 -c hermes-workflows-1.4.10.zip.sha256; fi
     PACKAGE_STAGE="$(mktemp -d "$HOME/hermes-workflows.XXXXXX")"
-    unzip -q "$HOME/hermes-workflows-1.4.4.zip" -d "$PACKAGE_STAGE"
-    PACKAGE_DIR="$PACKAGE_STAGE/hermes-workflows-1.4.4"
+    unzip -q "$HOME/hermes-workflows-1.4.10.zip" -d "$PACKAGE_STAGE"
+    PACKAGE_DIR="$PACKAGE_STAGE/hermes-workflows-1.4.10"
     (cd "$PACKAGE_DIR" && if command -v sha256sum >/dev/null; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi)
 
 Use `unzip` rather than Python `ZipFile.extractall` when running the tests: the archive stores executable modes, but Python extraction may discard them. In particular, `tests/fake` — the fake Hermes launcher the hermetic tests use in place of a real install — must stay executable. Keep the staging tree until verification completes.
@@ -27,6 +27,15 @@ Set `HERMES_HOME` to the active backend profile home; the default is `$HOME/.her
     cp -R "$PACKAGE_DIR" "$HERMES_HOME/plugins/hermes-workflows"
     hermes plugins validate "$HERMES_HOME/plugins/hermes-workflows"
     hermes plugins enable hermes-workflows
+
+The package root's `install.json` — the one sidecar schema `pack.py` stamps at build
+time (`version`, `source_commit`, `packaged_at`, `source_repo`) — rides the copy, so
+the plugin directory records its origin in the same step as the code — one copy,
+no separate write step (the documented step is `test ! -e` + `cp -R`, not an
+atomic write); the door's
+`doctor_version` reads that origin back in one pass. A plugin directory installed
+before `source_repo` existed keeps working: the field reads `null`, never an
+invented origin.
 
 The bundled skill is registered by the plugin as `hermes-workflows:workflow`; that registration is the skill's single source of truth. For direct CLI discovery outside plugin registration, link the INSTALLED plugin directory's skill into the active profile so it tracks every plugin update — do NOT maintain a copied fork (a copy silently freezes at the plugin version it was taken from and trains stale grammar), and do not link the temporary `$PACKAGE_DIR` staging tree (it vanishes when unpacked, leaving a dangling link):
 

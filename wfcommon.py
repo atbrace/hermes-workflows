@@ -1285,8 +1285,17 @@ def _defaults_errors(d):
     if d.get("reasoning") is not None and d["reasoning"] not in reasoning_levels():
         E("defaults.reasoning", f"reasoning {d['reasoning']!r} invalid; allowed: "
                                 f"{list(reasoning_levels())}")
-    if d.get("schema") is not None and not isinstance(d["schema"], dict):
-        E("defaults.schema", "schema must be an object")
+    if d.get("schema") is not None:
+        if not isinstance(d["schema"], dict):
+            E("defaults.schema", "schema must be an object")
+        else:
+            # est-j14j3: the CONTENT goes through the same _schema_check a node
+            # key gets. defaults.schema bakes into every agent node at
+            # materialization and boot re-validates the baked nodes; checking
+            # the subset here is what makes "the door admits" equal
+            # "boot admits" — a union type ('type': ['integer', 'null']) here
+            # once passed action=validate and killed the run at boot.
+            _schema_check(d["schema"], "defaults.schema", E)
     if d.get("model") is not None and not isinstance(d.get("model"), str):
         E("defaults.model", "model must be a string")
     if d.get("require_route") is not None and not isinstance(d.get("require_route"), bool):
@@ -1582,6 +1591,105 @@ def wall_invariant_warnings(graph):
     return rows
 
 
+def _schema_check(schema, field, report):
+    """est-j14j3: the ONE schema-shape law, shared by every door pass. `report(field,
+    msg)` receives every defect, so the CALLER owns the node/None binding:
+    validate_graph_errors reports per node; _defaults_errors reports the graph-level
+    `defaults.schema` subtree. Before this extraction the defaults pass measured only
+    the value's dict-ness, so a JSON-Schema union type ('type': ['integer', 'null'])
+    sitting in defaults.schema sailed through action=validate, was baked into every
+    agent node by apply_graph_defaults, and the runner boot refused it AFTER the run
+    dir existed — the run died at boot in ~9 s and every claim stamp was lost
+    (receipt: runner_exit.json of run 20261111-211056-wof-pr-forge). One helper, one
+    fault line per occurrence, pointing at the schema path: what boot refuses can
+    never reach spawn. The boot-side refusal words come from this same line, so they
+    cannot drift (pinned by tests/test_defaults_schema_union.py).
+
+    The runner's validator consumes exactly this subset; description is
+    prompt-only annotation; enum is ENFORCED at harvest (#107 — the old
+    law "never accept a constraint that cannot be enforced" stays TRUE:
+    enum joined the subset only once wf.validate() checks membership).
+    #96: minItems/minLength joined the SAME way — wf.validate() now
+    enforces both (array length; non-blank char count via v.strip(),
+    fail-closed: a whitespace-only probe is not a probe), so the door
+    admits exactly what the harvester can enforce, nothing more.
+    #472: maxItems joins as minItems' mirror (wf.validate enforces the
+    cap), and enum widens onto type:'boolean'/'integer' — membership in
+    those closed domains is trivial at harvest. A refusal now also NAMES
+    the fallback: an unenforceable cap belongs in the description prose,
+    advisory by admission, never silently dropped."""
+    def E(f, m):
+        report(f, m)
+    for k in sorted(set(schema) - {"type", "required", "properties", "items",
+                                   "description", "enum", "minItems", "minLength",
+                                   "maxItems"}):
+        E(f"{field}.{k}", "unsupported schema keyword; supported: type, required, properties, items, description, enum, minItems, minLength, maxItems — a constraint the harvester cannot enforce here (integer bounds, patterns) belongs in the description prose: an advisory ceiling beats a silent pass")
+    if "type" in schema and schema["type"] not in ("object", "array", "string", "number", "integer", "boolean"):
+        E(f"{field}.type", "unsupported schema type")
+    if "required" in schema and (not isinstance(schema["required"], list)
+                                  or not all(isinstance(x, str) for x in schema["required"])):
+        E(f"{field}.required", "required must be a list of strings")
+    if "enum" in schema:
+        # #107: closed vocabulary. #472 widened placement from string-only
+        # to the three closed domains whose membership wf.validate()
+        # enforces trivially: type:'string' (non-empty string members),
+        # type:'boolean' (boolean members — the bug-fix playbook's
+        # `reproduced: enum[true,false]` gate-key is the repro), and
+        # type:'integer' (integer members; bool is never a member — the
+        # same bool law as #113). Still REJECTED on a type-less, number-,
+        # array- or object-typed schema: the closed-subset law refuses it
+        # at the door instead of shipping a dead keyword.
+        en = schema["enum"]
+        _et = schema.get("type")
+        if not isinstance(en, list) or not en:
+            E(f"{field}.enum", "enum must be a non-empty list of non-empty strings")
+        elif _et == "string" and not all(isinstance(x, str) and x for x in en):
+            E(f"{field}.enum", "enum members must be a list of non-empty strings")
+        elif _et == "boolean" and not all(isinstance(x, bool) for x in en):
+            E(f"{field}.enum", "enum members must be a list of booleans")
+        elif _et == "integer" and not all(isinstance(x, int) and not isinstance(x, bool) for x in en):
+            E(f"{field}.enum", "enum members must be a list of integers (bool is never a member)")
+        elif _et not in ("string", "boolean", "integer"):
+            E(f"{field}.enum", "enum is only legal on type:'string', 'boolean' or 'integer' (the harvester enforces membership there only)")
+    # #96: minItems/minLength — same enforceability law as enum. The door
+    # admits a floor ONLY where wf.validate() can actually enforce it:
+    # minItems on type:'array', minLength on type:'string', each a
+    # non-negative int (bool is never a count — same bool law as #113).
+    # #472: maxItems joins as minItems' mirror — type:'array', the same
+    # non-negative int shape, enforced as a cap at harvest.
+    for _kw, _t in (("minItems", "array"), ("minLength", "string"), ("maxItems", "array")):
+        if _kw in schema:
+            mv = schema[_kw]
+            if isinstance(mv, bool) or not isinstance(mv, int) or mv < 0:
+                E(f"{field}.{_kw}", f"{_kw} must be a non-negative integer")
+            elif schema.get("type") != _t:
+                E(f"{field}.{_kw}", f"{_kw} is only legal on type:'{_t}' (the harvester enforces it only there)")
+    # #472: an unsatisfiable interval is a dead constraint — with both
+    # bounds otherwise well-formed, minItems > maxItems admits no value at
+    # all, so the door refuses the pair instead of shipping a schema that
+    # can only ever fail the harvest.
+    _mi, _ma = schema.get("minItems"), schema.get("maxItems")
+    if (isinstance(_mi, int) and not isinstance(_mi, bool) and _mi >= 0
+            and isinstance(_ma, int) and not isinstance(_ma, bool) and _ma >= 0
+            and _mi > _ma):
+        E(f"{field}.maxItems", f"unsatisfiable range: minItems {_mi} > maxItems {_ma}")
+    props = schema.get("properties")
+    if props is not None:
+        if not isinstance(props, dict):
+            E(f"{field}.properties", "properties must be an object")
+        else:
+            for k, sub in props.items():
+                if not isinstance(sub, dict):
+                    E(f"{field}.properties.{k}", "property schema must be an object")
+                else:
+                    _schema_check(sub, f"{field}.properties.{k}", report)
+    if "items" in schema:
+        if not isinstance(schema["items"], dict):
+            E(f"{field}.items", "items schema must be an object")
+        else:
+            _schema_check(schema["items"], f"{field}.items", report)
+
+
 def validate_graph_errors(nodes, *, admission=False, defaults=None):
     """Return a LIST of {node, field, msg} — EVERY defect, not the first. Strict ids:
     node ids double as filenames.
@@ -1603,87 +1711,12 @@ def validate_graph_errors(nodes, *, admission=False, defaults=None):
         errs.append({"node": nid, "field": field, "msg": msg})
 
     def schema_check(nid, field, schema):
-        # The runner's validator consumes exactly this subset; description is
-        # prompt-only annotation; enum is ENFORCED at harvest (#107 — the old
-        # law "never accept a constraint that cannot be enforced" stays TRUE:
-        # enum joined the subset only once wf.validate() checks membership).
-        # #96: minItems/minLength joined the SAME way — wf.validate() now
-        # enforces both (array length; non-blank char count via v.strip(),
-        # fail-closed: a whitespace-only probe is not a probe), so the door
-        # admits exactly what the harvester can enforce, nothing more.
-        # #472: maxItems joins as minItems' mirror (wf.validate enforces the
-        # cap), and enum widens onto type:'boolean'/'integer' — membership in
-        # those closed domains is trivial at harvest. A refusal now also NAMES
-        # the fallback: an unenforceable cap belongs in the description prose,
-        # advisory by admission, never silently dropped.
-        for k in sorted(set(schema) - {"type", "required", "properties", "items",
-                                       "description", "enum", "minItems", "minLength",
-                                       "maxItems"}):
-            E(nid, f"{field}.{k}", "unsupported schema keyword; supported: type, required, properties, items, description, enum, minItems, minLength, maxItems — a constraint the harvester cannot enforce here (integer bounds, patterns) belongs in the description prose: an advisory ceiling beats a silent pass")
-        if "type" in schema and schema["type"] not in ("object", "array", "string", "number", "integer", "boolean"):
-            E(nid, f"{field}.type", "unsupported schema type")
-        if "required" in schema and (not isinstance(schema["required"], list)
-                                      or not all(isinstance(x, str) for x in schema["required"])):
-            E(nid, f"{field}.required", "required must be a list of strings")
-        if "enum" in schema:
-            # #107: closed vocabulary. #472 widened placement from string-only
-            # to the three closed domains whose membership wf.validate()
-            # enforces trivially: type:'string' (non-empty string members),
-            # type:'boolean' (boolean members — the bug-fix playbook's
-            # `reproduced: enum[true,false]` gate-key is the repro), and
-            # type:'integer' (integer members; bool is never a member — the
-            # same bool law as #113). Still REJECTED on a type-less, number-,
-            # array- or object-typed schema: the closed-subset law refuses it
-            # at the door instead of shipping a dead keyword.
-            en = schema["enum"]
-            _et = schema.get("type")
-            if not isinstance(en, list) or not en:
-                E(nid, f"{field}.enum", "enum must be a non-empty list of non-empty strings")
-            elif _et == "string" and not all(isinstance(x, str) and x for x in en):
-                E(nid, f"{field}.enum", "enum members must be a list of non-empty strings")
-            elif _et == "boolean" and not all(isinstance(x, bool) for x in en):
-                E(nid, f"{field}.enum", "enum members must be a list of booleans")
-            elif _et == "integer" and not all(isinstance(x, int) and not isinstance(x, bool) for x in en):
-                E(nid, f"{field}.enum", "enum members must be a list of integers (bool is never a member)")
-            elif _et not in ("string", "boolean", "integer"):
-                E(nid, f"{field}.enum", "enum is only legal on type:'string', 'boolean' or 'integer' (the harvester enforces membership there only)")
-        # #96: minItems/minLength — same enforceability law as enum. The door
-        # admits a floor ONLY where wf.validate() can actually enforce it:
-        # minItems on type:'array', minLength on type:'string', each a
-        # non-negative int (bool is never a count — same bool law as #113).
-        # #472: maxItems joins as minItems' mirror — type:'array', the same
-        # non-negative int shape, enforced as a cap at harvest.
-        for _kw, _t in (("minItems", "array"), ("minLength", "string"), ("maxItems", "array")):
-            if _kw in schema:
-                mv = schema[_kw]
-                if isinstance(mv, bool) or not isinstance(mv, int) or mv < 0:
-                    E(nid, f"{field}.{_kw}", f"{_kw} must be a non-negative integer")
-                elif schema.get("type") != _t:
-                    E(nid, f"{field}.{_kw}", f"{_kw} is only legal on type:'{_t}' (the harvester enforces it only there)")
-        # #472: an unsatisfiable interval is a dead constraint — with both
-        # bounds otherwise well-formed, minItems > maxItems admits no value at
-        # all, so the door refuses the pair instead of shipping a schema that
-        # can only ever fail the harvest.
-        _mi, _ma = schema.get("minItems"), schema.get("maxItems")
-        if (isinstance(_mi, int) and not isinstance(_mi, bool) and _mi >= 0
-                and isinstance(_ma, int) and not isinstance(_ma, bool) and _ma >= 0
-                and _mi > _ma):
-            E(nid, f"{field}.maxItems", f"unsatisfiable range: minItems {_mi} > maxItems {_ma}")
-        props = schema.get("properties")
-        if props is not None:
-            if not isinstance(props, dict):
-                E(nid, f"{field}.properties", "properties must be an object")
-            else:
-                for k, sub in props.items():
-                    if not isinstance(sub, dict):
-                        E(nid, f"{field}.properties.{k}", "property schema must be an object")
-                    else:
-                        schema_check(nid, f"{field}.properties.{k}", sub)
-        if "items" in schema:
-            if not isinstance(schema["items"], dict):
-                E(nid, f"{field}.items", "items schema must be an object")
-            else:
-                schema_check(nid, f"{field}.items", schema["items"])
+        # est-j14j3: the law lives in the module-level _schema_check — the ONE
+        # schema-shape helper; this is the per-node report binding. The graph
+        # defaults pass (_defaults_errors) calls the same helper, so the words
+        # boot refuses with are structurally the words the door refuses with,
+        # and no second copy of the rules exists to drift.
+        _schema_check(schema, field, lambda f, m: E(nid, f, m))
 
     if not isinstance(nodes, list) or not nodes:
         return errs + [{"node": None, "field": "nodes", "msg": "nodes must be a non-empty list"}]
@@ -2654,7 +2687,7 @@ GRAPH_KEY_MIN_VERSION = {
 # (newer files, older process) and the door must not silently pass file-truth
 # off as its own. Re-pinned at release in the SAME commit as plugin.yaml
 # (AGENTS 4d; a test gate compares them at HEAD).
-CODE_VERSION = "1.4.4"
+CODE_VERSION = "1.4.10"
 
 def code_version():
     return CODE_VERSION
@@ -4652,20 +4685,6 @@ def _answer_harvest_valid(n, rec):
     schema = n.get("schema") or (n.get("fanout") or {}).get("schema")
     return not validate(out, schema)
 
-def _died_but_harvested(n, rec):
-    """sys-wt3cck: the ONE derivation site for 'this node died but its answer was
-    harvested' — either the validate policy laundered a `partial` death to `done`
-    (the `clamped` stamp names the verdict it replaced) or an efp-valid `failed`
-    carries a harvest answer that re-validates (the jam-aus honest fold). Both
-    arms READ `done` and stay out of failed_nodes, so every consumer asking 'did
-    the run finish green' must consult this predicate, not the folded status
-    (the 44+ masked runs on disk flip here, derive-not-stored, sys-5lnm17 law).
-    efp validity is the caller's gate — node_rec/run_state fold on efp-valid
-    states; this reads only the record's own death evidence."""
-    if (rec or {}).get("clamped"):
-        return True
-    return (rec or {}).get("status") == "failed" and _answer_harvest_valid(n, rec)
-
 def node_rec(r, n, byid, memo=None, legacy_memo=None):
     """Return (status, rec): done|partial|failed|pending. Stale (efp mismatch after an
     amend) == pending — its stored result must never be presented as current.
@@ -5346,6 +5365,37 @@ def dep_satisfied(states, a, allow_partial=False):
         return bool(allow_partial)
     return st in ("done", "skipped")
 
+def released_partials(nodes, states, recs):
+    """hw-sq1 (joint peer-estate ruling 2): the PRODUCER
+    declares what its answer is; release follows the declaration. A partial
+    releases plain after-edges ONLY when ALL hold: its node def declares
+    answer-only work (`shape: recon|review`, no `repo:`, no `publishes:`), its
+    committed record carries an EMPTY `remaining` tail (the structured harvest
+    data of est-2ek.1.165 — a record without the field reads blocking,
+    fail-closed), and its declared terminal status is absent or non-blocking
+    (same read law as the harvest_policy:validate clamp). fb-fix-2dd8de73
+    stands: undeclared shape, a non-empty tail, a blocking declared_status or a
+    missing record keep the plain edge BLOCKED. Returns the releasing ids."""
+    byid = {n["id"]: n for n in nodes}
+    out = set()
+    for nid, st in states.items():
+        rec = (recs or {}).get(nid)
+        n = byid.get(nid)
+        if st != "partial" or not isinstance(rec, dict) or n is None:
+            continue
+        if n.get("shape") not in ("recon", "review") or n.get("repo") or n.get("publishes"):
+            continue
+        if rec.get("remaining") != []:
+            continue
+        if rec.get("error_class") == "left_live_descendants":
+            continue  # #61: work provably outlived the answer — never release over a live tree (same read law as the validate clamp)
+        ds = (rec.get("harvest") or {}).get("declared_status")
+        if isinstance(ds, str) and ds.strip().lower() not in ("done", "ok", "success", "pass"):
+            continue
+        out.add(nid)
+    return out
+
+
 def dead_set(nodes, states):
     """est-ij0: ids that can never commit — `failed`, or `pending` behind a dead
     DATA edge (an after-edge not listed in the node's order_only). A dead ORDER
@@ -5365,10 +5415,13 @@ def dead_set(nodes, states):
         return memo[nid]
     return {n["id"] for n in nodes if dead(n["id"])}
 
-def release_law(nodes, states):
+def release_law(nodes, states, released=()):
     """ONE after-edge release law for runner and read model -> (deps_ok, deps_res,
-    spliced). Data edges keep dep_satisfied. An order_only edge to X is satisfied
-    when X is satisfied, OR X is dead and X's own order_only predecessors are
+    spliced). Data edges keep dep_satisfied. `released` (hw-sq1) is the set of
+    producer-declared partial ids from released_partials(): their plain edges
+    ride the same satisfaction the after_partial opt-in buys. An order_only edge
+    to X is satisfied when X is satisfied, OR X is dead and X's own order_only
+    predecessors are
     (recursively) satisfied — the convoy splice: no node inherits a dead member as
     its predecessor, and chain order among the living is preserved.
     spliced(n) -> the dead order predecessors this node is released past."""
@@ -5385,7 +5438,7 @@ def release_law(nodes, states):
     def edge_ok(n, a):
         if a in (n.get("order_only") or ()):
             return order_ok(a)
-        return dep_satisfied(states, a, allow_partial=bool(n.get("after_partial")))
+        return dep_satisfied(states, a, allow_partial=bool(n.get("after_partial")) or a in released)
     def deps_ok(n):
         return all(edge_ok(n, a) for a in n.get("after", []))
     def deps_res(n):
@@ -5941,7 +5994,10 @@ def run_state(r, *, telemetry=True, lock_state=None):
                 nodes[nid]["seat_wait"] = seat_wait_view(per)
     # e68544a37be37657 + est-ij0: the runner's own release law (partial blocks a
     # plain edge; a dead order_only predecessor is spliced) — one function, two callers.
-    deps_ok, _deps_res, _spliced = release_law(graph["nodes"], states)
+    # hw-sq1: producer-declared partials (empty tail, no blocking declared status)
+    # release their plain edges — the same set the runner's wave boundary consults.
+    deps_ok, _deps_res, _spliced = release_law(graph["nodes"], states,
+                                               released_partials(graph["nodes"], states, recs))
     last = None
     for line in events_text.splitlines()[-20:]:
         try:
@@ -6039,6 +6095,13 @@ def run_state(r, *, telemetry=True, lock_state=None):
         status = "partial"
     elif verdict.startswith("blocked by failed"):
         status = "failed"
+    elif verdict.startswith("terminated:"):
+        # terminal-record-or-completed: a kill verdict IS the completion truth —
+        # it outranks node-commit done-ness (SIGTERM landing after run.done but
+        # before the exit record must not book a killed run as done). Interrupted
+        # keeps it resumable, matching the external-kill respawn-eligible law.
+        if status == "done":
+            status = "interrupted"
     if verdict.startswith("crashed:") and (status == "interrupted" or stored_graph.get("on_exit")):
         status = "failed"  # an exit handler must never mask the recorded crash verdict
     # sys-5lnm17 (upstream of sys-ntdq1v): WHICH nodes died, derived here from the
@@ -6048,15 +6111,6 @@ def run_state(r, *, telemetry=True, lock_state=None):
     failed_nodes = [{"id": n["id"], "error": (recs[n["id"]] or {}).get("error"),
                      "error_class": (recs[n["id"]] or {}).get("error_class")}
                     for n in graph["nodes"] if states[n["id"]] == "failed"]
-    # sys-wt3cck: WHICH nodes died-but-were-harvested — the honest fold lets a
-    # validate-clamped or harvest-validated death READ done, so it is absent from
-    # failed_nodes and used to let completed launder it too (run
-    # 20261103-171453-b2p-sysizvfq9: push-pr died, the run reported done). Derived
-    # here from the SAME states/recs fold through the ONE predicate (sys-5lnm17
-    # derive-not-stored law): masked runs on disk flip with no migration.
-    completed_over_dead_node = [
-        n["id"] for n in graph["nodes"]
-        if states[n["id"]] == "done" and _died_but_harvested(n, recs[n["id"]])]
     accounting = {}
     if telemetry:
         import time as _time
@@ -6141,16 +6195,11 @@ def run_state(r, *, telemetry=True, lock_state=None):
            # never be consumed as 'finished green'. `completed` is the one field that
            # separates the two senses, derived through the SAME fold as status and
            # failed_nodes (derive-not-stored, sys-5lnm17 law): true only for a
-           # terminal done-verdict with zero failed nodes AND zero died-but-harvested
-           # nodes (sys-wt3cck: a laundered death is still a death — completed_over_dead_node
-           # names them and forces completed False, fail-closed: it can refuse green,
-           # never grant it). The key rides only runs
+           # terminal done-verdict with zero failed nodes. The key rides only runs
            # that carry a recorded terminal verdict — a run with no verdict stamped
            # yet keeps its exact pre-key key set (the est-3acn D7 verbatim-key-set
            # law), so the field is honest absence before terminal, never a guess.
-           **({"completed": (status == "done" and not failed_nodes
-                             and not completed_over_dead_node),
-               "completed_over_dead_node": completed_over_dead_node}
+           **({"completed": (status == "done" and not failed_nodes)}
               if isinstance(exit_state, dict) and exit_state.get("reason") else {}),
            "started": (jload(r / "run.json", {}) or {}).get("started"),
            "owner": (jload(r / "run.json", {}) or {}).get("owner"),
@@ -6652,7 +6701,13 @@ def amend_preview(r, new_nodes):
 
 SEATS_DEFAULT = 4          # the semaphore's shipped default (wf.py binds the same law)
 SEAT_CAP_FLOOR = 4         # the smallest cap a raise/override may name (est-2ek.1.856)
-SEAT_CAP_CEILING = 16      # the largest cap config/env may name (est-2ek.1.856)
+# The band is a SANITY BRACKET (order-of-magnitude typo refusal), not a capacity
+# model: est-g2xx measured ~13 concurrent seats half-hanging ONE estate's pinned
+# local sglang server (30+ min silent stalls) — a sizing note for local-server
+# hosts to size their own raise, never the band's top. 64 admits deliberate
+# raises (17..64) while real typo shapes (160/444/1600) are still refused a full
+# order of magnitude above the bracket (hw-e65; agreed with downstream review).
+SEAT_CAP_CEILING = 64      # the largest cap config/env may name (est-2ek.1.856, widened hw-e65)
 
 
 class SeatCapError(ValueError):

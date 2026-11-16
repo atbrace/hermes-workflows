@@ -67,7 +67,7 @@ check("no sentence presents max_seats as a raise", not bad, (bad[0][:200] if bad
 # Mutation probe (replaces the old tautological bite-check): the direction regex
 # must reject the backwards sentence as authored at daa0aba.
 MUTATION = ("So size a wave to the resolved seat cap, or raise it for the run with "
-            "the top-level graph key `max_seats`: an integer in [4,16].")
+            "the top-level graph key `max_seats`: an integer in [4,64].")
 check("direction law bites (mutation probe)", bool(RAISE_CLAIM.search(MUTATION)))
 
 print("ALL PASS: grammar states the seat-cap trap with the engine's direction" if ok else "FAILURES")
