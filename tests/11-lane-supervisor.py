@@ -31,33 +31,48 @@ def until(pred,seconds=5):
 def main():
     with tempfile.TemporaryDirectory(prefix='wf11-lane-sup-') as td:
         td=Path(td);runs=td/'runs';runs.mkdir()
+        def release_all():
+            # The WAIT park is unbounded, so every exit path — failed asserts
+            # included — releases parked children before the tempdir dies. If
+            # teardown wins the race to a file the child has not yet noticed,
+            # the fixture treats the vanished release directory as a release
+            # and drains (guarantee pinned by test_harness_probe_and_park_races).
+            for c in range(20):
+                (td/f'release-{c}').touch()
         env={**os.environ,'HERMES_HOME':str(td),'WF_RUNS_ROOT':str(runs),
              'HERMES_WF_HERMES_BIN':str(ROOT/'tests/fixtures/11-fake-hermes.py')}
         with patch.dict(os.environ,env,clear=True):
-            for cycle in range(20):
-                key='lane-sup/'+str(cycle)
-                graph={'name':'lane-sup-'+str(cycle),'nodes':[{'id':'a','type':'agent','goal':'SLEEP 0.25'}]}
-                start=door.act_run({'graph':graph,'lane_key':key})
-                assert 'run_id' in start,start
-                rid=start['run_id'];r=runs/rid
-                assert until(lambda:common.runner_alive(r)),(cycle,'runner never live')
-                live=door.act_status({'lane_key':key})
-                assert live['runner_live'] == common.runner_alive(r) == True,(cycle,live)
-                pid=int((r/'wf.pid').read_text())
-                os.kill(pid,signal.SIGKILL)
-                assert until(lambda:not common.runner_alive(r)),(cycle,'kill failed')
-                dead=door.act_status({'lane_key':key})
-                assert dead['runner_live'] == common.runner_alive(r) == False,(cycle,dead)
-                assert dead['needs_resume'],(cycle,dead)
-                repeat=door.act_run({'graph':graph,'lane_key':key})
-                assert repeat.get('deduped') and repeat['run_id']==rid,(cycle,repeat)
-                assert not common.runner_alive(r),(cycle,'dedupe spawned runner')
-                door.act_wait({'run_id':rid,'timeout':1})
-                assert until(lambda:door.act_status({'lane_key':key})['state']=='done',5),(cycle,'not done')
-                final=door.act_status({'lane_key':key})
-                assert final['runner_live'] == common.runner_alive(r),(cycle,final)
-                assert not (r/'runner.log').read_text().count('WORKFLOW_BUSY'),(cycle,'busy crash')
-                print(json.dumps({'cycle':cycle+1,'status':final['state'],'live':final['runner_live']}),flush=True)
+            try:
+                for cycle in range(20):
+                    key='lane-sup/'+str(cycle)
+                    # The child parks on the release file and can only finish after
+                    # the kill below: a finite SLEEP let a slow shard reach done
+                    # first and die on the needs_resume assert (CI flake).
+                    graph={'name':'lane-sup-'+str(cycle),'nodes':[{'id':'a','type':'agent','goal':f'WAIT {td}/release-{cycle}'}]}
+                    start=door.act_run({'graph':graph,'lane_key':key})
+                    assert 'run_id' in start,start
+                    rid=start['run_id'];r=runs/rid
+                    assert until(lambda:common.runner_alive(r)),(cycle,'runner never live')
+                    live=door.act_status({'lane_key':key})
+                    assert live['runner_live'] == common.runner_alive(r) == True,(cycle,live)
+                    pid=int((r/'wf.pid').read_text())
+                    os.kill(pid,signal.SIGKILL)
+                    (td/f'release-{cycle}').touch()  # release the parked child only after the kill
+                    assert until(lambda:not common.runner_alive(r)),(cycle,'kill failed')
+                    dead=door.act_status({'lane_key':key})
+                    assert dead['runner_live'] == common.runner_alive(r) == False,(cycle,dead)
+                    assert dead['needs_resume'],(cycle,dead)
+                    repeat=door.act_run({'graph':graph,'lane_key':key})
+                    assert repeat.get('deduped') and repeat['run_id']==rid,(cycle,repeat)
+                    assert not common.runner_alive(r),(cycle,'dedupe spawned runner')
+                    door.act_wait({'run_id':rid,'timeout':1})
+                    assert until(lambda:door.act_status({'lane_key':key})['state']=='done',5),(cycle,'not done')
+                    final=door.act_status({'lane_key':key})
+                    assert final['runner_live'] == common.runner_alive(r),(cycle,final)
+                    assert not (r/'runner.log').read_text().count('WORKFLOW_BUSY'),(cycle,'busy crash')
+                    print(json.dumps({'cycle':cycle+1,'status':final['state'],'live':final['runner_live']}),flush=True)
+            finally:
+                release_all()
     print('20/20 lane-supervisor kill/resume')
 
 if __name__=='__main__':main()

@@ -12,6 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import wf
 
 
+def probe_graph_lock(run, hold=None):
+    # Shared probe: flock on separate opens conflicts even inside one
+    # process, so two committer threads must not probe EXclusively; SH|NB
+    # is still refused while the product retains graph.lock exclusively.
+    with (run / "graph.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        if hold is not None:
+            hold()
+
+
 def concurrent_failures():
     with tempfile.TemporaryDirectory(prefix="wf-native-concurrent-") as tmp:
         run = Path(tmp)
@@ -43,8 +53,7 @@ def concurrent_failures():
                     def deliver(sid, text, tid, home):
                         # Delivery must not retain graph.lock. A different thread
                         # must be able to read the committed graph during admission.
-                        with (run / "graph.lock").open("a+b") as lock:
-                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        probe_graph_lock(run)
                         delivery_barrier.wait(5)
                         assert not release_healthy.is_set(), "sibling drained before admission"
                         admissions.append(tid)
