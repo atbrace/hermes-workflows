@@ -178,7 +178,7 @@ See [grammar](references/grammar.md#terminal-postmortem-optional) for validation
 publication guards, and crash recovery.
 
 - `node.failed` events carry `error_class` from the closed set defined in code
-  (`wf.py ERROR_CLASSES`) — `answer_schema_invalid | bead_close | budget_exhausted | cancelled | cap_exhausted | config_input | crashed | declared_failure | early_death | effect_receipt |
+  (`wf.py ERROR_CLASSES`) — `answer_schema_invalid | bead_close | budget_exhausted | cancelled | cap_exhausted | ceiling_exceeded | config_input | crashed | declared_failure | early_death | effect_receipt |
   fanout_empty | fatal_quota | forbidden_model | incomplete_work |
   inputs | item_record | killed | lane_wreckage | lease_busy | left_live_descendants | malformed_turn | precondition | provider_400 | quorum |
   ratelimit |

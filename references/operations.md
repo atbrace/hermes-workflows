@@ -228,3 +228,28 @@ At the wave boundary the runner writes `budget_ledger.json` (`exhausted_nodes`,
 (`cap_tokens`, `spent_tokens`, `per_node`, ledger fields) — terminal, `next: []`.
 Raising a cap is an amend: `budget` is policy, excluded from the node efp (same law as
 `run_budget`), so committed nodes stay frozen and replay-skip holds.
+
+## Per-node call/token ceilings (`ceiling_exceeded`)
+
+`max_api_calls` / `max_input_tokens` (non-negative ints) bound one agent node's own
+API calls and prompt tokens WHILE IT RUNS — the mid-run sibling of RunBudget's
+pre-dispatch refusal. The enforcement reader is the telemetry sidecar the ledger
+already produces (`node_telemetry.py`, rewritten atomically per child event): the
+runner samples it read-only at the poll seam it already keeps (the same cadence as
+the process-tree watch), so enforcement adds no new timer and no new channel. It
+samples once more at child exit — a ceiling blown just before exit cannot commit
+`done`. Ceilings are PER ATTEMPT: a re-driven attempt rewrites the sidecar, so a
+retry gets a fresh ceiling and worst-case node exposure is attempts x ceiling (both
+bounded). When
+an observed counter EXCEEDS the declared ceiling (observed > declared; a ceiling of
+0 makes any recorded event fatal) the runner SIGKILLs the child's process group like
+the wall-kill, proves the tree dead (`tree_proof` on the record) and commits the node
+`failed` with `error_class: ceiling_exceeded` — the error names WHICH ceiling, the
+declared value, and the observed value. The class is terminal: the spawn already
+happened (so it is not a preflight refusal), and it sits outside both retry ladders
+and every fallback whitelist, like `budget_exhausted`. `attempts` is never re-driven.
+A node that declared ceilings reports its declared shape in the accounting
+(`accounting.task_total_ceiling` and the node clock), where the ledger-only world
+said `"not_enforced"`; undeclared nodes read `"not_enforced"` verbatim. The
+sidecar is still folded and consumed at settle, so the death record carries the full
+`telemetry` aggregate and the run dir stays bounded.

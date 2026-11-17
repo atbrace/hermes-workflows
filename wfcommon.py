@@ -781,6 +781,12 @@ ID_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # graph it baked itself. `reasoning` is validated per node (Q5).
 AGENT_KEYS = {"id", "type", "after", "goal", "context", "schema", "model", "provider", "toolsets",
               "max_turns", "timeout", "run_budget", "inputs", "fanout", "reasoning",
+              # HW-CEIL (fix/node-call-ceilings): per-node call/token ceilings,
+              # validated like the other numeric budget knobs (non-negative int).
+              # The runner samples the telemetry sidecar at its existing poll seam
+              # and fails the node typed `ceiling_exceeded` when observed EXCEEDS
+              # declared; terminal, like budget_exhausted.
+              "max_api_calls", "max_input_tokens",
               # est-3acn: per-node RunBudget — budget:{"tokens": N}, a token cap
               # checked pre-dispatch at the child_metrics join seam. Distinct
               # currency from run_budget (wall-seconds); USD excluded per the
@@ -2011,6 +2017,12 @@ def validate_graph_errors(nodes, *, admission=False, defaults=None):
                 # fb-validator-duo (2026-09-26): value AND cap in every numeric-bound
                 # rejection; the parenthetical is kept for substring-matchers.
                 E(nid, k, f"{k} {v!r} exceeds cap {hi} (must be a number in (0, {hi}])")
+        for k in ("max_api_calls", "max_input_tokens"):
+            # HW-CEIL: the ceiling knobs — non-negative ints (0 = any recorded
+            # event kills); same door law as the run_budget family above.
+            v = n.get(k)
+            if v is not None and (type(v) is not int or v < 0):
+                E(nid, k, f"{k} {v!r} invalid (must be a non-negative int)")
         if n.get("budget") is not None:
             # est-3acn: per-node RunBudget — tokens-only, positive integer.
             for m_ in budget_shape_errors(n["budget"], f"node {nid}"):
@@ -5855,11 +5867,22 @@ def _clock_ledger(r, node_ids):
     return indexed, coverage
 
 
+def _declared_ceiling(n):
+    """HW-CEIL: the declared ceiling shape of one node def, or the verbatim
+    'not_enforced' when it declared none. Enforcement lives in the runner
+    (wf.run_child samples the telemetry sidecar at its poll seam); this is the
+    honest accounting of what the node promised."""
+    d = {k: n[k] for k in ("max_api_calls", "max_input_tokens") if type(n.get(k)) is int}
+    return d or "not_enforced"
+
+
 def execution_clocks(n, view, waits, now_s, ledger=(), ledger_available=True):
     """Read-only clocks; queue callback time is later than admission-clock start.
 
     Consequently its remaining value is an upper bound, never a dispatch ETA.
-    The runner has per-attempt walls, not a task-total authorization ceiling.
+    Without declared ceilings the runner has per-attempt walls, not a task-total
+    authorization ceiling; a node that declared max_api_calls / max_input_tokens
+    reports that declared shape as its task_total_ceiling (HW-CEIL).
     """
     wall = n.get("timeout")
     queue = []
@@ -5924,7 +5947,9 @@ def execution_clocks(n, view, waits, now_s, ledger=(), ledger_available=True):
                      "unknown_intervals": unknown if ledger_available or unknown else None,
                      "completeness": "unknown", "lower_bound": True,
                      "basis": "spawn-ledger intervals; cumulative across attempts"},
-            "task_total_ceiling": "not_enforced"}
+            # HW-CEIL: a node that declared ceilings reports its declared shape;
+            # the honest value, not a redesign (same "absent reads not_enforced").
+            "task_total_ceiling": _declared_ceiling(n)}
 
 
 BUDGET_TOKEN_COUNTERS = ("tokens_in", "tokens_out", "cache_read", "reasoning")
@@ -6192,7 +6217,12 @@ def run_state(r, *, telemetry=True, lock_state=None):
                     counts[state if state in ("done", "partial", "failed", "cancelled") else "unknown"] += 1
                 nodes[nid]["item_counts"] = counts
         unknown_counts = [v["clocks"]["work"]["unknown_intervals"] for v in nodes.values()]
-        accounting = {"task_total_ceiling": "not_enforced", "coverage": "best_effort",
+        # HW-CEIL: where the run-level ceiling was the bare "not_enforced", an
+        # agent node that declared ceilings reports its declared shape.
+        _ceilings_by_node = {n["id"]: _declared_ceiling(n) for n in graph["nodes"]
+                             if n.get("type") == "agent" and _declared_ceiling(n) != "not_enforced"}
+        accounting = {"task_total_ceiling": _ceilings_by_node or "not_enforced",
+                      "coverage": "best_effort",
                       "completeness": "unknown", "lower_bound": True, "ledger": ledger_coverage,
                       "basis": "observed child-seconds; sum across nodes, items and attempts, not elapsed wall time",
                       "observed_work_s": sum(v["clocks"]["work"]["observed_s"] for v in nodes.values()),
