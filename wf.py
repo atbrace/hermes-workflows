@@ -10442,6 +10442,20 @@ def _park_watch_cfg():
     return pw.config(wfcommon) if pw is not None else None
 
 
+def _prune_cascade_commit(run, byid, nodes, states):
+    """Commit the derived prune-skips as efp-stamped facts (replay-skip law) and
+    return the ids. ONE copy of the cascade commit: the top-of-loop pass and the
+    hw-p2g wave-boundary gate drain must never diverge on what a pruned node
+    looks like on disk."""
+    did = []
+    for nid in prune_states(nodes, states):
+        save_node(run, byid[nid], byid,
+                  {"status": "skipped", "output": {"skipped": "all deps pruned"}})
+        log(run, "node.skipped", node=nid, reason="all deps pruned")
+        did.append(nid)
+    return did
+
+
 def _settle_park_hold(run, gate, byid, hm, reason):
     """Settle a parked human-gate hold failed, loudly (park watchdog). The loud
     notice is the run's own run.failed wake (B3 identity, one-shot by law); this
@@ -10456,6 +10470,24 @@ def _settle_park_hold(run, gate, byid, hm, reason):
     save_node(run, gate, byid, {"status": "failed", "error": err})
     log(run, "gate.watchdog_settled", node=gate["id"], reason=reason, kind="human-hold",
         strikes=int(watch.get("strikes", 0) or 0), blocked_s=held_s)
+
+
+def _gate_release_commit(run, gate, byid, ans):
+    """hw-p2g: the release commit, shared by the runner pass and the wave-boundary
+    drain so the two decisions can never diverge."""
+    save_node(run, gate, byid, {"status": "done", "output": ans})
+    log(run, "gate.released", node=gate["id"])
+
+
+def _gate_skip_commit(run, gate, byid):
+    """hw-p2g: the when-false skip commit (the exact pre-existing shape), shared
+    by the wait-gate path, the plain-gate path and the wave-boundary drain."""
+    rec = {"gate": "skipped", "when": gate.get("when"), "_def": efp(byid, gate), "fp_rule_version": FP_RULE_VERSION}
+    (run / "gates").mkdir(exist_ok=True)   # 5c37b19: a deleted gates/ degrades
+    (run / "gates" / f"{gate['id']}.json").write_text(json.dumps(rec))   # to a recreate, not a runner kill
+    save_node(run, gate, byid, {"status": "skipped" if gate.get("on_skip", "prune") == "prune" else "done", "output": rec})
+    log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "prune"))
+    return rec
 
 
 def park_gate(run, run_id, gate, byid, consume_markers):
@@ -11261,9 +11293,7 @@ def main(run_id):
             finalize(run, rs.graph, "partial")
             return "budget_exhausted"
         # prune propagation: derived skips become efp-stamped facts (replay-skip law)
-        for nid in prune_states(rs.nodes, states):
-            save_node(run, rs.byid[nid], rs.byid, {"status": "skipped", "output": {"skipped": "all deps pruned"}})
-            log(run, "node.skipped", node=nid, reason="all deps pruned")
+        _prune_cascade_commit(run, rs.byid, rs.nodes, states)
         # e68544a37be37657 (partial blocks a plain edge) + #4 (partial resolves) +
         # est-ij0 (a dead order_only predecessor is spliced) —
         # wfcommon.release_law, shared with the read model.
@@ -11528,6 +11558,64 @@ def main(run_id):
                         continue
                 spawnable.append(n)
             if spawnable:
+                # hw-p2g (partial-gate-wedge): the ZERO-SPAWN gate decisions
+                # evaluate HERE, at the wave boundary, BEFORE the wave spawns —
+                # a released or when-false-skipped gate must not queue behind a
+                # sibling lane's wall-clock build (the incident's 50 silent
+                # minutes). Everything that PARKS or HOLDS stays after the wave:
+                # parking before a ready wave would strand sibling agents that
+                # could have started. Loop to fixpoint — a released/skipped gate
+                # cascades new ready gates and new prune-skips. BREAK after each
+                # commit so the next pass re-runs the prune cascade FIRST: the
+                # standing top-of-loop order is prune, then decide, and a gate
+                # must never take its own decision one pass before the cascade
+                # claims it (a staged answer would run a subtree the base
+                # prunes). The pick law (est-1n7gx declaration order) is
+                # untouched: this drains decisions, never the one-gate-per-pass
+                # pick below it.
+                _drain_pass = True
+                while _drain_pass:
+                    _drain_pass = False
+                    if _prune_cascade_commit(run, rs.byid, rs.nodes, states):
+                        _drain_pass = True
+                    for g in rs.nodes:
+                        if (kind(g).spawns is not False or states[g["id"]] != "pending"
+                                or not deps_ok(g)
+                                or (g.get("requires") and not deps_res(g))):
+                            continue
+                        _missing = _unmet_requires(g, outputs, prov) if g.get("requires") else []
+                        if _missing:
+                            _fail_precondition(run, g, rs.byid, _missing)
+                            states[g["id"]] = "failed"   # the drain's own view sees the verdict
+                            _drain_pass = True
+                            break
+                        _ans = gate_answer_valid(run, g, rs.byid)
+                        if _ans is not None:
+                            _gate_release_commit(run, g, rs.byid, _ans)
+                            states[g["id"]] = "done"
+                            outputs[g["id"]] = _ans
+                            _drain_pass = True
+                            break
+                        try:
+                            _cond = when_true(g, outputs)
+                        except Exception as _e:
+                            _cond = True   # a broken `when` fails safe: held, decided after the wave
+                            log(run, "gate.when_error", node=g["id"], error=str(_e))
+                        if not _cond:
+                            _rec = _gate_skip_commit(run, g, rs.byid)
+                            if g.get("on_skip", "prune") != "prune":
+                                outputs[g["id"]] = _rec   # only DONE outputs publish (reload law)
+                            states[g["id"]] = "skipped" if g.get("on_skip", "prune") == "prune" else "done"
+                            _drain_pass = True
+                            break
+                # A ready gate that still defers this wave is no longer silent:
+                # journal WHY (the gate stays parked/held only after the wave).
+                _wave = [n["id"] for n in spawnable]
+                for g in rs.nodes:
+                    if (kind(g).spawns is False and states[g["id"]] == "pending"
+                            and deps_ok(g)
+                            and (not g.get("requires") or deps_res(g))):
+                        log(run, "gate.deferred", node=g["id"], by=_wave)
                 with ThreadPoolExecutor(max_workers=meta.get("concurrency", DEFAULT_CONCURRENCY)) as ex:
                     list(ex.map(lambda n: run_agent_node(run, meta, rs.byid, n, outputs,
                                                          steering.pop(n["id"], None) or []), spawnable))
@@ -11551,8 +11639,7 @@ def main(run_id):
                 continue
             ans = gate_answer_valid(run, gate, rs.byid)
             if ans is not None:
-                save_node(run, gate, rs.byid, {"status": "done", "output": ans})
-                log(run, "gate.released", node=gate["id"])
+                _gate_release_commit(run, gate, rs.byid, ans)
                 continue
             if gate.get("wait"):
                 # `when` still applies first: a false `when` skips a wait-gate too.
@@ -11562,11 +11649,7 @@ def main(run_id):
                     cond = True
                     log(run, "gate.when_error", node=gate["id"], error=str(e))
                 if not cond:
-                    rec = {"gate": "skipped", "when": gate.get("when"), "_def": efp(rs.byid, gate), "fp_rule_version": FP_RULE_VERSION}
-                    (run / "gates").mkdir(exist_ok=True)   # 5c37b19: a deleted gates/ degrades
-                    (run / "gates" / f"{gate['id']}.json").write_text(json.dumps(rec))   # to a recreate, not a runner kill
-                    save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip", "prune") == "prune" else "done", "output": rec})
-                    log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "prune"))
+                    _gate_skip_commit(run, gate, rs.byid)
                     continue
                 res = park_gate(run, run_id, gate, rs.byid, consume_markers)
                 if res == "stopped": return "stopped"
@@ -11577,11 +11660,7 @@ def main(run_id):
                 cond = True
                 log(run, "gate.when_error", node=gate["id"], error=str(e))
             if not cond:
-                rec = {"gate": "skipped", "when": gate.get("when"), "_def": efp(rs.byid, gate), "fp_rule_version": FP_RULE_VERSION}
-                (run / "gates").mkdir(exist_ok=True)   # 5c37b19: a deleted gates/ degrades
-                (run / "gates" / f"{gate['id']}.json").write_text(json.dumps(rec))   # to a recreate, not a runner kill
-                save_node(run, gate, rs.byid, {"status": "skipped" if gate.get("on_skip", "prune") == "prune" else "done", "output": rec})
-                log(run, "gate.skipped", node=gate["id"], on_skip=gate.get("on_skip", "prune"))
+                _gate_skip_commit(run, gate, rs.byid)
                 continue
             log(run, "gate.held", node=gate["id"], question=gate.get("question"),
                 options=gate.get("options"), context=gate.get("context"))
