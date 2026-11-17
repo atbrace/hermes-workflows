@@ -54,6 +54,26 @@ if "TELEMETRY-EMIT" in q and os.environ.get("HERMES_WF_TELEMETRY") and os.enviro
         json.dump({"api_calls": 3, "tool_calls": 2, "input_tokens": 100,
                    "output_tokens": 40, "total_tokens": 140}, _tf)
     os.replace(_tp + ".tmp", _tp)
+# HW-CEIL: CEILING-EMIT [API=<n>] [SLEEP=<s>] [STEP=<s>] — the runaway-child
+# shape: rewrite the sidecar PER EVENT with api_calls climbing to <n> (the real
+# recorder's rewrite cadence), then linger so the runner must sample the file
+# mid-flight and enforce a declared ceiling. Inert without the prompt marker.
+if "CEILING-EMIT" in q and os.environ.get("HERMES_WF_TELEMETRY") and os.environ.get("HERMES_WF_RUN_DIR"):
+    _cw_api = next((int(t[4:]) for t in q.split() if t.startswith("API=")), 4)
+    _cw_sleep = next((float(t[6:]) for t in q.split() if t.startswith("SLEEP=")), 30.0)
+    _cw_step = next((float(t[5:]) for t in q.split() if t.startswith("STEP=")), 0.4)
+    _cw_k = os.environ["HERMES_WF_TELEMETRY"].replace("/", "_").replace("\\", "_").replace(":", "_")
+    _cw_d = os.path.join(os.environ["HERMES_WF_RUN_DIR"], "telemetry")
+    os.makedirs(_cw_d, exist_ok=True)
+    _cw_p = os.path.join(_cw_d, _cw_k + ".json")
+    for _cw_i in range(1, _cw_api + 1):
+        with open(_cw_p + ".tmp", "w") as _cw_f:
+            json.dump({"api_calls": _cw_i, "tool_calls": 1,
+                       "input_tokens": 10 * _cw_i, "output_tokens": 0,
+                       "total_tokens": 10 * _cw_i}, _cw_f)
+        os.replace(_cw_p + ".tmp", _cw_p)
+        time.sleep(_cw_step)
+    time.sleep(_cw_sleep)
 # est-pygyy (#56): EFFECT-EMIT <rel/path> BYTES=<n> — the child publishes its
 # artifact at spawn time (cwd = the child work dir <run>/work/<node>[.<i>],
 # A4), so the runner's effect-receipt gate is proven to measure bytes AT the

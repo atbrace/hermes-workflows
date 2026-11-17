@@ -3215,6 +3215,16 @@ ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            # whitelist; the runner finalizes a graceful `partial`
                            # and budget_ledger.json names what never launched.
                            "budget_exhausted",
+                           # HW-CEIL (fix/node-call-ceilings): a node that declared
+                           # max_api_calls / max_input_tokens EXCEEDED its ceiling
+                           # while live — the runner sampled the telemetry sidecar
+                           # at its existing poll seam, killed the child tree (the
+                           # same death proof the wall-kill gives) and committed this
+                           # typed death naming the ceiling and the observed value.
+                           # The spawn already happened, so this is not a preflight
+                           # refusal: terminal like budget_exhausted — absent from
+                           # every retry/fallback whitelist, outside BOTH ladders.
+                           "ceiling_exceeded",
                            # est-2ek.1.660: a (re-)drive refused at startup because a
                            # declared lane still carries the dead attempt's
                            # uncommitted TRACKED wreckage — bank it, then re-drive.
@@ -7791,12 +7801,64 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
         cue_alive = not _budget_cue_claimed(run, node, index)
         cue_next = 0.0
         cue_home = route.get("profile_home") if route else None
+        # HW-CEIL: per-node ceiling enforcement. The sidecar is rewritten per
+        # child event (node_telemetry.py), so one read-only sample on the cadence
+        # the runner already keeps is the whole enforcement cost. EXCEED means
+        # observed > declared; the kill mirrors the wall-kill leg and the record
+        # commits typed ceiling_exceeded (terminal, outside both ladders).
+        # Ceilings are PER ATTEMPT: the sidecar is rewritten per attempt (the
+        # atomic-rewrite law pinned by test_node_telemetry_sidecar_wqml6), so a
+        # re-driven attempt starts fresh and worst-case node exposure is
+        # attempts x ceiling — both bounded. Sampled at the poll cadence AND
+        # once at child exit, so a ceiling blown just before exit cannot
+        # commit done (test leg E-fast).
+        _ceilings = []                       # fixed order: api leg first
+        for _ck, _obs_ in (("max_api_calls", "api_calls"),
+                           ("max_input_tokens", "input_tokens")):
+            _cv_ = node.get(_ck)
+            if type(_cv_) is int:            # door-validated non-negative int
+                _ceilings.append((_obs_, _ck, _cv_))
+        _ceil_nt = _node_telemetry() if _ceilings else None
+        _ceil_key = _ceil_nt.node_key(skey) if _ceil_nt and skey else None
+        ceiling_hit = None
+
+        def _ceil_sample():
+            # One read-only read of the sidecar; returns the hit tuple or None.
+            if not _ceil_key or _ceil_nt is None:
+                return None
+            _tele = _ceil_nt.load(run, _ceil_key)   # read-only; folded+consumed at settle
+            for _obs_, _ck, _cv in _ceilings:
+                _ov = (_tele or {}).get(_obs_)
+                if isinstance(_ov, (int, float)) and not isinstance(_ov, bool) \
+                        and _ov > _cv:
+                    return (_ck, _cv, _obs_, _ov)
+            return None
+
+        def _ceil_kill(_p):
+            try:
+                os.killpg(os.getpgid(_p.pid), signal.SIGKILL)  # group leader
+            except Exception:
+                try: _p.kill()
+                except Exception: pass
+            try:
+                _p.communicate(timeout=10)  # always reap
+            except Exception:
+                pass
+
         # #18 child liveness (replaces the blind blocking communicate): poll the
         # spawn log — a child that has written NOTHING by silence_deadline never
         # got past its first API call (frontporch-rem died after 732 s blind).
         while True:
             rc = proc.poll()
             if rc is not None:
+                # HW-CEIL (council leg): the exit race — a child that blew a
+                # ceiling and exited between polls must not commit done. This
+                # final sample is the sidecar's last read before the settle
+                # fold; the kill mops any still-live stragglers of its tree
+                # (the leader itself is already reaped).
+                ceiling_hit = _ceil_sample()
+                if ceiling_hit:
+                    _ceil_kill(proc)
                 break
             now_s = time.time()
             if now_s >= tree_next_watch:
@@ -7809,6 +7871,11 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                     if _hb_pid is not None:
                         _stamp_heartbeat(hb_path, _hb_pid)
                         hb_stamped = True
+                if _ceil_key:
+                    ceiling_hit = _ceil_sample()
+                    if ceiling_hit:
+                        _ceil_kill(proc)
+                        break            # leave the poll loop; judged below like the wall
             if cue_alive and now_s >= cue_next:
                 cue_next = now_s + BUDGET_CUE_POLL_S
                 if _budget_cue_inject(run, node, index, skey, cue_home,
@@ -7937,6 +8004,26 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             evd.update(_kt)
         return {"status": "failed", "error": "killed by lane kill (action=kill)",
                 "error_class": "killed", "raw": (out or "")[-2000:], "ms": ms,
+                "final": final_reply, **sk, **evd}
+    if ceiling_hit:
+        # HW-CEIL: attempt end IS the child tree's end — prove it the way the
+        # wall-kill quarantine demands (_wait_pids_dead re-walk), then commit
+        # the typed terminal death naming the ceiling and the observed value.
+        _ck, _cv, _obs_, _ov = ceiling_hit
+        _dead, _stuck = _wait_pids_dead(sorted(tree_seen | {proc.pid}),
+                                        _proctree_kill_proof_s(meta))
+        evd["tree_proof"] = "dead" if _dead else "stuck"
+        if not _dead:
+            evd["tree_stuck_pids"] = _stuck
+        log(run, ("item." if index is not None else "node.") + "ceiling_kill",
+            node=node["id"], index=index, spawn=spawn_no, pid=proc.pid,
+            ceiling=_ck, declared=_cv, observed=_ov, proof=evd["tree_proof"])
+        return {"status": "failed",
+                "error": f"ceiling_exceeded: node declared {_ck}={_cv}; the telemetry "
+                         f"sidecar carried {_obs_}={_ov} at the sample instant (child tree "
+                         f"ended at the seam, {evd['tree_proof']}; never retried)",
+                "error_class": "ceiling_exceeded", "raw": (out or "")[-2000:], "ms": ms,
+                "ceiling": {_ck: _cv}, "ceiling_observed": _ov,
                 "final": final_reply, **sk, **evd}
     if early_death:
         return {"status": "failed",
