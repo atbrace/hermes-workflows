@@ -22,8 +22,11 @@ Two plugin-level gates pin this run:
 
 2. orphaned-run status: a lane-ledger entry whose run dir does NOT exist on
    disk — the ledger's in-progress claim that the census could not see
-   through — surfaces as state 'orphaned' from act_status(lane_key=...) and
-   from the act_run dedupe row, instead of a forever-'pending' ghost.
+   through — surfaces as state 'orphaned' from act_status(lane_key=...),
+   instead of a forever-'pending' ghost. orphaned is NOT a dedupe lease: a
+   re-submit on that lane_key admits a fresh run (overwriting the entry) and
+   names the ghost as superseded_orphan — a gone dir cannot be resumed, so
+   dedup would strand the key forever.
 
 Stdlib only; no network; the spawn is stubbed so nothing ever launches.
 """
@@ -33,6 +36,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -231,10 +235,54 @@ class RunDirProof199(unittest.TestCase):
         row = self.door.act_status({"lane_key": key})
         self.assertEqual(row["run_id"], rid)
         self.assertEqual(row["state"], "orphaned", row)
-        # dedupe row on a re-submit says the same thing, loudly
+        # run ids are second-granularity timestamps; cross a second boundary so
+        # the fresh run provably gets a DIFFERENT id.
+        time.sleep(1)
+        # FLIP (orphaned-dedup fix): an orphaned incumbent is a LOUD status,
+        # not a permanent lease — a dir that is gone cannot be resumed (wait
+        # answers unknown run_id), so the re-submit admits a fresh run, names
+        # the superseded ghost id, and the lane entry moves to the new dir.
         again = self.door.act_run({"graph": G, "lane_key": key})
-        self.assertTrue(again.get("deduped"), again)
-        self.assertEqual(again.get("state"), "orphaned", again)
+        self.assertNotIn("deduped", again)
+        self.assertNotEqual(again["run_id"], rid, again)
+        self.assertEqual(again.get("superseded_orphan"), rid, again)
+        self.assertTrue((self.root / again["run_id"]).is_dir())
+        row2 = self.door.act_status({"lane_key": key})
+        self.assertEqual(row2["run_id"], again["run_id"], row2)
+        self.assertNotEqual(row2["state"], "orphaned", row2)
+
+    def test_ghost_lane_entry_admits_fresh_run(self):
+        # A lane entry pointing at a run id whose dir never existed under this
+        # root (written directly): the incumbent reads orphaned, so the key
+        # must not be stranded — the fresh run is admitted and the ghost id is
+        # reported as superseded.
+        key = "lane199/orphan-dedup"
+        path, _ = self.door._lane_paths(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"lane_key": key, "run_id": "ghost199",
+                                    "claimed_at": "2026-01-01T00:00:00+00:00"}))
+        again = self.door.act_run({"graph": G, "lane_key": key})
+        self.assertNotIn("deduped", again)
+        self.assertEqual(again.get("superseded_orphan"), "ghost199", again)
+        self.assertTrue((self.root / again["run_id"]).is_dir())
+
+    def test_quarantine_rename_admits_fresh_run(self):
+        # The estate wedge-quarantine shape, end to end: the run dir is
+        # renamed to <rid>.quarantined-wedge (find_run matches exact dir names,
+        # so the incumbent reads orphaned); a re-submit on the same lane_key
+        # gets a NEW run_id and the quarantine dir is left alone.
+        key = "lane199/quarantine"
+        a = self.door.act_run({"graph": G, "lane_key": key})
+        rid = a["run_id"]
+        shutil.move(self.root / rid, self.root / f"{rid}.quarantined-wedge")
+        time.sleep(1)   # cross the run-id second boundary (see flip test)
+        again = self.door.act_run({"graph": G, "lane_key": key})
+        self.assertNotIn("deduped", again)
+        self.assertNotEqual(again["run_id"], rid, again)
+        self.assertEqual(again.get("superseded_orphan"), rid, again)
+        self.assertTrue((self.root / f"{rid}.quarantined-wedge").is_dir())
+        self.assertEqual(self.door.act_status({"lane_key": key})["run_id"],
+                         again["run_id"])
 
     def test_live_and_normal_lane_states_unchanged(self):
         # Byte-compat: a normal (non-orphan) lane row keeps the exact key set

@@ -90,9 +90,9 @@ delegated subagent; `wait` = OPTIONAL blocking observation, the only revive verb
 - Optional typed `params` contract (pin/tune) with node `where`/`by` door-time seams: the door materializes, refuses every violation in one answer, and stamps the reproducibility triple. [grammar](references/grammar.md#params--the-typed-contract-and-the-door-time-seam-optional).
 - No double-dispatch for pollers: `run` with `lane_key:<key>` — while an UNFINISHED
   incumbent holds the key, a second `run` is deduped, never spawns. `needs_resume`
-  means `wait` it — never replace it; `stop` is the explicit abandonment. Keys are
-  global per runs root; prefix `<team>/` yourself. Details:
-  [operations](references/operations.md).
+  means `wait` it — never replace it; `stop` is the explicit abandonment. An
+  `orphaned` incumbent (run dir gone) is superseded, reported as `superseded_orphan`.
+  Keys are global per runs root; prefix `<team>/` yourself. [operations](references/operations.md).
 - Report a finished run by metrics (token in/out, api calls, tool calls), not the
   dollar figure: `estimated_cost_usd` is a price-table estimate (subscription routes
   report `included`) and reads badly as spend.
