@@ -862,7 +862,7 @@ WORKFLOW_PARAMS = {
         "lane": {"type": "string", "description": "submit (optional, <=128 chars): lane label carried beside the submission for the quartermaster's triage; no scheduling effect."},
         "kind": {"type": "string", "enum": ["submissions"], "description": "inbox (optional): 'submissions' = list workflow submit study items newest-first (read-only; promotion is a human decision). Omit inside a child spawn to pull baked steering as before."},
         "team": {"type": "string", "description": "run (optional, <=64 chars): team label stamped into run.json and shown by list; no effect on scheduling."},
-        "lane_key": {"type": "string", "description": "run (optional, <=128 chars): in-flight registry key — a second run with the same key while the incumbent is unfinished is deduped (no spawn; returns the incumbent's run_id); status lane_key=<key> reads the incumbent instead of run_id. Keys are global per runs root; prefix with <team>/ yourself."},
+        "lane_key": {"type": "string", "description": "run (optional, <=128 chars): in-flight registry key — a second run with the same key while the incumbent is unfinished is deduped (no spawn; returns the incumbent's run_id); an ORPHANED incumbent (its run dir is gone) does not dedup — the fresh run is admitted, overwrites the entry, and reports superseded_orphan=<old run_id>; status lane_key=<key> reads the incumbent instead of run_id. Keys are global per runs root; prefix with <team>/ yourself."},
         "owner": {"type": "string", "description": "save (optional, <=64 chars): provenance owner override; defaults to the launcher profile. Every save now stamps provenance {owner, version, source, saved_at, source_digest} (#126 default-on)."}, 
         "source": {"type": "string", "description": "save (optional, <=512 chars): where this graph came from (repo path, URL, skill, attribution line) — every save stamps provenance {owner, version, source, saved_at, source_digest} (#126 default-on; attribution, never access control)."},
         "graph_path": {"type": "string", "description": "run/save/amend/validate: absolute path to a caller-supplied local regular UTF-8 JSON graph file (max 1 MiB, no final symlink). Choose exactly one of graph, graph_path, or run's from / save's run_id. Validated before any write or spawn."},
@@ -3661,20 +3661,31 @@ def act_run(args):
             entry, collision = _lane_entry(key)
             if collision:
                 return collision
+            superseded_orphan = None
             if entry:
                 incumbent = _lane_state(key, entry)
                 if incumbent["unfinished"]:
-                    return {"deduped": True, "run_id": incumbent["run_id"],
-                            "state": incumbent["state"], "runner_live": incumbent["runner_live"],
-                            "needs_resume": incumbent["needs_resume"],
-                            "last_event_ts": incumbent["last_event_ts"],
-                            # Keep the incumbent's optional card presentation.
-                            "lifecycle_notice": _lifecycle_notice(incumbent["run_id"]),
-                            "hint": f"wait run_id={incumbent['run_id']} resumes it"}
+                    if incumbent["state"] != "orphaned":
+                        return {"deduped": True, "run_id": incumbent["run_id"],
+                                "state": incumbent["state"], "runner_live": incumbent["runner_live"],
+                                "needs_resume": incumbent["needs_resume"],
+                                "last_event_ts": incumbent["last_event_ts"],
+                                # Keep the incumbent's optional card presentation.
+                                "lifecycle_notice": _lifecycle_notice(incumbent["run_id"]),
+                                "hint": f"wait run_id={incumbent['run_id']} resumes it"}
+                    # orphaned is a LOUD status, not a permanent lease: the run
+                    # dir is gone (terminal-by-evidence), find_run can't match a
+                    # renamed/removed dir so `wait` can't resume it, and no verb
+                    # clears the entry — dedup would strand the key forever.
+                    # Admit the fresh run (it overwrites the entry) and name the
+                    # ghost it supersedes so the replacement is auditable.
+                    superseded_orphan = incumbent["run_id"]
             out = _create_run(args, graph, lib_name, models, routes, _liveness_notes, path,
                               includes=_includes, include_notes=_include_notes,
                               concurrency_meta=concurrency_meta, retry_meta=retry_meta,
                               binding=_binding, arg_knobs=_arg_knobs)
+            if superseded_orphan:
+                out["superseded_orphan"] = superseded_orphan
         _arm_from_launch(out)   # OUTSIDE the flock — see _arm_from_launch's law
         return out
     out = _create_run(args, graph, lib_name, models, routes, _liveness_notes,
