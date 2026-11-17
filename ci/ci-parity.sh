@@ -36,10 +36,10 @@ cat > "$JS" <<EOF
 set -u; rc=0
 apt-get update -qq >/dev/null 2>&1
 if [ -n "${PYV:-}" ]; then
-  apt-get install -y -qq "python${PYV}" "python${PYV}-venv" git openssh-client rsync python3-jsonschema nodejs npm >/dev/null 2>&1 \\
+  apt-get install -y -qq "python${PYV}" "python${PYV}-venv" python3-pip git openssh-client rsync python3-jsonschema nodejs npm >/dev/null 2>&1 \\
     || echo "WARN: python${PYV} unavailable in the image — suite arms ride the image-default interpreter"
 fi
-apt-get install -y -qq git openssh-client rsync python3-jsonschema nodejs npm >/dev/null 2>&1 || echo "WARN: apt partial"
+apt-get install -y -qq git openssh-client rsync python3-jsonschema nodejs npm python3-pip >/dev/null 2>&1 || echo "WARN: apt partial"
 PIN=$PIN
 if command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
   echo "HERMES: already present"
