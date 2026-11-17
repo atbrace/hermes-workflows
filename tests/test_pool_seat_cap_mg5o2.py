@@ -23,7 +23,7 @@ validator's floor of 4) does NOT cap it (the measured starvation shape).
 
 Run: cd tests && python3 test_pool_seat_cap_mg5o2.py
 """
-import importlib.util, json, os, shutil, subprocess, sys, threading, time
+import contextlib, importlib.util, io, json, os, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -162,6 +162,29 @@ check("ceiling above the pool cap never raises it", wf._seat_pool_cap(d, ceiling
 check("corrupt .cap is re-seeded, never trusted, never fatal",
       wf._seat_pool_cap(d, seed=7) == 7 and (d / ".cap").read_text() == "7")
 
+# ---- read-time band law: an out-of-band recorded value is treated EXACTLY
+# ---- like corrupt — re-seed from the validated seed, ONE loud line naming
+# ---- the value and the band; with no seed, report no pool truth (consumers
+# ---- degrade to their own resolution). The door validates [FLOOR, CEILING]
+# ---- at admission; the read path that CONSUMES the file enforces the same.
+_band = f"[{wf.wfcommon.SEAT_CAP_FLOOR}, {wf.wfcommon.SEAT_CAP_CEILING}]"
+for _bad in (640, 65, 3, 1):        # above ceiling AND below floor
+    _db = BUILD / f"unit-band-{_bad}"; _db.mkdir()
+    (_db / ".cap").write_text(str(_bad))
+    _err = io.StringIO()
+    with contextlib.redirect_stderr(_err):
+        _got = wf._seat_pool_cap(_db, seed=7)
+    _lines = _err.getvalue().splitlines()
+    check(f"out-of-band .cap {_bad} is re-seeded, never trusted",
+          _got == 7 and (_db / ".cap").read_text() == "7", f"got={_got}")
+    check(f"out-of-band .cap {_bad} emits exactly ONE warn naming the value and the band {_band}",
+          len(_lines) == 1 and str(_bad) in _lines[0] and _band in _lines[0],
+          f"lines={_lines}")
+_dbn = BUILD / "unit-band-noseed"; _dbn.mkdir()
+(_dbn / ".cap").write_text("640")
+check("out-of-band .cap with no seed reports no pool truth and leaves the file alone",
+      wf._seat_pool_cap(_dbn) is None and (_dbn / ".cap").read_text() == "640")
+
 # ============ (2) unit: WORKFLOW_MAX_SEATS=0 stays a LOCAL disable, never
 #                touches pool state; a fresh pool seeds from the caller.
 d2 = BUILD / "unit-zero"; d2.mkdir()
@@ -258,16 +281,19 @@ check("both runners did real work through the shared pool (not serialized to one
 
 # ============ (6) the nested-child shape: a runner with NO env at all (no
 #                WORKFLOW_MAX_SEATS, empty HERMES_HOME => SEATS_DEFAULT 4)
-#                arbitrates against the pool's recorded 2 — the recorded
-#                truth beats BOTH the env and the default.
-seats3 = BUILD / "seats-blank"; seed_cap(seats3, 2)
+#                arbitrates against the pool's recorded 5 — the recorded
+#                truth beats BOTH the env and the default. (The pre-band-law
+#                fixture recorded 2; under the read-time band law [FLOOR,
+#                CEILING] a sub-floor record re-seeds, so the beat-the-default
+#                shape is shown with an in-band 5 > default 4.)
+seats3 = BUILD / "seats-blank"; seed_cap(seats3, 5)
 rep3 = BUILD / "blank.jsonl"
-c3 = run_child(seats3, "BLANK", "holdN", 4, 0.2, 0.5, rep3,
+c3 = run_child(seats3, "BLANK", "holdN", 6, 0.2, 0.5, rep3,
                env_extra={"HERMES_HOME": str(BUILD / "emptyhome")})
 rc3 = c3.wait(60)
 rows3 = read_rows(rep3)
-check("env-less runner (default would be 4) admitted exactly the pool's 2 and stalled on the 3rd",
-      peak_k(rows3) == 2 and any(r.get("evt") == "stall" for r in rows3),
+check("env-less runner (default would be 4) admitted exactly the pool's 5 and stalled on the 6th",
+      peak_k(rows3) == 5 and any(r.get("evt") == "stall" for r in rows3),
       f"rows={rows3}")
 
 # ============ (7) first-writer race ACROSS processes: two runners (env 6 and

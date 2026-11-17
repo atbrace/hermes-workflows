@@ -9,8 +9,9 @@ both parent suites and still be wrong:
 
   P1  FIFO inside the pool cap: admission is `live < POOL cap` AND no
       strictly-older live queue marker. Caller cap 1 (stale) over a recorded
-      pool cap of 2: two freed seats go to the two OLDEST waiters, in arrival
-      order, and a late arrival never jumps them.
+      in-band pool cap of 4 (the pre-read-band-law recorded 2 re-seeds under
+      the band law): freed seats go to the OLDEST waiters, in arrival order,
+      and a late arrival never jumps them.
   P2  seed law: the pool seed rides wfcommon.seat_max_seats. An invalid
       operator knob is NEVER recorded as the pool's global cap — even when an
       explicit run.json max_seats lets `_max_seats` pass — it fails the node
@@ -51,13 +52,17 @@ def seed_cap(seats, v):
     Path(seats, ".cap").write_text(str(v))
 
 # ============ P1: FIFO inside the pool cap ====================================
+# (the recorded 4 replaces the pre-band-law recorded 2: under the read-time
+# band law a sub-floor .cap re-seeds, so the full-pool shape uses in-band 4.)
 seats = BUILD / "seats-fifo"
-seed_cap(seats, 2)
+seed_cap(seats, 4)
 h1 = wf._seat_acquire(seats, "H1", 1, 5.0, pool_seed=99)     # caller cap 1 is stale
 h2 = wf._seat_acquire(seats, "H2", 1, 5.0, pool_seed=99)
-check("P1 setup: stale caller cap=1 does not cap — the pool's recorded 2 admits both holders",
-      isinstance(h1, Path) and isinstance(h2, Path) and h1.exists() and h2.exists(),
-      f"h1={h1} h2={h2}")
+h3 = wf._seat_acquire(seats, "H3", 1, 5.0, pool_seed=99)
+h4 = wf._seat_acquire(seats, "H4", 1, 5.0, pool_seed=99)
+check("P1 setup: stale caller cap=1 does not cap — the pool's recorded 4 admits all four holders",
+      all(isinstance(t, Path) and t.exists() for t in (h1, h2, h3, h4)),
+      f"h1={h1} h2={h2} h3={h3} h4={h4}")
 
 order, order_lock, admitted = [], threading.Lock(), []
 def _waiter(nm):
@@ -100,7 +105,7 @@ with order_lock:
     second = list(order)
 check("P1: the second freed seat admits the next-oldest — arrival order, no late jump",
       second == ["W-early", "W-mid"], f"admitted={second}")
-for t in list(admitted):
+for t in [h3, h4] + list(admitted):      # free the two extra holders so W-late lands too
     if isinstance(t, Path):
         wf._seat_release(t)
 t_end = time.time() + 10
@@ -118,8 +123,8 @@ with order_lock:
             wf._seat_release(t)
 check("P1: full arrival order held and every waiter was admitted",
       final == names, f"admitted={final}")
-check("P1: pool cap survived the whole churn (still the recorded 2) and no marker outlived its waiter",
-      (seats / ".cap").read_text() == "2"
+check("P1: pool cap survived the whole churn (still the recorded 4) and no marker outlived its waiter",
+      (seats / ".cap").read_text() == "4"
       and (not qd.exists() or not list(qd.glob("*.json"))),
       f"cap={(seats / '.cap').read_text()} markers={[m.name for m in qd.glob('*.json')] if qd.exists() else '-'}")
 

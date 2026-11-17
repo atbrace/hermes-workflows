@@ -4698,7 +4698,12 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
     are serialized by the <seats>/.lock flock _seat_acquire holds when it
     calls this, and the file is replaced atomically. A corrupt/unparsable
     file is re-seeded, never trusted, never fatal; an unwritable pool falls
-    back to arbitrating the caller's own seed (honest degradation).
+    back to arbitrating the caller's own seed (honest degradation). A recorded
+    value OUTSIDE [SEAT_CAP_FLOOR, SEAT_CAP_CEILING] is treated exactly as
+    corrupt — one loud stderr line naming the value and the band, then the
+    same re-seed — so the read path enforces the same band the admission door
+    validates, instead of a corrupt or hand-edited file silently raising the
+    estate-wide cap far past what the platform was sized for.
     ceiling (run.json meta max_seats — a per-RUN declaration, not env) acts as
     a CEILING under the pool cap: the run may hold fewer seats than the pool
     allows, never more. WORKFLOW_MAX_SEATS=0 disables the semaphore LOCALLY
@@ -4708,7 +4713,11 @@ def _seat_pool_cap(seats, seed=None, ceiling=None):
     cap_v = None
     try:
         v = int(f.read_text(encoding="utf-8").strip())
-        if v > 0:
+        if v > 0 and not wfcommon.SEAT_CAP_FLOOR <= v <= wfcommon.SEAT_CAP_CEILING:
+            print(f"WORKFLOW_SEAT_POOL_WARN .cap={v} is outside the admitted band "
+                  f"[{wfcommon.SEAT_CAP_FLOOR}, {wfcommon.SEAT_CAP_CEILING}]; treated as corrupt",
+                  file=sys.stderr, flush=True)
+        elif v > 0:
             cap_v = v
     except (OSError, ValueError):
         cap_v = None                       # absent/corrupt: re-seedable, not fatal
