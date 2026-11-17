@@ -228,8 +228,7 @@ def _budget_refusal(meta, node, byid, index, spawn_no):
     for n in byid.values():
         if kind(n).spawns is not True:
             continue
-        route = _profile_evidence(n)
-        home = str(route.get("profile_home") or hermes_home())
+        home = _node_route_home(n)
         if home not in rows_by_home:
             try:
                 rows_by_home[home] = child_metrics(run.name, home)
@@ -296,7 +295,30 @@ def _route_substitution_refusal(meta, node, spawn_no):
     # is deliberately NOT a candidate: it is the very thing under suspicion —
     # a substitution must never self-certify against itself.
     candidates = {v, v_model}
-    for alias, target in _seat_alias_map(hermes_home()).items():
+    # The NODE's profile home owns the seat aliases (same authority split the #25
+    # commit hold honors via _route_home); the runner's own home only when the
+    # node routes through it. Base read the RUNNER's home always — a
+    # profile-routed node's alias was invisible to the guard, so its re-drive
+    # died terminal on every retry (test leg D).
+    alias_map = dict(_seat_alias_map(_node_route_home(node)))
+    # The door resolved the asked name through seat aliases, tiers AND core's
+    # DIRECT_ALIASES before baking the receipt; the guard consults the SAME
+    # resolver (ONE judgment, wfcommon.alias_provider_pair) so a
+    # resolver-produced alias joins as the verified route seen through the
+    # door's own vocabulary — never a substitution. tiers={}: tier keys bake to
+    # literal targets at the door before graph.json lands, so a re-drive ask is
+    # never a tier name (ponytail: a door that bakes tiers lazily would need the
+    # home's models section passed here). Corner, accepted as benign: the door's
+    # seat-ownership veto covers aliases + seat default + tier targets while the
+    # guard's known_names is only the alias keys — a literal ask equal to the
+    # seat default AND a DIRECT_ALIASES key consults the core table here where
+    # the door would not; the extra candidate can only ACCEPT (it must equal the
+    # receipt), never newly deny (leg E pins the mismatch side).
+    _p, _m = wfcommon.alias_provider_pair(node.get("model"), {}, {}, alias_map)
+    if _m:
+        alias_map.setdefault(str(node.get("model")).strip().lower(),
+                             f"{_p}/{_m}" if _p else _m)
+    for alias, target in alias_map.items():
         # #318: the bake names the TARGET the ping proved, so the receipt side of
         # the match may be the alias's TARGET as well as the alias — a same-alias
         # respawn (retry/resume of an alias-pinned node) is the same route seen
@@ -442,6 +464,13 @@ def _stale_route_receipt_clear(meta, node, spawn_no):
 def _profile_evidence(node):
     name = node.get("profile")
     return {"profile": name, "profile_home": str(profile_home(name))} if name else {}
+
+def _node_route_home(node):
+    """The seat home that owns a node's aliases/tiers: the profile's home for a
+    `profile:`-routed node, else the runner's own seat. One copy of the
+    authority split (was three: guard, budget rows, and the #25 hold's twin
+    `_route_home(result)` which reads the same split off a result's route)."""
+    return str(_profile_evidence(node).get("profile_home") or hermes_home())
 
 def _quorum_death_label(explicit_quorum, quorum, n_items):
     """est-4sx: a null-quorum fan-out dies on the runner's IMPLICIT majority

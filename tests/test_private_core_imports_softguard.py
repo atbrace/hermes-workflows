@@ -14,7 +14,7 @@ row (both modes):
 |--------------------------------|----------------------------|-------------------------------------|
 | door _route_efforts            | agent.reasoning_effort     | wfcommon.reasoning_levels()         |
 | door _nearest_effort           | agent.reasoning_effort     | None                                |
-| door _alias_provider_pair      | hermes_cli.model_switch    | (None, None)                        |
+| door _alias_provider_pair (delegates to wfcommon alias_provider_pair) | hermes_cli.model_switch | (None, None)               |
 | door _import_call_llm          | agent.auxiliary_client     | raises BY DESIGN (callers degrade)  |
 |   caller _ping_route_once      |   "                        | liveness "unknown", note says so    |
 |   caller _ping_reachable       |   "                        | False                               |
@@ -234,7 +234,7 @@ SRC_ROWS = (
     ("__init__.py", "_route_efforts", "from agent.reasoning_effort import route_supported_efforts"),
     ("__init__.py", "_route_efforts", "from agent.reasoning_effort import codex_supported_efforts"),
     ("__init__.py", "_nearest_effort", "from agent.reasoning_effort import EFFORT_LADDER"),
-    ("__init__.py", "_alias_provider_pair", "from hermes_cli.model_switch import _ensure_direct_aliases, DIRECT_ALIASES"),
+    ("wfcommon.py", "alias_provider_pair", "from hermes_cli.model_switch import _ensure_direct_aliases, DIRECT_ALIASES"),
     ("__init__.py", "_import_call_llm", "from agent.auxiliary_client import call_llm"),
     ("__init__.py", "_ping_retry_after", "from agent.retry_utils import parse_retry_after_seconds"),
     ("__init__.py", "_session_env", "from gateway.session_context import get_session_env"),

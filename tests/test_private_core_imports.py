@@ -73,10 +73,10 @@ ALLOW_LIST = {
     ("wf.py", "agent.reasoning_effort.route_supported_efforts"):
         "_resolve_child_reasoning: except Exception -> wfcommon.reasoning_levels() table",
     # --- hermes_cli.model_switch: alias resolution mirrors the picker's.
-    ("__init__.py", "hermes_cli.model_switch.DIRECT_ALIASES"):
-        "_alias_provider_pair: except Exception -> (None, None) (alias treated as raw)",
-    ("__init__.py", "hermes_cli.model_switch._ensure_direct_aliases"):
-        "_alias_provider_pair: same guard, same fallback",
+    ("wfcommon.py", "hermes_cli.model_switch.DIRECT_ALIASES"):
+        "alias_provider_pair: except Exception -> (None, None) (alias treated as raw)",
+    ("wfcommon.py", "hermes_cli.model_switch._ensure_direct_aliases"):
+        "alias_provider_pair: same guard, same fallback",
     # --- agent.auxiliary_client: liveness pings need call_llm's route_info;
     # the public ctx.llm (agent.plugin_llm) lacks it and gates provider
     # overrides behind trust flags — switching would change the #25

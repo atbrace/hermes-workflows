@@ -204,6 +204,39 @@ def route_provider(node, verified=None):
         return ""
     return vp or prov
 
+def alias_provider_pair(requested, seat_raw, tiers, known_names=()):
+    """(provider, model) the alias/tier TARGET names — 'provider/model'-prefixed seat
+    aliases/tier targets and the core model_aliases (DIRECT_ALIASES) table; provider None
+    when the target is bare (the seat default route stays authoritative), model = the
+    bare target itself so the reasoning route table still speaks the real model id.
+    Names the SEAT already owns (seat aliases/default/tiers) never consult the core
+    table — the seat config is authoritative for its own names.
+    ONE resolution site (moved here from the door's _alias_provider_pair): the door
+    bakes through it AND the #641 re-drive guard re-checks through it — two gates
+    that resolve differently make a door-resolved alias die terminal
+    route_substitution_denied on every resume. Core import lazy and guarded:
+    any failure -> (None, None), the name is treated as raw (unchanged legacy)."""
+    name = str(requested or "").strip()
+    for target in ((dict((seat_raw or {}).get("aliases") or {}).get(name) or "").strip(),
+                   str((tiers or {}).get(name) or "").strip()):
+        if "/" in target:
+            p, _, m = target.partition("/")
+            if p.strip() and m.strip():
+                return p.strip(), m.strip()
+        elif target:
+            return None, target
+    if name.lower() in {str(k).strip().lower() for k in known_names}:
+        return None, None
+    try:
+        from hermes_cli.model_switch import _ensure_direct_aliases, DIRECT_ALIASES
+        _ensure_direct_aliases()
+        da = DIRECT_ALIASES.get(name.lower())
+        if da and da.provider and da.model:
+            return da.provider, da.model
+    except Exception:
+        pass
+    return None, None
+
 def hermes_home():
     """Core's resolution when importable, else the raw env (1.0.15 semantics, unchanged).
 
