@@ -1785,7 +1785,7 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
             print(f"WORKFLOW_WAKE_SUPPRESSED {run.name} {event} {reason}")
             return "skipped"   # park-watch: a suppressed wake IS a dispatcher strike (the void is not a hold)
 
-        # hw-3pb bounded requeue (haus-exec law: one IDENTITY per wake, not one
+        # hw-3pb bounded requeue (peer-estate law: one IDENTITY per wake, not one
         # attempt — a false row is try-later and the retry path must exist, bounded
         # and class-gated). runtime_coordination_required is the ONE refusal whose
         # clears-or-never inverts with the holder's health: a second writer's turn
