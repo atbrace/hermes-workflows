@@ -68,6 +68,12 @@ async def _admit(client, sid, text, input_id):
     except Exception as exc:
         if _reason(exc) == "not_found":
             raise NativeAdmissionError("session_unknown", retry=False) from exc
+        if _reason(exc) == "runtime_coordination_required":
+            # hw-3pb: time-bounded, NOT a transport miss — the owner session's
+            # second writer holds its turn lease (TTL 300 s, renewed at turn
+            # start). Typed so the ledger can run the bounded requeue instead
+            # of lumping the refusal into blind transport_error retries.
+            raise NativeAdmissionError("runtime_coordination", retry=True) from exc
         raise
     if not _same_session(snapshot, sid):
         raise NativeAdmissionError("session_identity_mismatch", retry=False)

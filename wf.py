@@ -646,6 +646,9 @@ def ledger_row(meta_or_run, role, pid, node=None, index=None, skey=None):
 # import the gateway's async deliver_wake directly. Same wire, same session.
 
 WAKE_TIMEOUT_S = 10.0   # fail-open: a wake must never stall a runner exit
+WAKE_REQUEUE_AFTER_S = 360.0   # hw-3pb: the session turn-lease TTL (300 s) plus margin —
+                               # one re-drive of a runtime_coordination refusal sooner proves
+                               # nothing (the lease can still be live); later, one attempt lands.
 
 # Bearer-secret redaction (F4, maintainer matrix #2): EVERY persisted field goes
 # through this — a stdlib error can embed the whole header value ("Invalid header
@@ -1256,6 +1259,15 @@ def _wake_ledger_read(run):
         pass
     return rows, settled
 
+def _wake_age_s(ts):
+    """Seconds elapsed since a ledger row's ts (hw-3pb requeue gate). An
+    unreadable ts reads as infinitely old — fail-open: a re-drive costs at most
+    one replayed turn under the stable Idempotency-Key; a stall costs the wake."""
+    try:
+        return max(0.0, time.time() - datetime.fromisoformat(str(ts)).timestamp())
+    except (TypeError, ValueError):
+        return float("inf")
+
 def _wake_append(run, rec):
     """Append one ledger row; a failure is loud on stderr (runner.log) and NEVER
     raises (the record-write law, unchanged). Every persisted field is bearer-
@@ -1516,6 +1528,11 @@ def _wake_deliver(rec, sid, text, tid, owner=None):
                 # fail closed: typed, try-later, NO legacy bypass for this row
                 rec["error"] = _wake_safe(f"native {oc}: {out.get('reason', '')}")
                 rec["error_class"] = f"native_{oc}"
+                if out.get("reason"):
+                    # hw-3pb: structured typed reason — the requeue gate below and the
+                    # ledger must never re-parse prose to tell runtime_coordination
+                    # (time-bounded, one bounded requeue) from a socket miss.
+                    rec["error_reason"] = _wake_safe(str(out["reason"]))
                 return False
             # unavailable: no ready canonical owner — legacy below, unchanged
     ep = _wake_endpoint()
@@ -1768,6 +1785,31 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
             print(f"WORKFLOW_WAKE_SUPPRESSED {run.name} {event} {reason}")
             return "skipped"   # park-watch: a suppressed wake IS a dispatcher strike (the void is not a hold)
 
+        # hw-3pb bounded requeue (peer-estate law: one IDENTITY per wake, not one
+        # attempt — a false row is try-later and the retry path must exist, bounded
+        # and class-gated). runtime_coordination_required is the ONE refusal whose
+        # clears-or-never inverts with the holder's health: a second writer's turn
+        # lease (TTL 300 s, renewed at every owner turn) can expire, so the same
+        # identity CAN land past lease window — while a re-drive inside the window
+        # proves nothing. So: re-drives of this class inside WAKE_REQUEUE_AFTER_S
+        # do nothing and write nothing; the FIRST attempt past the window re-drives;
+        # a SECOND refusal past the window proves the holder renews and SETTLES the
+        # instance (delivered=None: nowhere-ever + typed detail, never re-driven).
+        # No other try-later class changes shape; suppression and settle checks
+        # keep precedence upstream of this gate.
+        _rc = [r for r in _rows if r.get("id") == tid
+               and r.get("error_class") == "native_retry"
+               and r.get("error_reason") == "runtime_coordination"]
+        if len(_rc) >= 2:
+            _wake_append(run, {"ts": now(), "event": event, "run_id": run.name,
+                               "id": tid, "delivered": None,
+                               "error": "native refused: runtime_coordination (bounded requeue spent — holder renews its lease)",
+                               "error_reason": "runtime_coordination",
+                               "error_class": "native_refused"})
+            return "undelivered"
+        if _rc and _wake_age_s(_rc[-1].get("ts")) < WAKE_REQUEUE_AFTER_S:
+            return "undelivered"      # inside the lease window: attempt can't prove, no row
+
         try:                             # the door's authority-law stamp, for the trail
             proto = (run / "wake_protocol").read_text().strip()
         except OSError:
@@ -1778,6 +1820,18 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
             rec["catchall"] = True      # probe row is typed: template vs catch-all distinguishable
         rec["delivered"] = _wake_deliver(rec, sid, text, tid, owner=owner)   # tri-state row mirrors the outcome
         _wake_append(run, rec)
+        if (rec.get("delivered") is False
+                and rec.get("error_reason") == "runtime_coordination"):
+            # hw-3pb: arm the existing trailing-recheck machinery as this refusal's
+            # bounded driver — due at lease-window + margin. The re-drive rides the
+            # boundaries that already exist (loop wave tick, respawn drain, finalize
+            # flush; a too-early forced drain is a no-op that leaves the arm), so no
+            # new daemon is introduced; the gate above decides re-drive vs settle.
+            _wake_debounce_dir(run).mkdir(parents=True, exist_ok=True)  # the coalescer mkdirs its own; so must this
+            _wake_marker_write(_wake_marker_path(run, event),
+                               {"event": event, "key": key, "fire_ts": time.time(),
+                                "due": time.time() + WAKE_REQUEUE_AFTER_S,
+                                "pending": True})
         # park-watch verdict feed on the est-7rudf tri-state: delivered -> nothing
         # to see; False -> the ONE strike class; None (nowhere-ever) -> bare — a
         # host that can never receive owner turns is by-design strike-free.
