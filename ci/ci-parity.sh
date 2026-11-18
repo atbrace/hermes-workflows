@@ -36,7 +36,7 @@ cat > "$JS" <<EOF
 set -u; rc=0
 apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq curl ca-certificates tar xz-utils >/dev/null 2>&1
-NODE_V=v22.11.0
+NODE_V=v22.18.0
 NODE_A=\$(dpkg --print-architecture); case "\$NODE_A" in amd64) NODE_A=x64;; arm64) NODE_A=arm64;; esac
 curl -fsSL "https://nodejs.org/dist/\$NODE_V/node-\$NODE_V-linux-\$NODE_A.tar.xz" -o /tmp/node.tar.xz \\
   && tar -xJf /tmp/node.tar.xz -C /opt \\
