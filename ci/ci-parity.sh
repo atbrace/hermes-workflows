@@ -56,16 +56,23 @@ else
   git clone -q https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \
     && git -C /tmp/hermes-agent checkout -q "\$PIN" \
     && python3 -m pip install -q --break-system-packages uv >/dev/null 2>&1 \
+    && git clone -q https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \
+    && git -C /tmp/hermes-agent checkout -q "\$PIN" \
+    && export UV_PROJECT_ENVIRONMENT=/usr/local/hermes-agent-env \
     && uv sync --python 3.14 --directory /tmp/hermes-agent >/dev/null 2>&1 \
+    && /usr/local/hermes-agent-env/bin/python3 -c 'pass' \
     && printf '#!/bin/sh\nexec uv run --project /tmp/hermes-agent hermes "\$@"\n' > /usr/local/bin/hermes \
     && chmod +x /usr/local/bin/hermes \
     || echo "WARN: pinned core bootstrap failed"
+# the suite's git legs (ls-files, scrub audit) demand a repo: init the synced copy
+git rev-parse --git-dir >/dev/null 2>&1 || { git init -q && git add -A \
+  && git -c user.email=ci@invalid -c user.name=ci commit -qm ci-init; }
 fi
 echo "=== suite (canonical entry) ==="
 if [ -x tools/ci/run.sh ] || [ -f tools/ci/run.sh ]; then
   bash tools/ci/run.sh || rc=1
 elif [ -f scripts/suite.py ]; then
-  uv run --project /tmp/hermes-agent python3 scripts/suite.py . ci-out || rc=1
+  uv run --project /tmp/hermes-agent python3 scripts/suite.py . "${MLRUN_OUT:-ci-out}/ci-out" || rc=1
 else
   echo "FATAL: no canonical suite entry (tools/ci/run.sh or scripts/suite.py)"; rc=1
 fi
