@@ -1,114 +1,162 @@
 {
   "grammar": "wf/1",
   "name": "rubric-repair",
+  "description": "Bounded admission loop: author -> blind rubric scoring of the committed artifact -> exactly one repair of the named findings -> frontier re-score -> second-disagreement STOP rule -> exactly one disposition. There is no loop engine, which is exactly why the loop is structural: the re-score hangs behind the repair, so a clean first pass cascade-prunes the whole repair arm instead of re-entering it. run_context seeds (ALL required): 'artifact_spec' = the one-line brief for the artifact to author; 'rubric' = the scoring-rubric text, applied verbatim by both scoring seats. Capability-class slot: the re-score pins model name 'council_a' - a CAPABILITY CLASS, not a vendor id. Bind it in your own config (plugins.entries.hermes-workflows.settings.models: {council_a: <your frontier model>}); an unbound class fails the launch closed BY NAME, never a silent downgrade. The other seats ride the seat default so an admission attempt is completable at no frontier spend. Blindness is structural, not phrased: the rubric seat consumes ONLY the author's artifact path (its inputs pick that one dotted path, so the author's claims never reach the scoring seat) and the re-score consumes ONLY the repaired artifact path plus the original findings list - never the repair's claim of resolution. Second-disagreement law: the first scoring pass counts as disagreement round 1; if the re-score seat still finds the artifact wanting after the one repair it sets disagreements: 2, which trips the halt machine gate (>= 2 halts, < 2 admits) - bounded admission, never an unbounded repair loop.",
   "provenance": {
-    "owner": "author-estate (study-council distillation)",
-    "source": "pack3 bead-promote, genericized 2026-11-11"
+    "owner": "author-estate (peer-estate maintained)",
+    "source": "hermes-workflows/examples/rubric-repair.workflow.json"
   },
-  "description": "The smallest honest admission pipeline, on existing grammar only: author -> blind rubric -> one repair round -> re-score -> stop rule -> exactly one disposition. THE BLIND LAW: the rubric seat re-reads the record AS COMMITTED in the tracker and never trusts the author seat's narrative — an author that could grade its own homework was not being reviewed. THE ONE-ROUND LAW: disagreement routes through exactly one repair, then one re-score; a second disagreement is the STOP RULE — it routes the record to a human with the open question named, NOT another round (no native loop engine exists, and retry ownership is spelled out, never implied). THE SINGLE-DISPOSITION LAW: the disposition node applies exactly one label from its decision ladder and never hedges. PRUNE LAW (visible here twice): the repair arm prunes on agreement, and the disposition node still fires afterwards because it keeps one live dependency (rubric) — a skipped sibling dependency does not cascade-kill it. run_context seeds (both required): 'item' = the tracker record under admission; 'scratch' = an absolute pre-existing artifact directory every seat writes its answer JSON into.",
   "defaults": {
-    "timeout": 1200,
-    "max_turns": 12,
-    "context": "You are one seat of a rubric-repair admission lane. Ground rules:\n- The tracker record as committed is truth; re-read it, never trust a prior seat's narrative.\n- Prior-art citations come only from a real search you ran; 'no prior art found' is the honest empty — never invent a citation.\n- Unsure is a first-class answer: emit the stop-rule verdict, do not guess.\n- All artifact paths absolute, under the run's scratch dir only.\n- Keep answers to the schema; one fenced ```json block as your final message. Never print secrets."
+    "timeout": 900,
+    "context": "You are one seat of a bounded admission loop. Ground rules:\n- Open the artifact yourself from the path your inputs give you; no party's claims about it are evidence.\n- Every claim you hand downstream names its evidence (file:line, or a quote from the artifact). Uncertainty raises a finding; only silence when nothing load-bearing is wrong.\n- Reply with ONLY one fenced ```json block as your final message. Never print secrets."
   },
   "nodes": [
     {
       "id": "author",
       "type": "agent",
-      "max_turns": 12,
-      "timeout": 2400,
-      "goal": "Subject: tracker record {run.item}. Re-read it with your tracker's read tools. If it is already dispositioned (workable, needs-*, blocked, closed) or plainly outside this lane's reach, write the artifact with verdict=skip-not-mine and stop. Otherwise TRANSFORM it: search for prior art on the subject (near-dupes, prior failures of this idea class, superseded machinery), then rewrite the body to the canonical spine — ## Symptom, ## Root cause, ## Fix scope, ## Vision alignment, ## Rejected simpler alternatives (each rejection citing a real prior-art hit or the honest empty). Name the done-check: an Acceptance section with one concrete command that exits 0 iff done. If the body spans multiple independent deliverables, set split_campaign=true and scope the card down to the first instead of authoring a monster. Apply the rewrite to the record (body only — labels are the disposition seat's job). Write your answer JSON to {run.scratch}/author.json.",
+      "shape": "build",
+      "max_turns": 20,
+      "goal": "Author an artifact that satisfies this rubric: {run.rubric}\nBrief: {run.artifact_spec}\nWrite a self-contained markdown artifact, one file inside your own work dir, that answers the brief as well as the rubric allows. The path is the commitment - sibling seats see the file, never your work dir.\nReturn {\"artifact\": \"<absolute path of the file you wrote>\", \"summary\": \"<what you wrote, two lines>\"}",
       "schema": {
         "type": "object",
         "properties": {
-          "item": {"type": "string"},
-          "verdict": {"type": "string", "description": "authored | skip-not-mine"},
-          "sections_ok": {"type": "boolean", "description": "true iff the body now carries all canonical sections with real content"},
-          "named_done_check": {"type": "boolean", "description": "true iff Acceptance names a concrete machine-checkable done-command"},
-          "hindsight_cited": {"type": "boolean", "description": "true iff Rejected alternatives cites at least one real prior-art hit or states the honest empty"},
-          "split_campaign": {"type": "boolean", "description": "true iff scope warrants a parent+children campaign instead of one card"},
-          "summary": {"type": "string", "description": "one paragraph: what you changed and why"}
+          "artifact": {
+            "type": "string",
+            "description": "absolute path of the written artifact"
+          },
+          "summary": {
+            "type": "string"
+          }
         },
-        "required": ["item", "verdict", "sections_ok", "named_done_check", "hindsight_cited", "split_campaign"]
+        "required": ["artifact"]
       }
-    },
-    {
-      "id": "gate-authored",
-      "type": "gate",
-      "after": ["author"],
-      "when": "out.author.verdict == 'authored'",
-      "on_skip": "prune"
     },
     {
       "id": "rubric",
       "type": "agent",
-      "after": ["gate-authored"],
-      "inputs": ["author"],
-      "goal": "BLIND rubric review of record {run.item} AS COMMITTED in the tracker (re-read it — do not trust the author seat's narrative; the author's summary in your inputs tells you where to look, nothing more). Score 0-10: does the body state the real symptom, the actual root cause, a bounded fix scope, why it serves the larger goal, at least one rejected simpler alternative with a real prior-art citation or the stated honest empty, and an Acceptance done-check that is a command someone can run? Thin, vague, or invented prior art = findings lines and agreement=false. A record whose scope is genuinely a campaign = agreement=false with the finding 'split-campaign: <n parts>'. agreement=true only when the score clears the bar AND every canonical section holds real content. Write {run.scratch}/rubric.json.",
+      "after": ["author"],
+      "inputs": ["author.artifact"],
+      "shape": "review",
+      "reasoning": "high",
+      "max_turns": 12,
+      "context": "Blindness contract: you score an artifact, not an author. You were given the path and nothing else - no summary, no intentions, no self-assessment. Judge what is written, not what was meant.",
+      "goal": "Score the artifact against the rubric verbatim. Rubric: {run.rubric}\nThe artifact's absolute path is in ## Inputs. Open it and read it whole before judging.\nReturn {\"verdict\": \"pass|findings\", \"findings\": [\"<one per line, each naming the rubric criterion it violates>\"]}. Use 'pass' only when nothing load-bearing is wrong; with 'findings' the list is never empty, and every concern you raise is a finding.",
       "schema": {
         "type": "object",
         "properties": {
-          "agreement": {"type": "boolean", "description": "true iff the score clears the bar and every canonical section has real content"},
-          "score": {"type": "integer", "description": "0-10 rubric score"},
-          "findings": {"type": "string", "description": "each defect as one line; empty iff clean"}
+          "verdict": {
+            "type": "string",
+            "description": "one of: pass, findings"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
-        "required": ["agreement", "score", "findings"]
+        "required": ["verdict", "findings"]
       }
     },
     {
-      "id": "gate-disagree",
+      "id": "clear-gate",
       "type": "gate",
       "after": ["rubric"],
-      "when": "out.rubric.agreement == False",
-      "on_skip": "prune"
+      "when": "out.rubric.verdict == 'pass'",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "admit-first-pass",
+      "type": "echo",
+      "after": ["clear-gate"],
+      "output": "admitted-first-pass"
     },
     {
       "id": "repair",
       "type": "agent",
-      "after": ["gate-disagree"],
-      "inputs": ["rubric"],
-      "timeout": 1800,
-      "goal": "One repair round for record {run.item}: the rubric seat's findings are in your Inputs. Fix each NAMED defect in the body (re-search prior art if prior art was the defect); do not re-derive what the first pass got right. If a finding cannot be fixed without human input (intent unclear, scope dispute), set repaired=false and say exactly what is unclear. Write {run.scratch}/repair.json.",
+      "after": ["rubric"],
+      "when": "out.rubric.verdict == 'findings'",
+      "on_skip": "prune",
+      "shape": "build",
+      "max_turns": 16,
+      "goal": "Address the rubric findings with EXACTLY ONE repair pass - the re-score that follows you is the last scoring this artifact gets before a disposition.\nThe findings ride in ## Inputs verbatim. Rewrite the artifact so every named finding is cleared; clear the findings, do not grow the scope. If you write a new file, commit its path.\nReturn {\"artifact\": \"<absolute path of the repaired file>\", \"addressed\": [\"<each finding, restated verbatim>\"]}",
       "schema": {
         "type": "object",
         "properties": {
-          "repaired": {"type": "boolean", "description": "true iff every finding was addressed in a body revision"},
-          "summary": {"type": "string", "description": "finding-by-finding: what you changed"}
+          "artifact": {
+            "type": "string",
+            "description": "absolute path of the repaired artifact"
+          },
+          "addressed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
-        "required": ["repaired", "summary"]
+        "required": ["artifact", "addressed"]
       }
     },
     {
       "id": "rescore",
       "type": "agent",
       "after": ["repair"],
-      "goal": "Blind re-score of record {run.item} after ONE repair round: re-read the tracker, ignore all narratives, apply the same rubric as round one. This is the second-disagreement stop: if you still disagree, agreement=false and findings must name what a human must decide — the lane stop-rules this record, so make the open question crisp and short. Write {run.scratch}/rescore.json.",
+      "inputs": ["repair.artifact", "rubric.findings"],
+      "model": "council_a",
+      "shape": "review",
+      "reasoning": "high",
+      "max_turns": 12,
+      "context": "Blindness contract: you re-score an artifact, not a changelog. You hold the repaired path and the ORIGINAL findings list - never the repair's claims about what it fixed. Judge the file. Your class binding is the point of this seat: the second opinion must be at least as strong as the first.",
+      "goal": "Re-score the repaired artifact against the rubric verbatim. Rubric: {run.rubric}\n## Inputs carries the repaired artifact path and the original findings list. Open the artifact yourself; re-check every original finding against the file, and score the rubric afresh - a repair can fix one criterion and break another.\ndisagreements is the number of scoring rounds that found the artifact wanting: the first pass already counted its own, so it counts as round 1. If you too find it wanting after the one repair, set disagreements: 2 and the second-disagreement STOP trips; if the repair cleared everything, set disagreements: 1.\nReturn {\"verdict\": \"pass|findings\", \"findings\": [\"<residual or newly-named>\"], \"disagreements\": <number>}",
       "schema": {
         "type": "object",
         "properties": {
-          "agreement": {"type": "boolean", "description": "true iff the repaired body clears the rubric"},
-          "score": {"type": "integer"},
-          "findings": {"type": "string"}
+          "verdict": {
+            "type": "string",
+            "description": "one of: pass, findings"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "disagreements": {
+            "type": "number",
+            "description": "scoring rounds that found the artifact wanting: 1 (repair cleared it) or 2 (STOP)"
+          }
         },
-        "required": ["agreement", "score", "findings"]
+        "required": ["verdict", "findings", "disagreements"]
       }
     },
     {
-      "id": "disposition",
-      "type": "agent",
-      "after": ["rubric", "rescore"],
-      "inputs": ["author", "rubric", "repair", "rescore"],
-      "timeout": 900,
-      "goal": "Apply exactly ONE disposition to record {run.item}. Read {run.scratch}/author.json, rubric.json, and (if present) repair.json, rescore.json. Decision rule, in order: author verdict=skip-not-mine -> skip-not-mine (no write). rubric agreement=true -> workable. rescore present with agreement=true -> workable. rescore present with agreement=false (second disagreement — the stop rule fired) -> needs-human. repair said repaired=false, or a finding names unclear intent -> needs-human. author split_campaign=true or a finding says 'split-campaign' -> needs-design. rubric finds the record should not exist -> reject-close (comment first, then close with the reason). Writes: set the disposition label on the record (skip for skip-not-mine) and leave one verdict-line comment: 'admission-lane: <disposition> — <one-line rationale>'. needs-human comments must open with 'needs-decision:' so the human-intake carrier can find them. Exactly one disposition — no hedging, no untouched record unless skip-not-mine. Write {run.scratch}/disposition.json.",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "applied": {"type": "boolean", "description": "true iff the label+comment write succeeded"},
-          "disposition": {"type": "string", "description": "exactly one of: workable | needs-design | needs-human | reject-close | skip-not-mine"},
-          "rationale": {"type": "string"}
-        },
-        "required": ["disposition", "applied"]
-      }
+      "id": "halt-gate",
+      "type": "gate",
+      "after": ["rescore"],
+      "when": "out.rescore.disagreements >= 2",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "stop",
+      "type": "echo",
+      "after": ["halt-gate"],
+      "output": "stopped-second-disagreement"
+    },
+    {
+      "id": "admit-gate",
+      "type": "gate",
+      "after": ["rescore"],
+      "when": "out.rescore.disagreements < 2",
+      "on_skip": "prune",
+      "wait": { "wait_s": 0.01 }
+    },
+    {
+      "id": "accept",
+      "type": "echo",
+      "after": ["admit-gate"],
+      "output": "admitted-after-repair"
     }
   ]
 }

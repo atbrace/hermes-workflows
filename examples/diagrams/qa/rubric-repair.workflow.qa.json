@@ -1,0 +1,11 @@
+{
+  "browser": "local chromium (snap) headless --screenshot at 1512px width; viewer chrome (.toolbar, .diagram-nav, .diagram-guide, .no-print, rail) hidden by injected style before capture",
+  "chrome_free": true,
+  "clipped": false,
+  "expected_nodes": 10,
+  "legible": true,
+  "note": "node-label ellipsis ('Admit First\u2026') and gate sublabel mid-word cuts ('every s') are the generator's fit law (phrase()/fit_label budget at width 104) \u2014 deterministic by design, not raster variance; vision-QA lap confirmed 10 boxes vs legend counts 4+3+3, complete card bullets, no edge clipping",
+  "png_sha256_16": "07532ded21599dc6",
+  "renderer": "archify 3.0.1 (MIT) \u2014 vendored renderer for the diagram shoot loop; provenance: https://github.com/tt-a1i/archify skill-release.json @3.0.1; renderers/schemas/assets copied verbatim.",
+  "shot_date": "2026-11-11"
+}

@@ -3,17 +3,17 @@
     {
       "dot": "cyan",
       "items": [
-        "The smallest honest admission pipeline: author, blind rubric, single repair round, re-score, stop rule, single disposition \u2014 no native loop engine needed because the round count is structural",
-        "Blindness is load-bearing: the rubric re-reads the record AS COMMITTED, so an author cannot grade its own homework",
-        "Second disagreement stops to a human with the open question named \u2014 the lane that loops forever is the lane that never admits it needs a person"
+        "Blindness is structural: each scoring seat consumes only artifact paths, never the author's defense or the repair's claim of resolution",
+        "Bounded admission: the single repair pass is gated and never re-entered, and the second-disagreement STOP is a machine `when` on a count, not prose",
+        "Dispositions are echoes - every arm commits its verdict at no token cost"
       ],
       "title": "Why it works"
     },
     {
       "dot": "rose",
       "items": [
-        "7 nodes, 2 gates, 2 branches: author -> gate -> rubric -> gate -> repair -> rescore -> disposition",
-        "The disposition join keeps a live dependency on the rubric, so agreement (pruned repair arm) still lands its single disposition",
+        "10 nodes, 4 seats, 3 machine gates, 3 dispositions: author -> blind rubric -> gated repair pass -> frontier re-score -> halt/admit pair",
+        "run_context seeds artifact_spec + rubric; the re-score pins capability class council_a - bind it in settings.models or the launch refuses by name",
         "Derived from this example's bytes by scripts/graph_diagram.py"
       ],
       "title": "Contract"
@@ -23,27 +23,27 @@
   "edges": [
     {
       "from": "author",
-      "id": "author-gate-authored",
-      "to": "gate-authored",
-      "variant": "security"
-    },
-    {
-      "from": "gate-authored",
-      "id": "gate-authored-rubric",
+      "id": "author-rubric",
       "to": "rubric",
       "variant": "default"
     },
     {
       "from": "rubric",
-      "id": "rubric-gate-disagree",
-      "to": "gate-disagree",
+      "id": "rubric-clear-gate",
+      "to": "clear-gate",
       "variant": "security"
     },
     {
-      "from": "gate-disagree",
-      "id": "gate-disagree-repair",
-      "to": "repair",
+      "from": "clear-gate",
+      "id": "clear-gate-admit-first-pass",
+      "to": "admit-first-pass",
       "variant": "default"
+    },
+    {
+      "from": "rubric",
+      "id": "rubric-repair",
+      "to": "repair",
+      "variant": "security"
     },
     {
       "from": "repair",
@@ -52,15 +52,27 @@
       "variant": "default"
     },
     {
-      "from": "rubric",
-      "id": "rubric-disposition",
-      "to": "disposition",
+      "from": "rescore",
+      "id": "rescore-halt-gate",
+      "to": "halt-gate",
+      "variant": "security"
+    },
+    {
+      "from": "halt-gate",
+      "id": "halt-gate-stop",
+      "to": "stop",
       "variant": "default"
     },
     {
       "from": "rescore",
-      "id": "rescore-disposition",
-      "to": "disposition",
+      "id": "rescore-admit-gate",
+      "to": "admit-gate",
+      "variant": "security"
+    },
+    {
+      "from": "admit-gate",
+      "id": "admit-gate-accept",
+      "to": "accept",
       "variant": "default"
     }
   ],
@@ -74,12 +86,17 @@
       "id": "gates",
       "label": "Gates",
       "variant": "normal"
+    },
+    {
+      "id": "room",
+      "label": "Deterministic",
+      "variant": "normal"
     }
   ],
   "meta": {
     "output": "examples/diagrams/rubric-repair.html",
     "quality_profile": "standard",
-    "subtitle": "The smallest honest admission pipeline, on existing grammar only: author -> blind rubric -> one repair round -",
+    "subtitle": "Bounded admission loop: author -> blind rubric scoring of the committed artifact -> exactly one repair of the ",
     "title": "rubric-repair"
   },
   "nodes": [
@@ -88,64 +105,90 @@
       "id": "author",
       "label": "Author",
       "lane": "work",
-      "sublabel": "subject tracker",
+      "sublabel": "author an artifact",
       "type": "backend",
       "width": 104
     },
     {
       "col": 1,
-      "id": "gate-authored",
-      "label": "Gate Authored",
+      "id": "rubric",
+      "label": "Rubric",
+      "lane": "work",
+      "sublabel": "score the artifact",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 2,
+      "id": "clear-gate",
+      "label": "Clear Gate",
       "lane": "gates",
-      "sublabel": "",
+      "sublabel": "every s",
       "tag": "branch",
       "type": "security",
       "width": 104
     },
     {
       "col": 2,
-      "id": "rubric",
-      "label": "Rubric",
+      "id": "repair",
+      "label": "Repair",
       "lane": "work",
-      "sublabel": "blind rubric review",
+      "sublabel": "address the rubric",
       "type": "backend",
       "width": 104
     },
     {
       "col": 3,
-      "id": "gate-disagree",
-      "label": "Gate Disagree",
+      "id": "admit-first-pass",
+      "label": "Admit First\u2026",
+      "lane": "room",
+      "type": "messagebus",
+      "width": 104
+    },
+    {
+      "col": 3,
+      "id": "rescore",
+      "label": "Rescore",
+      "lane": "work",
+      "sublabel": "re score the",
+      "type": "backend",
+      "width": 104
+    },
+    {
+      "col": 4,
+      "id": "admit-gate",
+      "label": "Admit Gate",
       "lane": "gates",
-      "sublabel": "",
+      "sublabel": "every s",
       "tag": "branch",
       "type": "security",
       "width": 104
     },
     {
       "col": 4,
-      "id": "repair",
-      "label": "Repair",
-      "lane": "work",
-      "sublabel": "one repair round for",
-      "type": "backend",
+      "id": "halt-gate",
+      "label": "Halt Gate",
+      "lane": "gates",
+      "sublabel": "every s",
+      "tag": "branch",
+      "type": "security",
+      "width": 104,
+      "yOffset": 92
+    },
+    {
+      "col": 5,
+      "id": "accept",
+      "label": "Accept",
+      "lane": "room",
+      "type": "messagebus",
       "width": 104
     },
     {
       "col": 5,
-      "id": "disposition",
-      "label": "Disposition",
-      "lane": "work",
-      "sublabel": "apply exactly one",
-      "type": "backend",
-      "width": 104
-    },
-    {
-      "col": 5,
-      "id": "rescore",
-      "label": "Rescore",
-      "lane": "work",
-      "sublabel": "blind re score of",
-      "type": "backend",
+      "id": "stop",
+      "label": "Stop",
+      "lane": "room",
+      "type": "messagebus",
       "width": 104,
       "yOffset": 92
     }

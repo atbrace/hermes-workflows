@@ -76,6 +76,17 @@ designed dead gauge so the tally's loud-row law is exercised on every run; the
 report node consumes the tally via `after_partial`. Two author laps — honest
 (dead gauge as a loud red row) and severed (a child cut from the record becomes
 a NAMED missing row): [receipts/census-fanout/author-run.json](../receipts/census-fanout/author-run.json).
+[examples/build/rubric-repair.workflow.json](../examples/build/rubric-repair.workflow.json) is a
+bounded-admission TEMPLATE (author -> blind rubric scoring of the committed artifact ->
+exactly one repair of the named findings -> frontier re-score -> second-disagreement STOP
+RULE -> exactly one disposition, echoed at zero tokens). Core has no loop engine, so the
+loop is structural: the re-score hangs behind the repair and a clean first pass
+cascade-prunes the whole repair arm; the STOP is a machine `when` on the re-score's
+`disagreements` count (>= 2 halts, < 2 admits), and blindness is carried by `inputs` —
+each scoring seat receives the artifact path only, never the author's or the repairer's
+claims. The re-score pins the capability class `council_a` (bind it in `settings.models`;
+an unbound class refuses the launch by name). Validated + pin-tested
+(`tests/test_examples_hw_gft.py`), not smoke-run.
 [examples/review/escalation-ladder.workflow.json](../examples/review/escalation-ladder.workflow.json) is a verify-then-branch TEMPLATE (builder -> fresh independent verifier -> when-pair carried by the two human arm gates themselves: verified lands behind the land gate, failed escalates to a human hold with the whole packet; core has NO loop idiom - retry ownership is spelled out, not implied). Both arms smoke-run: [receipts/escalation-ladder/author-run.json](../receipts/escalation-ladder/author-run.json).
 [examples/basics/exchange-run.workflow.json](../examples/basics/exchange-run.workflow.json) is the
 byte-portability TEACHING PAIR — the file itself is the artifact that travels the
