@@ -857,6 +857,7 @@ WORKFLOW_PARAMS = {
         "description": {"type": "string", "description": "save: one-line purpose shown by library/list."},
         "params": {"type": "object", "additionalProperties": {"type": "object"}, "description": "save: optional meta.params descriptions/default suggestions for run_context keys. Required keys derive from graph refs, never this metadata. Omission retains prior params; {} deliberately clears them. Missing/dead declarations warn, never prevent saving."},
         "tags": {"type": "array", "items": {"type": "string"}, "description": "save (optional): 1-10 discovery tags — legacy flat tokens (lowercase alnum [-_.] <=32) or faceted `facet:value` (facets: use_case, repo, domain, risk, note; values [a-z0-9._-] <=48; e.g. use_case:code-review). For explicit curation, library exposes tag_vocab for optional reuse. Resaving without tags keeps the entry's existing tags; stored in the meta envelope. library (optional): filter to entries carrying ALL listed tags (same 1-10 law as save — an empty array errors on BOTH verbs; omit tags for no filter); an empty result's tag_match_counts says which term starved."},
+        "check": {"type": "boolean", "description": "library (optional): audit the shelf while listing — every row echoes digest_match (stored provenance.source_digest vs a recompute over the shelved bytes; a hand-edited entry reads false), and author_source: match|drift when provenance.source names a readable JSON graph file whose nodes digest differently; top-level unstamped names every row with no stored stamp (pre-#126 or hand-stripped). Without check the library response bytes are unchanged (golden-bytes law)."},
         "why_not_library": {"type": "string", "description": "submit (REQUIRED, >=80 chars): why no library graph covered this task — name the entries you checked and the shape you needed. Only explicit study submissions require this field; ordinary run does not."},
         "check": {"type": "boolean", "description": "library (optional, default false): true = echo a `check` block — the shelf-vs-author drift verb (est-dv8q4). For every echoed row recompute wfcommon.source_digest over the entry's own canonical nodes and compare against the stored provenance.source_digest; when provenance.source resolves to a readable local graph file, recompute from that file's nodes too. Echo: {checked, ok, drifted:[{id, stored, recomputed, source_digest_match}], unstamped, unresolvable_source}; source_digest_match is null when no source-side measurement was possible (no source, or an unresolvable one). Read-only — never mutates the shelf; the response is byte-identical when the flag is absent. A drifted row is a shelf that no longer matches the bytes its author source carries."},
         "lane": {"type": "string", "description": "submit (optional, <=128 chars): lane label carried beside the submission for the quartermaster's triage; no scheduling effect."},
@@ -2434,7 +2435,7 @@ def act_save(args):
         out["save_warnings"] = _warn
     return out
 
-def _library_rows():
+def _library_rows(check=False):
     """#50: THE discovery read for the library — rich rows + honest skips. One walk
     shared by the `library` action and the run from=<unknown> fuzzy nudge, so the
     two can never disagree about what the library holds. Shapes: the 1.1 BARE graph
@@ -2518,6 +2519,25 @@ def _library_rows():
             prov = graph.get("provenance")
             if isinstance(prov, dict):
                 row.update({k: prov.get(k) for k in ("owner", "source", "source_digest")})
+            if check:
+                # hw-2mb: the stamp is write-time truth — recompute it against the
+                # bytes actually on the shelf so a hand-edited or pre-#126 entry
+                # shows. Opt-in only: without check the rows keep their golden bytes.
+                live = _common.source_digest(graph)
+                stored = prov.get("source_digest") if isinstance(prov, dict) else None
+                row["digest_match"] = bool(stored) and live == stored
+                src = prov.get("source") if isinstance(prov, dict) else None
+                if isinstance(src, str) and src:
+                    try:
+                        sdata = json.loads(Path(src).expanduser().read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        pass  # URL / attribution prose / unreadable: nothing to compare
+                    else:
+                        sgraph = _common.library_entry(sdata).get("graph")
+                        if sgraph is not None:
+                            row["author_source"] = (
+                                "match" if live is not None
+                                and _common.source_digest(sgraph) == live else "drift")
             rows.append(row)
     return rows, skipped, quarantined
 
@@ -2593,7 +2613,9 @@ def _library_digest_check(rows):
 def act_library(args):
     if "check" in args and not isinstance(args["check"], bool):
         return {"error": "check must be a boolean"}
-    rows, skipped, quarantined = _library_rows()
+    check = bool(args.get("check"))
+    rows, skipped, quarantined = _library_rows(check)
+
     if args.get("name") is not None:
         name = args["name"]
         try:
@@ -2689,6 +2711,11 @@ def act_library(args):
         out["skipped"] = skipped
     if quarantined:   # F-2 (#62): every refused entry is named WITH its typed reason;
         out["quarantined"] = quarantined   # a clean library never grows this key (golden bytes)
+    if check:
+        # hw-2mb audit, list shape: the drift half rides per-row digest_match; this
+        # names the rows with NO stored stamp to recompute against (pre-#126 bytes
+        # or a hand-stripped provenance block). Key lands only under check:true.
+        out["unstamped"] = [r["name"] for r in rows if not r.get("source_digest")]
     return out
 
 def act_validate(args):
