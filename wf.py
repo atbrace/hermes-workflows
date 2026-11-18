@@ -8271,7 +8271,11 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                     r2 = run_child(meta, node, byid, goal, context, schema,
                                    attempt_note=attempt_note, steering=steering, attempt=attempt,
                                    skey=skey, inputs=inputs, index=index,
-                                   resume_preamble=resume_preamble,
+                                   # hw-qh6: the clamp re-drive is a fresh session too — seed it
+                                   # with the #130 inventory like every other re-drive path.
+                                   resume_preamble="\n\n".join(
+                                       p for p in (resume_preamble,
+                                                   _resume_hint_block(run, node, index)) if p),
                                    reasoning_override=target,
                                    seat_cancel=seat_cancel, seat_hold=seat_hold,
                                    seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: the admit lock must survive every re-drive
@@ -8426,12 +8430,17 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             if parsed is not None and perr is None else
             f"Your previous answer had no parseable json block ({perr})")
     if attempt < 1:
+        # hw-qh6 (measured 2026-10-26): an unseeded correction re-drive re-orients from
+        # zero — a fresh session that just burned its whole budget on the work now sitting
+        # in its own work dir. The #130 machine inventory rides the correction exactly as
+        # it rides the ladder respawns; resume_hint: false keeps the prompt byte-identical.
+        hint = _resume_hint_block(run, node, index)
         correction = (". Correct the answer schema without redoing finished work."
-                      if resume_preamble else ". Redo the work and return valid json.")
+                      if (resume_preamble or hint) else ". Redo the work and return valid json.")
         r = run_child(meta, node, byid, goal, context, schema,
                       attempt_note=note + correction, steering=steering,
                       attempt=attempt + 1, skey=skey, inputs=inputs, index=index,
-                      resume_preamble=resume_preamble,
+                      resume_preamble="\n\n".join(p for p in (resume_preamble, hint) if p),
                       seat_cancel=seat_cancel, seat_hold=seat_hold,
                       seat_admit_lock=seat_admit_lock,  # est-g255 r2 R1: admit atomicity survives the correction re-drive
                       model_override=model_override,
