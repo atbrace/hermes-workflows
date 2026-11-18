@@ -52,12 +52,13 @@ git config --global --add safe.directory '*'
 PIN=$PIN
 if command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
   echo "HERMES: already present"
+elif [ -d /tmp/hermes-agent ] && [ ! -d /tmp/hermes-agent/.git ]; then
+  echo "WARN: /tmp/hermes-agent exists but is not a git repo (a stale scratch dir poisons the clone target; rm it)"
+  echo "WARN: pinned core bootstrap skipped"
 else
   git clone -q https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \
     && git -C /tmp/hermes-agent checkout -q "\$PIN" \
     && python3 -m pip install -q --break-system-packages uv >/dev/null 2>&1 \
-    && git clone -q https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \
-    && git -C /tmp/hermes-agent checkout -q "\$PIN" \
     && export UV_PROJECT_ENVIRONMENT=/usr/local/hermes-agent-env \
     && uv sync --python 3.14 --directory /tmp/hermes-agent >/dev/null 2>&1 \
     && /usr/local/hermes-agent-env/bin/python3 -c 'pass' \
