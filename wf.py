@@ -7289,6 +7289,16 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # the fan-out identity law holds everything from '## Inputs' onward
     # byte-identical across items, and this line carries a per-item path.
     prompt += "\n\n" + WORK_DIR_NOTE.replace("{WORK_DIR}", str(child_work_dir(run, node, index)))
+    # hw-ced (measured 2026-11-17, rdirprobe runs): a gateway-served seat's SHELL
+    # executes in the daemon's systemd-unit env — the runner's per-spawn HERMES_WF_*
+    # env pins structurally cannot reach it (cgroup=hermes-gateway-*.service, /proc
+    # environ count 0). The prompt is the only channel that ALWAYS reaches a seat,
+    # so the run dir is stated there; the export hint lets a shell recover the
+    # variable where the env did not arrive. Lands in the GOAL half, beside
+    # WORK_DIR_NOTE: per-node path, fan-out identity law preserved.
+    prompt += ("\n\nRun dir: " + str(run)
+               + " — if your shell lacks $HERMES_WF_RUN_DIR (gateway-served "
+                 "sessions do), use this literal path or export it.")
     if inputs:
         prompt += "\n\n" + inputs
     if steering:
