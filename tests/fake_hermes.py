@@ -632,6 +632,55 @@ if _FAKE_MODE == "retry_hint":   # #130: transport death (0 api calls) that BANK
         pass
     print("hermes -z: agent failed: openai.APIConnectionError. Connection error.")
     sys.exit(2)
+if _FAKE_MODE == "seed_schema_qh6":   # hw-qh6: schema-retry re-drive must carry the #130 inventory.
+    # Attempt 0 banks a work file and answers PARSEABLE but schema-invalid (rc 0); the correction
+    # re-drive (attempt 1) answers valid only when its prompt carried the machine inventory naming
+    # the banked artifact — a re-drive without the seed repeats the bad answer and the node fails.
+    _c = 0
+    if os.environ.get("FAKE_ATTEMPT_DIR"):
+        os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
+        _p = os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "attempts")
+        _c = int(open(_p).read()) if os.path.exists(_p) else 0
+        open(_p, "w").write(str(_c + 1))
+    if _c == 0:
+        try:
+            with open("qh6seed.md", "w") as f:
+                f.write("QH6SEED banked before the schema death\n")
+        except OSError:
+            pass
+    else:
+        if "## Dead-attempt artifact inventory (machine preamble)" in q and "qh6seed.md" in q:
+            print("```json\n" + json.dumps({"result": "resumed-schema-qh6"}) + "\n```")
+            sys.exit(0)
+    print("```json\n" + json.dumps({"wrong": 1}) + "\n```")
+    sys.exit(0)
+if _FAKE_MODE == "seed_gate400_qh6":   # hw-qh6: the gate400 clamp re-drive must carry the #130 inventory.
+    # First spawn (unclamped reasoning) banks a work file and dies the declared-400 shape; the
+    # clamped re-drive answers valid only when its prompt carried the machine inventory naming the
+    # banked artifact (the clamped effort is FAKE_OK_EFFORT).
+    _c = 0
+    if os.environ.get("FAKE_ATTEMPT_DIR"):
+        os.makedirs(os.environ["FAKE_ATTEMPT_DIR"], exist_ok=True)
+        _p = os.path.join(os.environ["FAKE_ATTEMPT_DIR"], "attempts")
+        _c = int(open(_p).read()) if os.path.exists(_p) else 0
+        open(_p, "w").write(str(_c + 1))
+    _got = args[args.index("--reasoning") + 1] if "--reasoning" in args else ""
+    if _got and _got != os.environ.get("FAKE_OK_EFFORT", "medium"):
+        if _c == 0:
+            try:
+                with open("qh6seed.md", "w") as f:
+                    f.write("QH6SEED banked before the gate400 death\n")
+            except OSError:
+                pass
+        print("hermes -z: agent failed: Error code: 400 - {'error': {'message': "
+              "\"Unsupported type: %s. Supported types are %s\", 'type': 'invalid_request_error'}}"
+              % (_got, os.environ.get("FAKE_SUPPORTED_EFFORTS", "xhigh,medium,low")))
+        sys.exit(1)
+    if "## Dead-attempt artifact inventory (machine preamble)" in q and "qh6seed.md" in q:
+        print("```json\n" + json.dumps({"result": "resumed-gate400-qh6"}) + "\n```")
+        sys.exit(0)
+    print("```json\n" + json.dumps({"wrong": 1}) + "\n```")
+    sys.exit(0)
 if "DEADSEAT" in q:
     # sys-bknard (completed-seat rc=1): DEADSEAT <path|NONE> — replay the real
     # capture of a seat that ANSWERED but whose CLI exit path returned rc=1:
