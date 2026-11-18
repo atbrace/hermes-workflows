@@ -1,0 +1,14 @@
+{
+  "cards": [
+    {"dot": "cyan", "title": "Why it works", "items": [
+      "Publishing rests on a banked suite proof, never on the implementer's word",
+      "A when-guarded pair splits the ok and red arms: the halt arm is a landing, not a silence",
+      "The owner gate sits between green verify and the publish authority"
+    ]},
+    {"dot": "rose", "title": "Contract", "items": [
+      "{{nodes}} nodes, {{gates}} gates, {{branches}} branches, {{edges}} edges: intake -> plan -> lane -> verify -> arms",
+      "run_context seeds bead, store, lane — all required, none defaulted",
+      "Derived from this example's bytes by scripts/graph_diagram.py"
+    ]}
+  ]
+}
