@@ -16,16 +16,18 @@ Door (`library check:true`) pins:
   D6  the check is read-only (entry bytes and the name-filtered entry
       branch included) and a non-boolean check refuses by name.
 
-Census (`scripts/shelf-census.py`) pins (probe injected, no real pgrep):
-  H1  an old, exit-less, unprobed run dir is a husk row {run_dir, age_s,
-      last_log_age_s}; a live-probe match is never a husk, and the match is
-      EXACT-argv-token (substring false-blames a run whose id prefixes a
-      live one's); an inside-the-grace dir is in_grace, not a husk;
-  H2  held verdicts count gate_held and stay open (a gate park is resumable);
-  H3  the canonical counters block and the one-line fleet report agree, with
+Census (`scripts/shelf-census.py`) pins (probe seam injected, no real
+lock-probe), ported to the hw-0y7 law — the ONE liveness law (batch probe
+over run dirs, exact-dir result) and the canonical run_status block:
+  H1  an old, exit-less, unprobed run dir is a husk; a live-probe hit is
+      never a husk, and the match is an EXACT dir set (substring/prefix
+      false-blame stays pinned); an inside-the-grace dir is in_flight, not
+      a husk;
+  H2  an unanswered gate-hold marker counts gate_held and is never a husk
+      (a gate park is resumable);
+  H3  the canonical counters block and the census stdout summary agree,
       every number defined by its exact query;
-  H4  probe self-exclusion: the probe's own bash line is excluded; the /proc
-      predicate matches the door's spawn argv shape only.
+  H4c the real probe path runs clean against the live system.
 
 Stdlib only; no runner, no network.
 """
@@ -127,36 +129,38 @@ check("D6c the check never rewrites entry bytes (untouched entries identical)",
 check("D6d flag-off listing after all checks == flag-off listing before",
       call(action="library") == plain)
 
-# ============================ census leg =====================================
+# ============================ census leg (hw-0y7 law) ======================
 spec = importlib.util.spec_from_file_location("shelf_census", HERE / "scripts" / "shelf-census.py")
 census = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(census)
-_real_probe = census.live_runner_cmdlines()  # BEFORE the seam is replaced: the real pgrep//proc path
 
 root = Path(tmp_dir.name) / "wfroot"
 NOW = time.time()
 
-def run_dir(rid, exit_reason=None, age=0.0, log_age=None):
+def run_dir(rid, exit_reason=None, age=0.0, held=None):
     d = root / rid
-    d.mkdir(parents=True)
+    (d / "gates").mkdir(parents=True)
     (d / "run.json").write_text(json.dumps({"name": rid}), encoding="utf-8")
     if exit_reason is not None:
         (d / "runner_exit.json").write_text(json.dumps({"reason": exit_reason}), encoding="utf-8")
-    if log_age is not None:
-        (d / "runner.log").write_text("lap\n", encoding="utf-8")
-        os.utime(d / "runner.log", (NOW - log_age, NOW - log_age))
+    if held is not None:
+        (d / "gates" / (held + ".held.json")).write_text(json.dumps({"since": 1}), encoding="utf-8")
     if age:
-        os.utime(d, (NOW - age, NOW - age))
+        stamp = NOW - age
+        for f in list(d.rglob("*")) + [d]:
+            os.utime(f, (stamp, stamp))
     return d
 
 d_done = run_dir("r-done", exit_reason="done")
-d_held = run_dir("r-held", exit_reason="held at g1")
-d_husk = run_dir("r-husk", age=7200, log_age=3600)
-d_live = run_dir("r-live", age=7200)          # prefix of the probed id: substring would false-blame
+d_held = run_dir("r-held", held="g1", age=7200)   # marker-without-answer: hw-0y7's hold shape
+d_husk = run_dir("r-husk", age=7200)
+d_live = run_dir("r-live", age=7200)          # prefix of the probed id: exact-dir set must not false-blame
 d_liveX = run_dir("r-liveX", age=7200)        # the probed run
-d_young = run_dir("r-young")
+d_young = run_dir("r-young")                  # inside the grace
 
-census.live_runner_cmdlines = lambda: ["4242 python3 /opt/hw/wf.py run r-liveX"]
+_real_live = census.live_runners([str(d_liveX)])  # BEFORE the seam is replaced: the real batch-probe path
+
+census.live_runners = lambda dirs: {str(d_liveX)} if str(d_liveX) in list(dirs) else set()
 
 out = Path(tmp_dir.name) / "census.json"
 argv = ["shelf-census.py", "--wf-root", str(root), "--out", str(out),
@@ -174,30 +178,23 @@ try:
 finally:
     sys.argv = _real_argv
 res = json.loads(out.read_text(encoding="utf-8"))
-cc = res["counters"]
-check("H1 husk rows name the two dead no-exit dirs with age + log age",
-      code == 0 and [h["run_dir"] for h in res["husks"]] == [str(d_husk), str(d_live)]
-      and abs(res["husks"][0]["age_s"] - 7200) < 5
-      and abs(res["husks"][0]["last_log_age_s"] - 3600) < 5, json.dumps(res["husks"]))
-check("H2 gate park counts gate_held and stays open",
-      cc["gate_held"] == 1 and "held" in cc["by_status"], json.dumps(cc))
-check("H3 canonical counters block matches the exact-query definitions",
-      cc["total"] == 6 and cc["by_status"] == {"done": 1, "held": 1, "husk": 2,
-                                               "running": 1, "in_grace": 1}
-      and cc["open_total"] == 5 and cc["live_runners"] == 1 and cc["husks"] == 2,
+cc = res["run_status"]
+check("H1 husks name the two dead no-exit dirs past grace; the prefix-trap dir joins them",
+      code == 0 and cc["husk_dirs"] == sorted([str(d_husk), str(d_live)]),
+      json.dumps(cc["husk_dirs"]))
+check("H2 gate park counts gate_held by marker shape and is never a husk",
+      cc["gate_held"] == 1 and cc["by_status"].get("gate_held") == 1
+      and str(d_held) not in cc["husk_dirs"], json.dumps(cc))
+check("H3 canonical counters block matches the exact-query definitions (hw-0y7 law)",
+      cc["total"] == 6 and cc["by_status"] == {"done": 1, "gate_held": 1, "husk": 2,
+                                               "live": 1, "in_flight": 1}
+      and cc["live_runners"] == 1 and cc["husks"] == 2 and cc["husk_grace_s"] == 3600,
       json.dumps(cc))
-check("H3b the one-line fleet report agrees with the block",
-      "counters: open_total=5 live_runners=1 husks=2 gate_held=1" in buf.getvalue(),
-      buf.getvalue())
-check("H4 probe self-exclusion drops the probe's own shell line",
-      census._is_probe_shell("bash -c pgrep -af wf.py run") and not
-      census._is_probe_shell("python3 /opt/hw/wf.py run r-liveX"))
-check("H4b /proc predicate matches the door's spawn argv shape only",
-      census._runner_in_argv(["python3", "/opt/hw/wf.py", "run", "r1"]) and not
-      census._runner_in_argv(["bash", "-c", "wf.py run"]) and not
-      census._runner_in_argv(["python3", "/opt/hw/wf.py", "validate"]))
-check("H4c the real probe path runs clean against the live system (list in, no crash)",
-      isinstance(_real_probe, list))
+check("H3b the census stdout summary carries the same run_status block",
+      json.loads(buf.getvalue().split("written:")[0])["run_status"] == cc,
+      buf.getvalue()[:400])
+check("H4c the real probe path runs clean against the live system (set in, no crash)",
+      isinstance(_real_live, set))
 
 print("FAIL" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

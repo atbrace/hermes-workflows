@@ -30,6 +30,8 @@ SOURCE_ONLY_TESTS = {
     # est-iypbd (#580) suite-arrival: both scrub pins execute the source-only
     # make_public.py — same shape as test_scrub_yml_166b / test_personal_path_scrub_867.
     "tests/test_scrub_nul_readme_580.py", "tests/test_scrub_surface_1w0hoy.py",
+    # hw-0y7 (PR #672): same shape — runs the source-only estate census script
+    "tests/test_shelf_census_husk_hw0y7.py",
 }
 # A shipped test that loads/executes `<root> / "scripts" / "<file>"` needs that file in the ZIP.
 SCRIPT_REF = re.compile(r'(?:ROOT|BUILD)\s*/\s*"scripts"\s*/\s*"([^"]+)"|ROOT\s*/\s*"scripts/([^"]+)"')
