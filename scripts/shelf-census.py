@@ -26,6 +26,15 @@ Census law (lifecycle-governor re-measure notes):
     inner graph's nodes — the FB-D1 under-read fix).
   - consumer scan: live rows referencing archived cell rows (measured consumers
     > 0 is the SH-03 revival trigger).
+  - run-dir bucketing (hw-0y7): a run dir older than the grace whose
+    runner_exit.json is absent and whose name is not in the live-runner batch
+    probe (the one liveness law: batch runner.lock states + runner_alive) is a
+    HUSK. Every run dir lands in one bucket and every census prints the
+    canonical counters block {total, by_status, live_runners, husks,
+    gate_held} — the fleet line that made a 26-husk estate visible by pure
+    subtraction. The gate_held bucket is the marker shape (gates/<id>.held.json
+    with no gates/<id>.json answer); the read model re-derives holds from the
+    graph bytes and remains the authority.
 
 --out defaults to <HERMES_HOME>/work/shelf-census/latest.json and is a LOCAL
 artifact. It is explicitly NOT a cross-seat truth registry: each seat re-runs
@@ -33,28 +42,10 @@ this committed tool and diffs the outputs (SH-04 law).
 
 Exit codes: 0 ok; 1 when a row is NEW deadweight (zero launches, zero refs,
 not kind:draft) relative to a previously stored census; 2 usage/store missing.
-
-HUSKS + CANONICAL COUNTERS (est-dv8q4, s3_engine "shelf-census has no husk
-bucket"): a `husks` bucket names the one class a dirs census otherwise hides —
-for every run dir in the scanned roots, a dir older than --husk-grace
-(default 1 h) whose runner_exit.json is absent and whose name is not in a
-live `pgrep -af 'wf.py run'` batch probe (the probe's own bash line excluded;
-a /proc cmdline scan is the no-pgrep fallback) is a husk row
-{run_dir, age_s, last_log_age_s}. One census run also emits the canonical
-counters block {total, by_status, open_total, live_runners, husks,
-gate_held} and prints the one-line fleet report `open_total=… live_runners=…
-husks=… gate_held=…`, each number defined by its exact query so no report
-ever swaps measures: open_total = run dirs with no terminal closure (no
-runner_exit.json at all, or exit reason `held at <gate>` — a gate park is
-resumable); live_runners = probe-matched processes; gate_held = exit records
-whose reason starts `held at `. The print-then-mutate-on-flag law is
-preserved: the census prints and writes its --out artifact, mutating nothing
-else.
 """
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -183,124 +174,124 @@ def grep_refs(term, roots):
     return hits
 
 
-_PROBE_SHELL_TOKENS = ("bash", "sh", "dash", "zsh", "pgrep")  # probe self-exclusion set
+HUSK_GRACE_DEFAULT_S = 86400
+PKG_MARKERS = ("run.json", "graph.json", "runner_exit.json", "events.jsonl",
+               "spawn-ledger.jsonl")  # age anchor: the retention law (dir mtime lies)
 
 
-def _is_probe_shell(cmdline):
-    """The probe's own bash line excluded: a wrapper shell (or pgrep itself)
-    that merely echoes the pattern in its -c string is data ABOUT the probe,
-    not a runner."""
-    tok0 = os.path.basename(cmdline.split(None, 1)[0])
-    return tok0 in _PROBE_SHELL_TOKENS
-
-
-def _runner_in_argv(toks):
-    """/proc fallback predicate — the door's own spawn argv shape
-    ([python, .../wf.py, run, <run-id>]): a token whose basename is wf.py
-    followed by a literal `run` token."""
-    for i, t in enumerate(toks[:-1]):
-        if os.path.basename(t) == "wf.py" and toks[i + 1] == "run":
-            return True
-    return False
-
-
-def live_runner_cmdlines():
-    """Batch probe of live runner processes: `pgrep -af 'wf.py run'` invoked as
-    plain argv (no shell), so the probe cannot match a wrapper bash line of its
-    own making; a reported line whose first token names a probe shell is
-    dropped anyway (see _is_probe_shell). pgrep missing/unavailable falls back
-    to a /proc cmdline scan. Returns list of 'pid cmdline' strings; [] honestly
-    means 'no live runners found by the probe that ran'."""
+def _wfcommon():
+    """wfcommon when the plugin checkout sits beside this script, else None."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
     try:
-        res = subprocess.run(["pgrep", "-af", "wf.py run"],
-                             capture_output=True, text=True, timeout=5)
-        out = []
-        for line in res.stdout.splitlines():
-            line = line.strip()
-            parts = line.split(None, 1)  # 'pid cmdline'
-            if len(parts) == 2 and not _is_probe_shell(parts[1]):
-                out.append(line)
-        return out
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    out = []
-    try:
-        pids = os.listdir("/proc")
-    except OSError:
-        return out
-    for pid in pids:
-        if not pid.isdigit():
-            continue
+        import wfcommon
+        return wfcommon
+    except Exception:
+        return None
+
+
+def live_runners(dirs):
+    """The live-runner batch probe: the ONE liveness law (batch runner.lock
+    states, one probe child per batch, folded through runner_alive). Without the
+    plugin tree the weaker pid-only fallback applies — a pid is not ownership,
+    so it can only ever ADD liveness, never subtract it."""
+    if not dirs:
+        return set()
+    wc = _wfcommon()
+    if wc is not None:
         try:
-            with open("/proc/%s/cmdline" % pid, "rb") as fh:
-                toks = [t.decode("utf-8", "replace") for t in fh.read().split(b"\0") if t]
-        except OSError:
-            continue
-        if _runner_in_argv(toks):
-            out.append(pid + " " + " ".join(toks))
+            from pathlib import Path
+            # ponytail: runner_lock_states ships the whole batch as ONE argv
+            # string; Linux refuses a single arg past MAX_ARG_STRLEN (128 KiB)
+            # — ~4k seats blew the cap and fail-closed EVERY dir to live.
+            # Chunk below the cap; one probe child per chunk, still.
+            found = set()
+            for i in range(0, len(dirs), 256):
+                chunk = dirs[i:i + 256]
+                paths = [Path(d) for d in chunk]
+                states = wc.runner_lock_states(paths)
+                found |= {d for d, p in zip(chunk, paths)
+                          if wc.runner_alive(p, lock_state=states.get(p))}
+            return found
+        except Exception:
+            pass
+    out = set()
+    for d in dirs:
+        try:
+            with open(os.path.join(d, "wf.pid")) as fh:
+                os.kill(int(fh.read().strip()), 0)
+            out.add(d)
+        except Exception:
+            pass
     return out
 
 
-def classify_run_dir(d, now, grace, live_ids):
-    """Dir-facts status of one run dir — the census is stdlib-only and does NOT
-    import the read model, so it classifies from the ledger files themselves:
-      - runner_exit.json present -> the FIRST WORD of its `reason` (done,
-        stopped, budget_exhausted; 'held at <gate>' -> held; 'crashed: …' ->
-        crashed; 'terminated: SIGTERM …' -> terminated).
-      - no exit record + run id present as an argv TOKEN on the live probe ->
-        'running' (exact-token law: a substring match false-blames a run whose
-        id prefixes another's).
-      - no exit record + dir mtime older than the husk grace -> 'husk' — a run
-        that died without an exit record, the class the peer measured as 26
-        dirs 'that hides'.
-      - no exit record + inside the grace -> 'in_grace' (not yet classifiable;
-        an in-flight launch must never read as dead)."""
+def _gate_held(d):
+    # Marker shape only: held.json without an answer file. A released hold keeps
+    # its marker (wf.py never unlinks it), so the answer file is the law here.
+    gdir = os.path.join(d, "gates")
     try:
-        with open(os.path.join(d, "runner_exit.json")) as fh:
-            reason = str((json.load(fh) or {}).get("reason") or "")
-        head = reason.split(":", 1)[0].split()
-        return head[0] if head else "closed"
-    except Exception:
-        pass  # absent or unreadable exit record: not a trusted closure
-    if os.path.basename(d) in live_ids:
-        return "running"
-    try:
-        age = now - os.path.getmtime(d)
+        names = os.listdir(gdir)
     except OSError:
-        age = 0.0
-    return "husk" if age > grace else "in_grace"
+        return False
+    return any(fn.endswith(".held.json") and not os.path.exists(
+        os.path.join(gdir, fn[:-len(".held.json")] + ".json")) for fn in names)
 
 
-def husk_counters(dirs, now, grace, cmdlines):
-    """Bucket every scanned run dir (HUSK-SCAN law, see module docstring) and
-    fold the canonical counters block. Returns (husk_rows, counters); husk rows
-    are run_dir-ASC (collapse-to-one: a total order over unique dir paths)."""
-    live_ids = set()
-    for line in cmdlines:
-        parts = line.split(None, 1)
-        live_ids.update(parts[1].split() if len(parts) == 2 else [])
-    by_status, husks = {}, []
+def _run_age_s(d, now):
+    mt = [os.path.getmtime(os.path.join(d, f)) for f in PKG_MARKERS
+          if os.path.exists(os.path.join(d, f))] or [os.path.getmtime(d)]
+    return max(0.0, now - max(mt))
+
+
+def run_status_census(dirs, grace_s, now=None, probe=None):
+    """Bucket every run dir into exactly one status and tally the fleet line.
+    The runner's own exit verdict outranks every other signal, mirroring the
+    read model's honest-status ladder; terminal-or-live fails toward NOT husk —
+    only age + absence + a negative liveness probe subtracts a run dir."""
+    now = time.time() if now is None else now
+    live = (probe or live_runners)(list(dirs))
+    buckets, husks = {}, []
     for d in dirs:
-        st = classify_run_dir(d, now, grace, live_ids)
-        by_status[st] = by_status.get(st, 0) + 1
-        if st == "husk":
-            try:
-                age_s = round(now - os.path.getmtime(d), 1)
-            except OSError:
-                age_s = None
-            try:
-                log_age_s = round(now - os.path.getmtime(os.path.join(d, "runner.log")), 1)
-            except OSError:
-                log_age_s = None  # honest absence: no log, no invented age
-            husks.append({"run_dir": d, "age_s": age_s, "last_log_age_s": log_age_s})
-    husks.sort(key=lambda h: h["run_dir"])
-    gate_held = by_status.get("held", 0)
-    open_total = (by_status.get("running", 0) + by_status.get("in_grace", 0)
-                  + len(husks) + gate_held)
-    counters = {"total": len(dirs), "by_status": by_status, "open_total": open_total,
-                "live_runners": len(cmdlines), "husks": len(husks),
-                "gate_held": gate_held}
-    return husks, counters
+        try:
+            with open(os.path.join(d, "runner_exit.json")) as fh:
+                exit_state = json.load(fh)
+            exit_state = exit_state if isinstance(exit_state, dict) else {}
+        except Exception:
+            exit_state = None
+        reason = str((exit_state or {}).get("reason") or "")
+        if d in live:
+            status = "live"
+        elif exit_state is not None:
+            if reason == "done":
+                status = "done"
+            elif reason == "stopped":
+                status = "stopped"
+            elif reason == "budget_exhausted":
+                status = "partial"
+            elif reason.startswith(("blocked by failed", "crashed:")):
+                status = "failed"
+            elif reason.startswith(("terminated:", "interrupted")):
+                status = "interrupted"
+            elif reason.startswith("blocked:"):
+                status = "blocked"
+            else:
+                status = "other"
+        elif _gate_held(d):
+            status = "gate_held"
+        elif _run_age_s(d, now) >= grace_s:
+            status = "husk"
+            husks.append(d)
+        else:
+            status = "in_flight"
+        buckets[status] = buckets.get(status, 0) + 1
+    return {"total": len(dirs), "by_status": dict(sorted(buckets.items())),
+            "live_runners": buckets.get("live", 0),
+            "husks": buckets.get("husk", 0),
+            "gate_held": buckets.get("gate_held", 0),
+            "husk_grace_s": grace_s,
+            "husk_dirs": sorted(husks)}
 
 
 def main():
@@ -313,9 +304,8 @@ def main():
                     help="quarantine dir(s) to census (absent = 0)")
     ap.add_argument("--out", default=OUT_DEFAULT)
     ap.add_argument("--no-refs", action="store_true", help="skip the grep-ref scan (fast mode)")
-    ap.add_argument("--husk-grace", type=float, default=3600.0, metavar="SECONDS",
-                    help="seconds an exit-record-less run dir must age before it buckets "
-                         "as a husk (default 1 h); live-probe matches are never husks")
+    ap.add_argument("--husk-grace", type=float, default=HUSK_GRACE_DEFAULT_S,
+                    help="seconds before a no-exit-record, no-live-runner run dir books as a husk")
     a = ap.parse_args()
 
     live_dir = os.path.join(a.wf_root, "library")
@@ -336,11 +326,7 @@ def main():
             w = os.path.join(prof, seat, "workflows")
             if os.path.isdir(w):
                 run_roots.append(w)
-    dirs = run_dirs(run_roots)
-    runs = [run_record(d) for d in dirs]
-    now = time.time()
-    cmdlines = live_runner_cmdlines()
-    husk_rows, counters = husk_counters(dirs, now, a.husk_grace, cmdlines)
+    runs = [run_record(d) for d in run_dirs(run_roots)]
 
     quar = {}
     for q in a.quarantine:
@@ -432,8 +418,7 @@ def main():
         "rows": rows,
         "deadweight": sorted(k for k, v in rows.items() if v["deadweight"]),
         "new_deadweight": new_dead,
-        "husks": husk_rows,
-        "counters": counters,
+        "run_status": run_status_census([r["dir"] for r in runs], a.husk_grace),
     }
 
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
@@ -441,12 +426,7 @@ def main():
         json.dump(result, fh, indent=1, sort_keys=True)
     print(json.dumps({k: result[k] for k in
                       ("rows_live", "rows_archive", "consumers",
-                       "deadweight", "new_deadweight", "counters")}, indent=1))
-    # Canonical one-line fleet report (exact-query definitions in the module
-    # docstring) — the format a report cites so numbers can never be swapped.
-    print("counters: open_total=%d live_runners=%d husks=%d gate_held=%d"
-          % (counters["open_total"], counters["live_runners"],
-             counters["husks"], counters["gate_held"]))
+                       "deadweight", "new_deadweight", "run_status")}, indent=1))
     print("written:", a.out)
     if new_dead:
         sys.exit(1)

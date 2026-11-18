@@ -302,6 +302,8 @@ SOURCE_ONLY_TESTS = {
     # scripts/make_public.py — same shape as test_scrub_yml_166b / #867.
     "tests/test_scrub_nul_readme_580.py": "executes source-only scripts/make_public.py (NUL-README pin, est-iypbd)",
     "tests/test_scrub_surface_1w0hoy.py": "executes source-only scripts/make_public.py (surface audit pin, est-iypbd)",
+    # hw-0y7 (PR #672): the husk-bucket law pin runs the source-only estate census
+    "tests/test_shelf_census_husk_hw0y7.py": "runs source-only scripts/shelf-census.py (hw-0y7 husk-bucket law)",
 }
 
 # Source-only SCRIPTS: repository/estate CI tooling that never travels in the
