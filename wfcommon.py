@@ -6143,9 +6143,33 @@ def run_state(r, *, telemetry=True, lock_state=None):
             meta[nid] = {"parked": nodes[nid]["parked"]}
         elif states[nid] == "pending" and kind(n).spawns is True and deps_ok(n) and nodes[nid].get("active_spawn"):
             meta[nid] = {"running": True}
+    # hw-p2g (partial-gate-wedge): a ready gate the runner defers behind a
+    # running agent wave journals gate.deferred{node, by}; surface it as that
+    # gate's blocked_by instead of silent-pending. Cleared by ANY later event
+    # for the node — the next evaluation always journals (gate.held/parked/
+    # released/skipped/failed), so a stale reason can never outlive the defer.
+    # Honored only while a runner is LIVE: after a stop/death "the running wave"
+    # may no longer be running, and the resume re-journals at its own boundary.
+    _deferred = {}
+    for _ln in events_text.splitlines():
+        if '"gate.deferred"' not in _ln and '"node"' not in _ln:
+            continue                     # substring prefilter: only rows that can matter
+        try:
+            _ev = json.loads(_ln)
+        except ValueError:
+            continue
+        if not isinstance(_ev, dict) or not _ev.get("node"):
+            continue
+        if _ev.get("event") == "gate.deferred" and live:
+            _deferred[_ev["node"]] = [str(b) for b in (_ev.get("by") or [])]
+        else:
+            _deferred.pop(_ev["node"], None)
     for n in graph["nodes"]:
         if states[n["id"]] == "pending" and not deps_ok(n):
             nodes[n["id"]]["blocked_by"] = blocked_by(n, states, meta)
+        elif states[n["id"]] == "pending" and n["id"] in _deferred:
+            _by = ", ".join(_deferred[n["id"]]) or "the running wave"
+            nodes[n["id"]]["blocked_by"] = [f"gate deferred behind running wave: {_by}"]
     unreceipted = any(not row["verdict"] for n in graph["nodes"]
                       if states[n["id"]] in ("done", "partial")
                       for row in external_effect_receipts(n, recs[n["id"]]))
