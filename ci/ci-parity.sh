@@ -44,9 +44,11 @@ PIN=$PIN
 if command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
   echo "HERMES: already present"
 else
-  git clone -q --filter=blob:none https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \\
-    && git -C /tmp/hermes-agent checkout -q "\$PIN" \\
-    && python3 -m pip install -q --break-system-packages --editable /tmp/hermes-agent >/dev/null 2>&1 \\
+  git clone -q https://github.com/NousResearch/hermes-agent /tmp/hermes-agent \
+    && git -C /tmp/hermes-agent checkout -q "\$PIN" \
+    && python3 -m pip install -q --break-system-packages uv >/dev/null 2>&1 \
+    && uv sync --python 3.14 --directory /tmp/hermes-agent >/dev/null 2>&1 \
+    && ln -sf /tmp/hermes-agent/.venv/bin/hermes /usr/local/bin/hermes \
     || echo "WARN: pinned core bootstrap failed"
 fi
 echo "=== suite (canonical entry) ==="
