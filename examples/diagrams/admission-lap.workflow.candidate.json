@@ -3,17 +3,18 @@
     {
       "dot": "cyan",
       "items": [
-        "The typed launch contract, exercised: pins carry content, the tune knob carries presence and patch, and the door refuses every missing or unknown binding before any write",
-        "The depth seam removes the second rubric seat at LAUNCH time \u2014 the run record is the concrete graph, so what you read is what ran",
-        "A dispatcher can build the launch brief with no-LLM: required pins listed, tune defaults pre-filled, refusals named together in a single refusal"
+        "The launch contract lives in the row: pins carry run content, tune slots carry a domain and a stamped default",
+        "The door refuses every missing binding before any write \u2014 a bad launch writes no state and spawns no model",
+        "Depth ladder: a `where` seam keeps the audit lane out of the concrete graph while the knob sits low",
+        "Verb family: a `by` patch swaps the work goal per case \u2014 branching by binding, not by agent discretion"
       ],
       "title": "Why it works"
     },
     {
       "dot": "rose",
       "items": [
-        "5 nodes, 1 gate, 1 branch: author -> gate -> twin blind rubrics -> by-patched report",
-        "The report seat survives fast-depth removal exactly as the prune law says: a terminal-skipped sibling is not a live dependency",
+        "1 echo, 2 agents, 2 edges: guard brief, then the bound verb's work node, audit only at full depth",
+        "params \u2014 pin: session; tune: verb (watch|act) and depth (brief|full), effective bindings stamped into the run record",
         "Derived from this example's bytes by scripts/graph_diagram.py"
       ],
       "title": "Contract"
@@ -22,33 +23,15 @@
   "diagram_type": "workflow",
   "edges": [
     {
-      "from": "author",
-      "id": "author-gate-armed",
-      "to": "gate-armed",
-      "variant": "security"
-    },
-    {
-      "from": "gate-armed",
-      "id": "gate-armed-rubric",
-      "to": "rubric",
+      "from": "guard",
+      "id": "guard-work",
+      "to": "work",
       "variant": "default"
     },
     {
-      "from": "gate-armed",
-      "id": "gate-armed-peer-rubric",
-      "to": "peer-rubric",
-      "variant": "default"
-    },
-    {
-      "from": "rubric",
-      "id": "rubric-report",
-      "to": "report",
-      "variant": "default"
-    },
-    {
-      "from": "peer-rubric",
-      "id": "peer-rubric-report",
-      "to": "report",
+      "from": "work",
+      "id": "work-audit",
+      "to": "audit",
       "variant": "default"
     }
   ],
@@ -59,62 +42,41 @@
       "variant": "normal"
     },
     {
-      "id": "gates",
-      "label": "Gates",
+      "id": "room",
+      "label": "Deterministic",
       "variant": "normal"
     }
   ],
   "meta": {
     "output": "examples/diagrams/admission-lap.html",
     "quality_profile": "standard",
-    "subtitle": "The worked TYPED-LAUNCH-CONTRACT example: a graph-level `params` block, a `where` depth-ladder seam, and a `by",
+    "subtitle": "Typed-params worked example: the launch contract lives in the row and the door enforces it before anything is ",
     "title": "admission-lap"
   },
   "nodes": [
     {
       "col": 0,
-      "id": "author",
-      "label": "Author",
-      "lane": "work",
-      "sublabel": "subject tracker",
-      "type": "backend",
+      "id": "guard",
+      "label": "Guard",
+      "lane": "room",
+      "type": "messagebus",
       "width": 104
     },
     {
       "col": 1,
-      "id": "gate-armed",
-      "label": "Gate Armed",
-      "lane": "gates",
-      "sublabel": "",
-      "tag": "branch",
-      "type": "security",
-      "width": 104
-    },
-    {
-      "col": 2,
-      "id": "peer-rubric",
-      "label": "Peer Rubric",
+      "id": "work",
+      "label": "Work",
       "lane": "work",
-      "sublabel": "second blind rubric",
+      "sublabel": "fallback goal never",
       "type": "backend",
       "width": 104
     },
     {
       "col": 2,
-      "id": "rubric",
-      "label": "Rubric",
+      "id": "audit",
+      "label": "Audit",
       "lane": "work",
-      "sublabel": "blind rubric pass on",
-      "type": "backend",
-      "width": 104,
-      "yOffset": 92
-    },
-    {
-      "col": 3,
-      "id": "report",
-      "label": "Report",
-      "lane": "work",
-      "sublabel": "report the admission",
+      "sublabel": "you exist only when",
       "type": "backend",
       "width": 104
     }
@@ -130,13 +92,13 @@
       "fromCol": 1,
       "id": "mid",
       "label": "hand-offs",
-      "toCol": 2
+      "toCol": 1
     },
     {
-      "fromCol": 3,
+      "fromCol": 2,
       "id": "out",
       "label": "terminus",
-      "toCol": 3
+      "toCol": 2
     }
   ],
   "schema_version": 2

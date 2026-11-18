@@ -91,7 +91,7 @@ def main() -> None:
                       "examples/release/machine-watch.workflow.json",
                       "examples/basics/exchange-run.workflow.json",
                       "examples/build/quorum-probe.workflow.json",
-                      "examples/build/census-fanout.workflow.json", "examples/review/escalation-ladder.workflow.json", "examples/build/bulk-transform.workflow.json",
+                      "examples/build/census-fanout.workflow.json", "examples/review/escalation-ladder.workflow.json", "examples/build/bulk-transform.workflow.json", "examples/build/admission-lap.workflow.json",
                       "examples/release/release-lifecycle.workflow.json", "examples/release/issue-to-pr.workflow.json", "examples/release/submit-pr.workflow.json", "references/portable.md",
                       "tests/test_packaging.py", "tests/test_fanout_ui.mjs", "tests/test_card_frontend_contract.mjs",
                       "tests/test_inline_header.mjs", "tests/fixtures/mac-source.txt",
@@ -201,6 +201,7 @@ def main() -> None:
                           "examples/release/machine-watch.workflow.json",
                           "examples/build/quorum-probe.workflow.json",
                           "examples/build/census-fanout.workflow.json", "examples/review/escalation-ladder.workflow.json", "examples/build/bulk-transform.workflow.json",
+                          "examples/build/admission-lap.workflow.json",
                           "examples/release/release-lifecycle.workflow.json", "examples/release/issue-to-pr.workflow.json",
                           "examples/release/submit-pr.workflow.json",
                           "examples/basics/exchange-run.workflow.json"})

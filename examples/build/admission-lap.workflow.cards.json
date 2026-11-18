@@ -1,22 +1,15 @@
 {
- "cards": [
-  {
-   "dot": "cyan",
-   "title": "Why it works",
-   "items": [
-    "The typed launch contract, exercised: pins carry content, the tune knob carries presence and patch, and the door refuses every missing or unknown binding before any write",
-    "The depth seam removes the second rubric seat at LAUNCH time \u2014 the run record is the concrete graph, so what you read is what ran",
-    "A dispatcher can build the launch brief with no-LLM: required pins listed, tune defaults pre-filled, refusals named together in a single refusal"
-   ]
-  },
-  {
-   "dot": "rose",
-   "title": "Contract",
-   "items": [
-    "{{nodes}} nodes, {{gates}} gate, {{branches}} branch: author -> gate -> twin blind rubrics -> by-patched report",
-    "The report seat survives fast-depth removal exactly as the prune law says: a terminal-skipped sibling is not a live dependency",
-    "Derived from this example's bytes by scripts/graph_diagram.py"
-   ]
-  }
- ]
+  "cards": [
+    {"dot": "cyan", "title": "Why it works", "items": [
+      "The launch contract lives in the row: pins carry run content, tune slots carry a domain and a stamped default",
+      "The door refuses every missing binding before any write — a bad launch writes no state and spawns no model",
+      "Depth ladder: a `where` seam keeps the audit lane out of the concrete graph while the knob sits low",
+      "Verb family: a `by` patch swaps the work goal per case — branching by binding, not by agent discretion"
+    ]},
+    {"dot": "rose", "title": "Contract", "items": [
+      "{{echoes}} echo, {{agents}} agents, {{edges}} edges: guard brief, then the bound verb's work node, audit only at full depth",
+      "params — pin: session; tune: verb (watch|act) and depth (brief|full), effective bindings stamped into the run record",
+      "Derived from this example's bytes by scripts/graph_diagram.py"
+    ]}
+  ]
 }
