@@ -41,6 +41,21 @@ lifecycle TEMPLATE (alert-triggered incident: verdict-branch gate pair, machine
 recovery probe with human escalation, merge-gated close) meant to be adapted —
 its `run_context` seeds and the sweep-adapter contract are the swap points; it
 validates but is not smoke-run (real lanes need your stack).
+
+### State roots — the handoff-file law for machine gates
+
+Both watcher templates hand state between nodes through files under ONE state
+root: `MW_STATE_ROOT` (machine-watch) and `IR_STATE_ROOT` (incident-response),
+each defaulting to a single `$HERMES_HOME/<example>` scratch. The law those
+blobs encode: deterministic **per-key state roots** — parallel lanes must never
+share one **global scratch**, because two lanes writing the same `probe_broken`
+/ `transition.claim` file cross-ack each other's probes (the six-false-clears
+field receipt: one stale handoff clears six failing checks). **Path-binding
+belongs on the shelf launch**: bind the root per key at launch — a distinct
+`MW_STATE_ROOT`/`IR_STATE_ROOT` per dispatch (or a lane-scoped path derived
+from `lane_key`) — not in graph prose. One shelf, many lanes, one root =
+the lanes are sharing a scratch, and only the receipt proves it too late.
+
 [examples/review/blind-council.workflow.json](../examples/review/blind-council.workflow.json) is
 a review-council TEMPLATE (blind independent seats -> synthesis with mandatory
 verify-list). Its seats pin CAPABILITY CLASSES (`council_a`, `council_b`) bound
