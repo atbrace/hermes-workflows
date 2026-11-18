@@ -5543,7 +5543,7 @@ def _install_runner_term_cleanup(meta):
     children and the lock-loser's sys.exit(0) must stay untouched)."""
     import atexit
     atexit.register(_runner_term_cleanup, meta, "atexit")
-    def _on_sigterm(signum, frame):
+    def _term_die(reason_text):
         try: _runner_term_cleanup(meta, "sigterm")
         except Exception: pass
         try:
@@ -5556,15 +5556,77 @@ def _install_runner_term_cleanup(meta):
                 # (2026-10-06 10:06Z: runner + pre-b64 watcher pair killed, the
                 # death logged as if it were a lane death, feeding ALERT storms
                 # and wrong re-dispatch). Tag the record so classification can
-                # tell an external kill from a lane failure — but tag ONLY the
-                # class: "gateway restart" as sender is NOT established from in
-                # here (any os.kill lands the same), so the constant says
-                # source unknown; gateway-correlation is the reaper's separate,
-                # file-evidenced clause.
-                write_runner_exit(meta["_run"], EXTERNAL_SIGTERM_REASON)
+                # tell an external kill from a lane failure — the base class
+                # constant stays verbatim for every reader that predates hw-32b;
+                # where the kernel gave us siginfo, the sender rides as measured
+                # FIELDS (pid/cmd/uid/unit), never as an interpretation
+                # ("gateway restart" is still not a word the runner says).
+                write_runner_exit(meta["_run"], reason_text)
         except Exception: pass
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        try: signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        except (ValueError, OSError): pass
         os.kill(os.getpid(), signal.SIGTERM)     # re-raise the default
+
+    def _killer_fields(si_pid):
+        # hw-32b: kernel truth (siginfo.si_pid, resolved in the runner's pid
+        # namespace) at signal time. Every field degrades to what /proc can
+        # still answer — a sender that already reaped shows <exited>.
+        parts = [f"killer_pid={si_pid}"]
+        try:
+            cmd = (Path(f"/proc/{si_pid}/cmdline").read_bytes()
+                   .replace(b"\0", b" ").decode("utf-8", "replace").strip())[:200] or "<exited>"
+        except OSError:
+            cmd = "<exited>"
+        parts.append(f"killer_cmd={cmd}")
+        try:
+            stat = Path(f"/proc/{si_pid}/stat").read_text()
+            parts.append("killer_uid=" + stat[stat.rindex(")") + 3:].split()[2])   # past "(comm) "
+        except (OSError, ValueError, IndexError): pass
+        try:
+            unit = next((l.rsplit("/", 1)[-1] for l in Path("/proc/self/cgroup").read_text()
+                         .splitlines() if ".service" in l or ".scope" in l), None)
+            if unit:
+                parts.append("unit=" + unit)
+        except OSError: pass
+        return EXTERNAL_SIGTERM_REASON + "; " + " ".join(parts)
+
+    def _signalfd_sender_watch():
+        # signalfd + one reader thread: the fd carries siginfo_t, so si_pid is the
+        # kernel's answer, not inference. Linux-only; ANY setup failure returns
+        # False and the plain handler (source unknown, est-6226 shape) installs.
+        import ctypes, struct
+        if sys.platform != "linux":
+            return False
+        machine = os.uname().machine
+        nr = {"x86_64": 43, "aarch64": 74}.get(machine)
+        if nr is None:
+            return False
+        libc = ctypes.CDLL(None, use_errno=True)
+        mask = (ctypes.c_char * 128)()
+        struct.pack_into("@Q", mask, 0, 1 << (signal.SIGTERM - 1))
+        fd = libc.syscall(ctypes.c_long(nr), ctypes.c_int(-1), mask,
+                          ctypes.c_size_t(128), ctypes.c_int(8))   # SFD_CLOEXEC
+        if not isinstance(fd, int) or fd < 0:
+            return False
+        signal.pthread_sigmask(signal.BLOCK, {signal.SIGTERM})     # threads inherit
+        def _watch():
+            while True:
+                try:
+                    data = os.read(fd, 128)
+                except OSError:
+                    return
+                if len(data) < 20:
+                    continue
+                _term_die(_killer_fields(struct.unpack_from("@i", data, 16)[0]))
+        t = threading.Thread(target=_watch, name="wf-term-sigfd", daemon=True)
+        t.start()
+        return True
+
+    if _signalfd_sender_watch():
+        return
+    def _on_sigterm(signum, frame):
+        _term_die(EXTERNAL_SIGTERM_REASON)
     try:
         signal.signal(signal.SIGTERM, _on_sigterm)
     except (ValueError, OSError):
