@@ -7296,9 +7296,9 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # so the run dir is stated there; the export hint lets a shell recover the
     # variable where the env did not arrive. Lands in the GOAL half, beside
     # WORK_DIR_NOTE: per-node path, fan-out identity law preserved.
-    prompt += ("\n\nRun dir: " + str(run)
-               + " — if your shell lacks $HERMES_WF_RUN_DIR (gateway-served "
-                 "sessions do), use this literal path or export it.")
+    prompt += ("\n\nRun dir: " + str(run.resolve())
+               + " — gateway-served shells lack $HERMES_WF_RUN_DIR; set it with "
+                 "export HERMES_WF_RUN_DIR='" + str(run.resolve()) + "'.")
     if inputs:
         prompt += "\n\n" + inputs
     if steering:

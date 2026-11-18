@@ -66,17 +66,21 @@ def main():
               (p.stdout + p.stderr)[:300])
         text = (run / "logs" / "solo.a0.prompt.md").read_text()
         check("the prompt states Run dir with the absolute run path",
-              "Run dir: " + str(run) in text, text[-400:])
-        check("it tells the seat how to recover the variable in-shell",
-              "HERMES_WF_RUN_DIR" in text and "export" in text, text[-400:])
+              "Run dir: " + str(run.resolve()) in text, text[-400:])
+        check("the export hint is a pasteable literal assignment",
+              "export HERMES_WF_RUN_DIR='" + str(run.resolve()) + "'" in text, text[-400:])
         check("it lands in the GOAL half — before ## Inputs",
               "Run dir:" in text.split("## Inputs")[0], text[:400])
         f0 = (run / "logs" / "fan.0.a0.prompt.md").read_text()
         f1 = (run / "logs" / "fan.1.a0.prompt.md").read_text()
-        tail = lambda s: s[s.index("## Inputs"):] if "## Inputs" in s else s
-        check("fan-out identity law preserved: ## Inputs onward is byte-identical",
-              f0.endswith(tail(f1)[len(tail(f1)) // 2:]) or tail(f0) == tail(f1),
-              (tail(f0)[:120], tail(f1)[:120]))
+        run_line = lambda s: s[s.index("Run dir: "):
+                               s.index("\n", s.index("Run dir: "))]
+        check("fan-out identity law preserved: the Run dir line is byte-"
+              "identical across items and precedes the reply-contract tail",
+              run_line(f0) == run_line(f1)
+              and f0.index("Run dir: ") < f0.index("Finish your answer")
+              and f1.index("Run dir: ") < f1.index("Finish your answer"),
+              (run_line(f0), run_line(f1)))
 
     print("FAILURES:", len(FAILS))
     sys.exit(1 if FAILS else 0)
