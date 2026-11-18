@@ -48,6 +48,7 @@ if [ -n "${PYV:-}" ]; then
     || echo "WARN: python${PYV} unavailable in the image — suite arms ride the image-default interpreter"
 fi
 apt-get install -y -qq git openssh-client rsync python3-jsonschema nodejs npm python3-pip >/dev/null 2>&1 || echo "WARN: apt partial"
+git config --global --add safe.directory '*'
 PIN=$PIN
 if command -v hermes >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
   echo "HERMES: already present"
@@ -64,7 +65,7 @@ echo "=== suite (canonical entry) ==="
 if [ -x tools/ci/run.sh ] || [ -f tools/ci/run.sh ]; then
   bash tools/ci/run.sh || rc=1
 elif [ -f scripts/suite.py ]; then
-  python3 scripts/suite.py . ci-out || rc=1
+  uv run --project /tmp/hermes-agent python3 scripts/suite.py . ci-out || rc=1
 else
   echo "FATAL: no canonical suite entry (tools/ci/run.sh or scripts/suite.py)"; rc=1
 fi
