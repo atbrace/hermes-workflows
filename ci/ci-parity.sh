@@ -56,7 +56,7 @@ else
     && git -C /tmp/hermes-agent checkout -q "\$PIN" \
     && python3 -m pip install -q --break-system-packages uv >/dev/null 2>&1 \
     && uv sync --python 3.14 --directory /tmp/hermes-agent >/dev/null 2>&1 \
-    && printf '#!/bin/sh\nexec uv run --directory /tmp/hermes-agent hermes "\$@"\n' > /usr/local/bin/hermes \
+    && printf '#!/bin/sh\nexec uv run --project /tmp/hermes-agent hermes "\$@"\n' > /usr/local/bin/hermes \
     && chmod +x /usr/local/bin/hermes \
     || echo "WARN: pinned core bootstrap failed"
 fi
