@@ -185,6 +185,29 @@ def _route_receipt_bake(meta, node):
     except OSError:
         pass                                   # receipt best-effort WRITE; the HOLD is strict
 
+def _strip_arm_state(home=None, env=None):
+    """E20: the concrete state an armed creation-override strip leaves behind.
+    Returns (arms, marker_path): arms is a non-empty list naming EVERY arm that
+    fired (the env var with its value; the marker file with its path and its
+    mtime as the armed-at instant). The refusal dialog renders these verbatim —
+    an operator gets the artifact to point at, not est-id lore with a fix menu."""
+    env = os.environ if env is None else env
+    root = Path(home) if home is not None else hermes_home()
+    mpath = root / "workflows" / "omit-policy-flags.on"
+    arms = []
+    ev = env.get("WF_OMIT_POLICY_FLAGS")
+    if (ev or "").strip():
+        arms.append(f"env WF_OMIT_POLICY_FLAGS={ev!r}")
+    if mpath.exists():
+        try:
+            mt = datetime.fromtimestamp(mpath.stat().st_mtime,
+                                         timezone.utc).isoformat(timespec="seconds")
+        except OSError:
+            mt = "unknown"
+        arms.append(f"marker {mpath} (armed at {mt})")
+    return arms, mpath
+
+
 def _budget_refusal(meta, node, byid, index, spawn_no):
     """est-3acn: BEFORE submit — the RunBudget pre-dispatch check at the same
     seam as _route_substitution_refusal (est-2ek.1.641's shape: a refusal that
@@ -330,14 +353,24 @@ def _route_substitution_refusal(meta, node, spawn_no):
     if a in candidates or a.rsplit("/", 1)[-1] in candidates or any(
             wfcommon.route_ids_equal(a, c, wfcommon.route_provider(node, verified)) for c in candidates):
         return None                            # same route: the receipt is not a spawn lock
+    rpath = _route_receipts_path(meta["_run"])
+    try:
+        rmt = datetime.fromtimestamp(rpath.stat().st_mtime,
+                                     timezone.utc).isoformat(timespec="seconds")
+    except OSError:
+        rmt = "unknown"
     return {"status": "failed",
             "error": f"route_substitution_denied: node {node['id']!r} has a proved-alive "
-                     f"receipt for {verified!r} (door-baked at admission); this spawn "
+                     f"receipt for {verified!r} (door-baked at admission, receipt row "
+                     f"{node['id']!r} in {rpath}, file armed at {rmt}); this spawn "
                      f"would bill {ask!r}. A post-admission route substitution is refused "
-                     f"BEFORE submit — never a silent re-billing of another model "
-                     f"(est-2ek.1.641). Amend the node to the route you accept, or "
-                     f"delete the run's {ROUTE_RECEPTS_NAME} only to re-admit through "
-                     f"the door's ping.",
+                     f"BEFORE submit — never a silent re-billing of another model. "
+                     f"Escape, in order of preference: relaunch the run from a strip-free "
+                     f"launcher (the receipt is the old lane's, not the graph's); or "
+                     f"discard this lane's proof: rm {rpath} and the next spawn "
+                     f"re-admits through the door's ping; or amend the node TO the "
+                     f"receipted route {verified!r} — amending to any other pin "
+                     f"re-dies on this same row.",
             "error_class": "route_substitution_denied", "raw": "", "ms": 0,
             "attempts": 1, "spawn": spawn_no}
 
@@ -389,25 +422,39 @@ def _spawn_expressibility_refusal(meta, node, cmd, spawn_no, index=None,
         gaps.append(f"provider {pin_p!r} (--provider)")
     if not gaps:
         return None                             # expressible: launch byte-identical
+    patch_snip = json.dumps({"patch": {"nodes": {node["id"]: {"require_route": False}}}})
     if _omit_policy_flags_armed():
-        why = ("the est-yq2xq creation-override strip is armed (WF_OMIT_POLICY_FLAGS=1 "
-               f"or {hermes_home()}/workflows/omit-policy-flags.on) and consumed the "
-               "flags before Popen" + (", while the node declares no profile to carry "
-               "the route" if not node.get("profile") else ""))
+        arms, mpath = _strip_arm_state()
+        why = ("the creation-override strip is armed by "
+               + " + ".join(arms or ["an unidentified arm"])
+               + " and consumed the flags before Popen"
+               + (", while the node declares no profile to carry the route"
+                  if not node.get("profile") else ""))
+        clears = []
+        if any(a.startswith("env ") for a in arms):
+            clears.append("unset WF_OMIT_POLICY_FLAGS")
+        if mpath.exists():
+            clears.append(f"rm {mpath}")
+        clear_txt = ("Clear the strip (" + " ; ".join(clears) + "), or opt this node "
+                     "into the fallback ladder with the amend " + patch_snip
+                     + " (a graph-wide defaults.require_route:false opts every node in),"
+                     " or point the node at a profile this host resolves.")
     elif not node.get("profile"):
         why = "the node declares no profile (no -p route evidence) and the launch argv " \
               "carries no creation override for the pin"
+        clear_txt = ("Fix: give the node a profile this host resolves (\"profile\": ...), "
+                     "or opt it into the fallback ladder with the amend " + patch_snip + ".")
     else:
         why = "the launch argv does not carry the pin this node declares"
+        clear_txt = ("Fix: carry the pin on the launch argv (a profile, or un-stripped "
+                     "-m/--provider), or opt this node into the fallback ladder with "
+                     "the amend " + patch_snip + ".")
     pin = f"{pin_p}/{pin_m}".strip("/")
     err = (f"route_inexpressible: node {node['id']!r} pins {pin!r} but this host's spawn "
            f"argv CANNOT EXPRESS it: {' and '.join(gaps)} — {why}. The child would serve "
-           f"the seat's default model while the door believes the pin (#483). Refused "
+           f"the seat's default model while the door believes the pin. Refused "
            f"BEFORE the child started (zero attempts) — same posture as the route "
-           f"billing hold, moved earlier. Fix: point the node at a profile this host "
-           f"resolves, lift the omit-policy-flags override so -m/--provider ride, repin "
-           f"a seat this host can express, or accept fallback explicitly with "
-           f"require_route: false ON THAT NODE (a `defaults` flip opts the whole graph in).")
+           f"billing hold, moved earlier. " + clear_txt)
     ev = {"node": node["id"], "error_class": "route_inexpressible",
           "error": err, "pin": pin}
     if index is not None:
@@ -1249,7 +1296,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
-_WAKE_SCHEMA = "wake-observe/v1"   # the ONLY schema the runner ever persists
+_WAKE_SCHEMA = "wake-observe/v2"   # the ONLY schema the runner ever persists
+# v2 is v1 plus the FIRST-CLASS transition trio skey/rev/attempts (E12): the
+# dedupe law's own inputs are JSON fields, not substrings of a double-escaped
+# text payload. v1 rows stay readable forever (legacy string parse: the `|x:`
+# payload still rides the text and the identity, kept for one release).
 
 def _wake_opener():
     """Fresh no-redirect opener per call. Module-level would share urllib's
@@ -1325,6 +1376,51 @@ def _wake_rev(run):
         return n
     except Exception:
         return 0
+
+def _wake_subject_fields(run, key, node=None, graph=None):
+    """The first-class transition trio (E12, wake-observe/v2): {skey, rev,
+    attempts} as JSON values for every persisted wake row — the dedupe law's
+    own inputs stop being substrings of a double-escaped `|x:{...}` payload.
+    Sources, in authority order: a caller-named JSON payload (the commit
+    observer's node.action_required key carries node/efp/skey/attempts/rev);
+    else the node subject's own committed record (node_rec — same validity law
+    as the identity, a stale record contributes honest nulls); else null.
+    rev is the durable amendment generation read directly (_wake_rev), or the
+    payload's own rev when it carries one. Absent facts stay null — a field
+    that exists with a null value answers "no lane", while an absent field
+    would be the same hole the regex-era readers fell into. Never raises."""
+    fields = {"skey": None, "attempts": None, "rev": _wake_rev(run)}
+    try:
+        payload = None
+        if isinstance(key, str) and key.startswith("{"):
+            try:
+                p = json.loads(key)
+                payload = p if isinstance(p, dict) else None
+            except Exception:
+                payload = None
+        if payload is not None:
+            if isinstance(payload.get("skey"), str):
+                fields["skey"] = payload["skey"]
+            if type(payload.get("attempts")) is int:
+                fields["attempts"] = payload["attempts"]
+            if type(payload.get("rev")) is int:
+                fields["rev"] = payload["rev"]
+            return fields
+        if isinstance(node, str) and isinstance(graph, dict):
+            byid = {n["id"]: n for n in (graph.get("nodes") or [])
+                    if isinstance(n, dict) and n.get("id")}
+            n = byid.get(node)
+            if n is not None:
+                status, rec = node_rec(run, n, byid)
+                if status in ("done", "partial", "failed", "skipped") \
+                        and isinstance(rec, dict):
+                    if isinstance(rec.get("skey"), str):
+                        fields["skey"] = rec["skey"]
+                    if type(rec.get("attempts")) is int:
+                        fields["attempts"] = rec["attempts"]
+        return fields
+    except Exception:
+        return fields
 
 def _wake_resolved_failed(run, graph):
     """The run's ALREADY-COMMITTED failed-node set straight from the node records
@@ -1692,7 +1788,11 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
     in-window retry replays one started/completed owner turn; this is not a timeless
     dedupe claim across cache eviction, core restart, or an unmeasured delay.
     Each ATTEMPT records in <run>/wake.jsonl (the probe; its ``delivered``
-    row is TRI-STATE: true/false/null = delivered/try-later/nowhere-ever);
+    row is TRI-STATE: true/false/null = delivered/try-later/nowhere-ever;
+    wake-observe/v2 rows additionally expose the transition trio
+    ``skey``/``rev``/``attempts`` as first-class JSON fields — zero substring
+    parsing, while the legacy ``|x:`` payload stays in the text for one
+    release);
     a duplicate of a SETTLED instance — delivered or nowhere-ever — writes
     nothing, while a false row keeps the retry path open. AUTHORITY LAW (r5):
     this function takes no text parameter at all. The owner-facing content is
@@ -1777,6 +1877,7 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
         text = _wake_safe(text)          # second net: the fixed templates carry no secret,
         # but the run name is caller-supplied and every persisted field runs the redactor.
         tid = _wake_tid(run.name, event, disc)
+        trio = _wake_subject_fields(run, key, node=node, graph=graph)
         _rows, settled = _wake_ledger_read(run)
         if tid in settled:
             return "delivered"           # settled (delivered or nowhere-ever): zero rows, zero POSTs
@@ -1793,7 +1894,7 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
                 return "skipped"
             _wake_append(run, {"ts": now(), "event": event, "run_id": run.name,
                                "owner": owner, "id": tid, "suppressed": reason,
-                               "delivered": False, "text": text})
+                               "delivered": False, "text": text, **trio})
             print(f"WORKFLOW_WAKE_SUPPRESSED {run.name} {event} {reason}")
             return "skipped"   # park-watch: a suppressed wake IS a dispatcher strike (the void is not a hold)
 
@@ -1802,7 +1903,8 @@ def notify(run, event, key=None, graph=None, node=None, refire=False):
         except OSError:
             proto = "unstamped"          # run dir made outside the door (recorded as such)
         rec = {"ts": now(), "event": event, "run_id": run.name, "owner": owner,
-               "id": tid, "wake_protocol": proto, "text": text}
+               "id": tid, "wake_protocol": proto, "text": text,
+               **trio}
         if event not in _WAKE_TEMPLATES:
             rec["catchall"] = True      # probe row is typed: template vs catch-all distinguishable
         rec["delivered"] = _wake_deliver(rec, sid, text, tid, owner=owner)   # tri-state row mirrors the outcome
@@ -3187,6 +3289,22 @@ _QUOTA_PHRASE_TOKENS = ("usage limit", "quota exceeded", "quota exceeded for",
                         "subscription", "out of credits", "spending limit",
                         "insufficient_quota")
 _QUOTA_HORIZON_RE = re.compile(r"reset(?:s|ting)?\D{0,10}?(\d+)\s*(hour|hr|h|day|d|min|minute)")
+# E19 (bd_2026-11-13-25t): the core's typed RESUME refusal — the deterministic
+# rc=2 argv death whose capture opens with the update banner. Corpus: 34 attempt
+# logs + 661/662 banners pointing operators at "gateway restart" while the real
+# cause sat on the LAST Error: line ("Resume retains gateway session policy;
+# creation overrides are unsupported on resume."). A deterministic INPUT fact —
+# terminal at the first attempt, outside both ladders, like config_input.
+_RESUME_POLICY_TOKENS = ("unsupported on resume",
+                         "resume retains gateway session policy")
+# E21 (bd_2026-11-13-25t): the account-state phrases that make a 429 a FACT
+# about the subscription, not a window. A horizon-less account cap classed
+# transient legally burned the full 8-attempt cap and 60 minutes of lane on
+# one deterministic condition (est-lw1eh corpus); the class below parks the
+# node pending at attempt 1 instead. Superset of #24's quota phrases.
+_ACCOUNT_STATE_TOKENS = _QUOTA_PHRASE_TOKENS + ("quota limit", "limit reached",
+                                                "billing", "hard limit",
+                                                "usage cap")
 # est-t0vz (issue #54): the credential-window 429 — its OWN class, never transport.
 # The banner is the hermes CLI's own AuthError text, raised verbatim at
 # /opt/hermes/hermes_cli/runtime_provider.py:370
@@ -3199,7 +3317,7 @@ _QUOTA_HORIZON_RE = re.compile(r"reset(?:s|ting)?\D{0,10}?(\d+)\s*(hour|hr|h|day
 # digits, so before this class it fell to `unknown` and burned the 5s/20s ladder in
 # ~10 s against a 36+ minute window (field repro 2026-09-30 03:14-03:55Z). Match the
 # exact banner; a marker carrying a quota phrase/reset horizon still classifies
-# fatal_quota BELOW this check only when the banner is absent (banner wins: the
+# quota_exhausted BELOW this check only when the banner is absent (banner wins: the
 # CLI-named credential window must never stamp the seat's quota cache).
 _RATELIMIT_BANNER_RE = re.compile(
     r"credentials are rate-limited for ([a-z0-9][a-z0-9._:/+-]*)", re.IGNORECASE)
@@ -3217,6 +3335,16 @@ _CAP_TOKENS = ("tool-call limit", "tool call limit", "turn limit",
 ERROR_CLASSES = frozenset(("provider_400", "unresolved_model", "cap_exhausted",
                            "timeout", "transport", "transport_exhausted",
                            "fatal_quota", "ratelimit", "route_unavailable",
+                           # E19: the deterministic resume-policy argv death (the
+                           # child's last Error: line names it) — outside both
+                           # ladders, like config_input; zero transient draws.
+                           "resume_policy",
+                           # E21: the deterministic account-state 429, with or
+                           # without a reset horizon — quota_exhausted carries
+                           # {identity, reset} and never consumes the attempt
+                           # cap. fatal_quota remains the class name of
+                           # historical records (same law, older spelling).
+                           "quota_exhausted",
                            "incomplete_work", "early_death", "cancelled",
                            "schema", "spawn", "inputs", "killed",
                            # sys-bknard: rc!=0 death whose capture carries a fenced
@@ -3457,7 +3585,8 @@ def _quota_cache_path():
     return wfcommon.quota_cache_path()
 
 def _quota_note(model, marker, provider=None):
-    """#24 (b): record model -> reset horizon from a fatal_quota marker.
+    """#24 (b): record model -> reset horizon from a quota_exhausted marker
+    (#24-era class name: fatal_quota; same law, E21 widens the phrase set).
     Advisory only: the cache NEVER deletes or blocks on its own; the door pings
     once before refusing, so a stale stamp can't wedge a run forever. A death on
     an EXPLICIT provider rides the key as 'provider/model' (the est-699 identity
@@ -3758,10 +3887,13 @@ def _classify_rc_output(out):
     """(error_class, last-marker line) from the child's MERGED stdout/stderr
     capture. Pin on the LAST line that looks like a machine-readable marker line
     (oneshot's escalation line, the CLI's `Provider said:` trailer, or a bare SDK
-    exception str) — never grep prose.
-    `timeout` is a fact the runner knows (it killed the child); `max_turns` comes
-    ONLY from _typed_error_class() reading the child's core -Q turn report —
-    nothing on stdout can prove it (the usage-file report is -z-only)."""
+    exception str) — never grep prose. When no machine marker exists, the child's
+    LAST `Error:` line is the cause (E19): the head of the capture is CLI startup
+    banner, and quoting it as the verdict pointed 661/662 operators at a gateway
+    restart that never was the disease. `timeout` is a fact the runner knows (it
+    killed the child); `max_turns` comes ONLY from _typed_error_class() reading
+    the child's core -Q turn report — nothing on stdout can prove it (the
+    usage-file report is -z-only)."""
     lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     marker = None
     for l in reversed(lines):  # the LAST machine-readable marker line wins
@@ -3770,19 +3902,26 @@ def _classify_rc_output(out):
                 or low.rstrip(".") in _TRANSPORT_EXACT or low.startswith(_TRANSPORT_EXACT):
             marker = l
             break
+    err_line = next((l for l in reversed(lines) if l.lower().startswith("error:")), None)
+    if err_line and any(t in err_line.lower() for t in _RESUME_POLICY_TOKENS):
+        return "resume_policy", err_line
     if marker is None:
-        return "unknown", None
+        return "unknown", err_line
     low = marker.lower()
+    if any(t in low for t in _RESUME_POLICY_TOKENS):
+        return "resume_policy", marker
     if any(t in low for t in _UNRESOLVED_MODEL_TOKENS) or any(t in low for t in _MODEL404_TOKENS):
         return "unresolved_model", marker
     if any(t in low for t in _PROVIDER400_TOKENS) or "error code: 400" in low or "http 400" in low:
         return "provider_400", marker
-    if "429" in low and (any(t in low for t in _QUOTA_PHRASE_TOKENS)
+    if "429" in low and (any(t in low for t in _ACCOUNT_STATE_TOKENS)
                          or _QUOTA_HORIZON_RE.search(low)) \
             and not _RATELIMIT_BANNER_RE.search(low):
-        return "fatal_quota", marker    # #24: horizon outlasts the ladder — never retry
-                                        # (est-t0vz: unless the CLI named the credential
-                                        # window — the banner below wins the class)
+        return "quota_exhausted", marker  # #24/E21: the account state outlasts the
+                                        # ladder — never retry, ONE attempt is the
+                                        # verdict (est-t0vz: unless the CLI named the
+                                        # credential window — the banner below wins
+                                        # the class; that one IS time-bound)
     if _RATELIMIT_BANNER_RE.search(low):
         return "ratelimit", marker      # est-t0vz (issue #54): credential-window 429 —
                                         # its own bounded park, not the 5s/20s ladder
@@ -3803,7 +3942,7 @@ def _classify_rc_output(out):
 # attempt sequence on a deterministic input error — respawn 1 and 2 re-died
 # byte-identically, then the run landed transport_exhausted. A typo-class death is
 # an INPUT fact, not transient transport: it is terminal at the first attempt and
-# burns no respawn budget (the same law as fatal_quota #24).
+# burns no respawn budget (the same law as quota_exhausted #24/E21).
 #
 # Two facts must BOTH hold — neither alone is sufficient:
 #   1. the child died rc!=0 within _CONFIG_INPUT_WINDOW_MS of spawn (wall,
@@ -7149,7 +7288,7 @@ def _adopt_child(meta, node, byid, index, child, schema, fo_cancel=None):
         return {"status": "failed", "error": "adopted child died with an empty log (no messages)",
                 "error_class": "crashed", "raw": "", "ms": ms, **evd}
     eclass, marker = _classify_rc_output(out)
-    if eclass == "fatal_quota":   # #24: adopted death caches the horizon too
+    if eclass == "quota_exhausted":   # #24/E21: adopted death caches the horizon too
         _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
     if eclass == "unknown" and _tool_call_as_text(final_reply or out or ""):
         # est-2ek.1.541 R8 (sibling coverage): the adopted-death path must classify
@@ -8244,17 +8383,31 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
             return {"status": "partial",
                     "error": f"child exited rc={rc} (answer harvested from {_harvest_source(hv)})",
                     "error_class": eclass, "ms": ms, "final": final_reply, **hv, **sk, **evd}
-        if eclass == "fatal_quota":
-            # #24: name the model + record the horizon (advisory cache); the class
-            # is outside _RETRYABLE_CLASSES/_BOUNDED_RETRY_CLASSES, so the ladder
-            # never fires — this ONE attempt is the node's verdict.
-            _quota_note(node.get("model") or node.get("provider") or "seat default", marker, node.get("provider"))
+        if eclass == "quota_exhausted":
+            # E21: the deterministic account-state 429. Its machine-readable form
+            # is `quota_exhausted{identity, reset}`: identity is the subscription
+            # that died, reset is the horizon the provider's own message carries —
+            # null when the message carries none (a horizon-less account cap is
+            # the MOST deterministic shape, not a window). It lands at attempt 1
+            # (outside both ladders — zero transient draws) and the lane parks
+            # pending on it: the run blocks at this node and only a re-pin/
+            # retry-shape amend re-admits it. The seat quota cache remembers it
+            # (advisory, #24). The node parks pending instead of
+            # burning the attempt cap on an unchanging account fact.
+            ident = node.get("model") or node.get("provider") or "seat default"
+            _quota_note(ident, marker, node.get("provider"))
+            hm = _QUOTA_HORIZON_RE.search((marker or "").lower())
+            reset_s = f"{hm.group(1)} {hm.group(2)}" if hm else None
             return {"status": "failed",
-                    "error": f"child exited rc={rc}: subscription quota exhausted for model "
-                             f"'{node.get('model') or 'seat default'}' — reset horizon in the "
-                             f"provider message below; amend the node to a live model instead "
-                             f"of waiting. Marker: {marker}",
-                    "error_class": "fatal_quota", "raw": (out or "")[-2000:], "ms": ms,
+                    "error": f"child exited rc={rc}: quota_exhausted for "
+                             f"'{ident}' (reset: {reset_s or 'none'}) — this is a "
+                             f"deterministic account state, not a transient window; "
+                             f"the node parked pending at attempt 1 (zero transient "
+                             f"draws). Amend the node to a live model, or wait the "
+                             f"horizon out if one is named. Marker: {marker}",
+                    "error_class": "quota_exhausted",
+                    "quota": {"identity": ident, "reset": reset_s},
+                    "raw": (out or "")[-2000:], "ms": ms,
                     "final": final_reply, **sk, **evd}
         lb, lb_marker = _is_lease_busy(rc, out)
         if lb:
@@ -8351,7 +8504,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                     r2["attempts_log"] = al
                     return r2
         # WF-GRAFT-2 (est-imp1z): the generic-death settle gate. Every typed
-        # deterministic class above (config_input, fatal_quota, lease_busy,
+        # deterministic class above (config_input, quota_exhausted, lease_busy,
         # malformed_turn, cap, signals, provider_400…) already returned with its
         # own fact — this classifier reclassifies NOTHING of that. For a death
         # that would otherwise land `unknown`, the classifier is the single gate:
@@ -8458,7 +8611,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
     # a token-declared failure is `declared_failure`, outside BOTH ladders. A
     # token declaring SUCCESS outranks the sentinels (the node knows its result)
     # but manufactures nothing: the schema/answer law below stays in force.
-    # Typed deterministic deaths (config_input/fatal_quota/lease_busy/…) all
+    # Typed deterministic deaths (config_input/quota_exhausted/lease_busy/…) all
     # live on the rc!=0 path and returned above this line — this classifier can
     # never reclassify them transient.
     ov = _outcome.classify(rc, out, _outcome.parse_node_outcome(out))
