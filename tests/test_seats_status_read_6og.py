@@ -80,6 +80,11 @@ os.environ.update(env)
 (tmp / "home").mkdir()
 spec = importlib.util.spec_from_file_location("hw_seats6og", root / "__init__.py")
 hw = importlib.util.module_from_spec(spec); spec.loader.exec_module(hw)
+# Shelf-isolation law (test_shelf_isolation_71 S3): an in-process door writer
+# must pin settings.runs_root alongside the env, not just the env.
+sys.path.insert(0, str(root / "tests"))
+import wf_test_isolation
+wf_test_isolation.install(hw)
 
 runners = []
 def kill_runners():
