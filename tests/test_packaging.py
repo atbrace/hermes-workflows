@@ -100,9 +100,14 @@ def main() -> None:
                       # part of the shipped surface — desktop contributors read it from
                       # the package. Mandatory new-file pack-surface gate: an unshipped
                       # doc is invisible to every install.
-                      "docs/card-toolresult-hook.md", "docs/orphan-held.md", "orphan_watch.py", "SHA256SUMS")))
+                      "docs/card-toolresult-hook.md", "docs/orphan-held.md", "docs/registered-jobs.md", "orphan_watch.py", "SHA256SUMS")))
             check("fake child retains executable mode in ZIP",
                   (archive.getinfo(root + "tests/fake").external_attr >> 16) & 0o111 == 0o111)
+            # P41: the tick entrypoint's exec bit is packaging state — a ZIP
+            # member packed 0644 lands 0644 on every install/update (core's
+            # extract restores modes only when the packed mode is +x).
+            check("tick entrypoint retains executable mode in ZIP",
+                  (archive.getinfo(root + "wf.py").external_attr >> 16) & 0o111 == 0o111)
             # est-4vnq finding 4 (pack-list omission, made explicit — pack_choice=INCLUDED):
             # scripts/pr_tag_audit.py was outside INCLUDE_FILES/INCLUDE_PATTERNS while
             # tests/test_pr_tag_audit.py (shipped via the tests/test_*.py glob) executes

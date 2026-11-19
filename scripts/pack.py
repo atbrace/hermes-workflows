@@ -161,6 +161,10 @@ INCLUDE_FILES = (
     # park_watch.py shipped by 8763ea1). Stdlib-only.
     "cron_bridge.py",
     "docs/native-hooks.md",  # the p3/p5 switch board: an unshipped doc is invisible to ZIP installs
+    # P41 (hw-g6v): the tick launcher law and the one-line "Gateway draining"
+    # operator rule-out — the tick-ops doc of an installed plugin must travel
+    # with it (the unshipped-doc-is-invisible law above, verbatim shape).
+    "docs/registered-jobs.md",
     "dashboard/manifest.json",
     "dashboard/index.js",  # hidden API plugin still needs the web host's script/registration contract
     "dashboard/plugin_api.py",
@@ -273,7 +277,12 @@ INCLUDE_FILES = (
     "outcome.py",
 )
 INCLUDE_PATTERNS = ("tests/test_*.py", "tests/test_*.mjs", "references/*.md")
-EXECUTABLE_FILES = {"scripts/pack.py", "tests/fake", "tests/fake-b1"}
+EXECUTABLE_FILES = {"scripts/pack.py", "tests/fake", "tests/fake-b1",
+                    # P41: the tick's entrypoint ships with its exec bit —
+                    # _zip_info's 0755 external_attr is what a mode-preserving
+                    # extract restores, so an install/update reinstall cannot
+                    # silently land wf.py as 0644 and revert the ops fix.
+                    "wf.py"}
 # Checkout-only tests stay in repository CI, not the release's test glob.
 SOURCE_ONLY_TESTS = {
     "tests/test_diagram_law.py": "needs diagrams/README.md and the source-only renderer",
