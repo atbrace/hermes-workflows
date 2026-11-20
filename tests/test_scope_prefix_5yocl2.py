@@ -16,7 +16,7 @@ no user manager).
 Standalone, stdlib-only:
   PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python tests/test_scope_prefix_5yocl2.py
 """
-import importlib.util, os, shutil, socket, subprocess, sys, tempfile, time
+import importlib.util, os, select, shutil, socket, subprocess, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -104,6 +104,44 @@ if _REAL_GATE:
           f"rc={r.returncode} cgroup={line!r} err={r.stderr.strip()[:200]}")
 else:
     print("NOTE live scope probe skipped (no real systemd-run/user manager here)")
+
+# T6 LIVE: the REAL hop shape through the scope — systemd-run must hand the
+# ready fd through (pass_fds) and the double-fork/setsid runner must survive
+# its own transient parent AND systemd-run exiting: a scope that killed its
+# cgroup at main-PID exit would silently murder every spawn (the trap T5 can't
+# see, because T5's probe IS the main process).
+if _REAL_GATE:
+    tgt = scratch / "t6_runner.py"
+    tgt.write_text(r'''
+import os, time
+fd = int(os.environ["HERMES_WF_READY_FD"])
+cg = open("/proc/self/cgroup").read().strip()
+os.write(fd, str(os.getpid()).encode() + b" " + cg.encode() + b"\n")
+time.sleep(30)   # stay long enough to see whether systemd sweeps the cgroup
+''')
+    rid6 = time.strftime("%Y%m%d-%H%M%S-t6-probe")
+    rd6, wd6 = os.pipe()
+    p6 = subprocess.Popen([*hw._scope_prefix(rid6), sys.executable, "-c",
+                           hw._DAEMON_INTERMEDIATE, str(tgt), rid6, str(wd6)],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          stdin=subprocess.DEVNULL, pass_fds=(wd6,),
+                          start_new_session=True)
+    os.close(wd6)
+    try:
+        ready6 = os.read(rd6, 256).split(b"\n")[0].split() if select.select([rd6], [], [], 10)[0] else []
+    finally:
+        os.close(rd6)
+    p6.wait(timeout=10)
+    runner6 = int(ready6[0]) if ready6 and ready6[0].isdigit() else None
+    alive6 = False
+    for _ in range(20):        # 5s past the transient: does systemd sweep the cgroup?
+        time.sleep(0.25)
+        alive6 = runner6 is not None and os.path.exists(f"/proc/{runner6}")
+    check("T6 hop survives the scope: ready fd through systemd-run, runner still in scope",
+          alive6 and len(ready6) > 1 and ready6[1].decode().endswith(f"wf-{rid6}.scope"),
+          f"ready={ready6!r} alive={alive6}")
+    if alive6 and runner6 is not None:
+        os.kill(runner6, 15)   # the probe runner exits; no lingering children
 
 shutil.rmtree(scratch, ignore_errors=True)
 for d in Path("/tmp").glob("wfscope5yocl2-*"):   # the bound sockets live in here
