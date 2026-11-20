@@ -5430,6 +5430,14 @@ def _arm_sigterm_sender_capture(meta):
         return False
     return True
 
+def _unblock_sigterm_child():
+    """preexec_fn for EVERY runner spawn: the capture arm blocks SIGTERM
+    process-wide and the mask survives fork+exec, so without this children
+    start SIGTERM-blind (ignored) and every polite kill degrades to grace-
+    then-SIGKILL. sigprocmask between fork and exec is THE classic preexec
+    use, safe even in a threaded process."""
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+
 def _sigterm_capture_loop(libc, sigset, meta):
     si = ctypes.create_string_buffer(_SIGINFO_BYTES)
     while True:
@@ -5855,7 +5863,8 @@ def _aux_run(cmd, timeout=None, **kw):
         # zombie reaper re-checks _aux_pids under the same lock before any
         # waitpid, so it can never take this child's exit status in the gap.
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, start_new_session=True, **kw)
+                             text=True, start_new_session=True,
+                             preexec_fn=_unblock_sigterm_child, **kw)
         _aux_pids.add(p.pid)
     try:
         try:
@@ -7618,6 +7627,7 @@ def run_child(meta, node, byid, goal, context, schema, attempt_note="", steering
                     return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
                                             stdin=subprocess.DEVNULL, env=env, text=True,
                                             cwd=cwd_path,
+                                            preexec_fn=_unblock_sigterm_child,
                                             start_new_session=True)  # own pgid: a timeout kill can
                 _child_cwd = str(child_work_dir(run, node, index))   # THE re-ensure
                 try:

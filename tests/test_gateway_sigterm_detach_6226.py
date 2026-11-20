@@ -390,5 +390,48 @@ with tempfile.TemporaryDirectory(prefix=".tmp-gwsig6226-", dir=HERE,
     if child_d:
         kill_soft(child_d)
 
+    # ---------- E. sys-nseyz4 review: children are NOT SIGTERM-blind ----------
+    # The capture arm blocks SIGTERM process-wide and the mask survives
+    # fork+exec; every runner spawn must carry a preexec_fn that unblocks it
+    # (sys-nseyz4 review finding 1: quarantine killpg, the pool SIGTERM grace
+    # and _kill_aux_tree all degrade to grace-then-SIGKILL on a blind child).
+    import threading as _th6226
+    sig_before = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    runner_e = load("gws6226_wf_e", ROOT / "wf.py")
+    armed_e = runner_e._arm_sigterm_sender_capture({"_run": rc})
+    if not armed_e:                                # same mask, capture-less
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    _child_out = Path(td) / "maskchild.json"
+    _th_done = _th6226.Event()
+    def _spawn_maskchild():
+        cp = runner_e._aux_run(
+            [sys.executable, str(HERE / "stub_sigterm_maskchild_6226.py"),
+             str(_child_out)], timeout=30)
+        globals()["_cp_rc"] = cp.returncode
+        _th_done.set()
+    _t = _th6226.Thread(target=_spawn_maskchild, daemon=True)
+    _t.start()
+    _deadline = time.time() + 25
+    _kid = None
+    while time.time() < _deadline and _kid is None:
+        try:
+            _kid = json.loads(_child_out.read_text()).get("pid")
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    check("E setup: aux child announced its pid after the capture arm",
+          bool(_kid), f"out={_child_out.exists()}")
+    if _kid:
+        _t0 = time.time()
+        os.kill(int(_kid), signal.SIGTERM)         # the plain quarantine kill
+        _th_done.wait(10)
+        _dt = time.time() - _t0
+        check("E: a plain SIGTERM kills a runner-spawned child (not SIGTERM-blind)",
+              globals().get("_cp_rc") == -int(signal.SIGTERM),
+              f"returncode {globals().get('_cp_rc')}")
+        check(f"E: it dies inside the {runner_e.PROCREE_TERM_GRACE_S}s quarantine "
+              "grace — no SIGKILL fallback needed",
+              _dt < runner_e.PROCREE_TERM_GRACE_S, f"{_dt:.2f}s to death")
+    signal.pthread_sigmask(signal.SIG_SETMASK, sig_before)   # leave the mask as we found it
+
 print(f"\ngateway_sigterm_detach_6226: {checks} checks, {failures} failure(s)")
 sys.exit(1 if failures else 0)
