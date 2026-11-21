@@ -82,6 +82,43 @@ check("T3 no systemd-run falls back", gate(str(scratch / "emptybin"), mk_xrd("xr
 check("T4 no manager falls back", gate(mk_stub_bin(), mk_xrd("xrd-nm2", False)) == []
       and gate(mk_stub_bin(), None) == [])
 
+# T7 respawn collision: re-creating the same-named transient scope after the
+# first attempt died is refused ("Unit ... was already loaded"); the fix runs
+# `systemctl --user reset-failed <unit>.scope` and re-runs the hop once. Pin
+# the purge helper against a stub systemctl (no real manager needed): exact
+# argv, empty-prefix refusal, and a broken systemctl degrading to False.
+sbin = scratch / "stubctl"; sbin.mkdir()
+(sbin / "systemctl").write_text(
+    "#!/bin/sh\necho \"$@\" >> \"" + str(scratch / "ctl.calls") + "\"\n"
+    "[ \"$2\" = is-active ] && { echo inactive; exit 3; }\nexit 0\n")
+(sbin / "systemctl").chmod(0o755)
+os.environ["PATH"] = str(sbin) + os.pathsep + str(mk_stub_bin())   # systemd-run stub too: gate stays on
+os.environ["XDG_RUNTIME_DIR"] = str(_xrd)                           # T4's last gate() popped it
+check("T7 reset purges the exact unit (dead-runner path: is-active says gone)",
+      hw._scope_unit_reset(hw._scope_prefix("20261113-120000-demo"), scratch) is True
+      and (scratch / "ctl.calls").read_text().splitlines()
+      == ["--user is-active wf-20261113-120000-demo.scope",
+          "--user stop wf-20261113-120000-demo.scope",
+          "--user reset-failed wf-20261113-120000-demo.scope"])
+# T7b live guard: unit ACTIVE and wf.pid names this test process (inside that
+# cgroup per the stub) => refuse; a live runner owns the unit (T3a shape).
+(sbin / "systemctl").write_text(
+    "#!/bin/sh\necho \"$@\" >> \"" + str(scratch / "ctl2.calls") + "\"\n"
+    "[ \"$2\" = is-active ] && { echo active; exit 0; }\nexit 0\n")
+(sbin / "systemctl").chmod(0o755)
+(scratch / "live").mkdir()
+(scratch / "live" / "wf.pid").write_text(str(os.getpid()))
+check("T7b live runner in the unit -> refuse (no stop of a live scope)",
+      hw._scope_unit_reset(["systemd-run", "--user", "--scope", "--collect",
+                            "--unit=wf-live"], scratch / "live") is False
+      and (scratch / "ctl2.calls").read_text().splitlines()
+      == ["--user is-active wf-live.scope"])
+check("T7 empty prefix -> no purge", hw._scope_unit_reset([], scratch) is False)
+os.environ["PATH"] = str(scratch / "emptybin")                      # no systemctl at all
+check("T7 missing systemctl degrades to False (caller falls back)",
+      hw._scope_unit_reset(["systemd-run", "--user", "--scope", "--collect",
+                            "--unit=wf-x"], scratch) is False)
+
 if _ORIG_PATH is None:
     os.environ.pop("PATH", None)
 else:
