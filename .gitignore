@@ -37,6 +37,9 @@ tests/probe_*/
 # committed copies were litter (est-rmsro) — only the generator is tracked
 ci/*.sh
 !ci/ci-parity.sh
+# lane verdict cache + lap rc stamp (b2p-lap scratch, never committable)
+.ci-verdict
+.verify.rc
 
 # NFS silly-rename phantoms (f9439b2): keep out of every listing
 .nfs*

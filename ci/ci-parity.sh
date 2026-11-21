@@ -3,8 +3,9 @@
 # Mirrors upstream .github/workflows/ci.yml gates on the cluster via crun.
 # The gate body is GENERATED at run time from ci.yml (est-rmsro): HERMES_PIN and
 # python-version are parsed from the workflow, so parity cannot silently drift
-# when ci.yml is repinned. The job script lives under /tmp, never in the tree
-# (the committed fanout copies were the litter this change swept).
+# when ci.yml is repinned. The job script is generated under /tmp and shipped
+# base64-embedded in the crun command: crun syncs the worktree, not /tmp, so a
+# file hop fails at job bootstrap (b2p lap 2026-11-07: cp cannot stat, twice).
 # Verdict cache: $LANE/.ci-verdict (PASS/FAIL + rc + timestamp). CI gate re-invokes
 # this script on `every_s` ticks; a PASS cache exits 0 immediately; a FAIL cache is
 # honored for 1h (retry sooner only by deleting it).
@@ -65,7 +66,8 @@ echo "CI_PARITY=\$([ \$rc -eq 0 ] && echo GREEN || echo RED)"
 exit \$rc
 EOF
 chmod +x "$JS"
-crun run --name "$JOB" --include-untracked --image ubuntu:24.04 -- bash -c "cp /tmp/ue-ci-job-$$.sh /ue-ci-job.sh && bash /ue-ci-job.sh"
+# base64 has no apostrophes/%{ — safe in the crun command string (preflight-clean)
+crun run --name "$JOB" --include-untracked --image ubuntu:24.04 -- bash -c "echo $(base64 -w0 "$JS") | base64 -d > /ue-ci-job.sh && bash /ue-ci-job.sh"
 rc=$?
 rm -f "$JS"
 if [ "$rc" -eq 0 ]; then echo PASS > "$V"; else echo FAIL > "$V"; fi

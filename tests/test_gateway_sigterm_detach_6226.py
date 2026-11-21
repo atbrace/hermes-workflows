@@ -21,10 +21,14 @@ Law pinned here:
      caller but NOT the runner; the runner lives on and records its own later
      exit itself.
   C. HONEST ATTRIBUTION: a runner that IS signal-killed externally records
-     reason="terminated: SIGTERM (external: source unknown)" — the external
-     tag states the CLASS only, never the sender (a handler cannot see who
-     fired; naming "gateway restart" from os.kill alone is false provenance —
-     adversary probe 2026-10-06). Gateway-restart correlation is the reaper's
+     reason="terminated: SIGTERM (external: pid <p> uid <u> <cmdline>)" —
+     the sender is named ONLY from siginfo (si_pid/si_uid via the sigwaitinfo
+     capture, resolved to /proc at receipt; sys-nseyz4), never from prose
+     (naming "gateway restart" from os.kill alone is false provenance —
+     adversary probe 2026-10-06). When siginfo is unavailable the record
+     falls back to "terminated: SIGTERM (external: source unknown)"; both
+     forms carry the "(external:" class tag wfcommon.is_external_kill
+     classifies on. Gateway-restart correlation is the reaper's
      separate file-evidenced "; gw-restart window match" clause. The door
      reaper makes the death loud with that observed
      reason, the read model keeps the run 'interrupted' (never 'failed'),
@@ -41,6 +45,7 @@ Standalone, stdlib-only: python3 tests/test_gateway_sigterm_detach_6226.py
 import importlib.util
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -284,12 +289,16 @@ with tempfile.TemporaryDirectory(prefix=".tmp-gwsig6226-", dir=HERE,
           json.dumps(rx_c)[:250] if rx_c else "no runner_exit.json")
     check("C: the name is distinguishable from the bare lane-death vocabulary",
           reason_c != "terminated: SIGTERM", repr(reason_c))
-    # honesty pin: the probe here IS a plain os.kill — no gateway was touched.
-    # The handler cannot see the sender, so the tag must not NAME one: the
-    # bare string claiming "gateway restart" was the adversary's false-
-    # provenance finding (signal_probe.py, 2026-10-06).
-    check("C: the reason states the class, never an unproven sender",
-          "gateway restart" not in reason_c and "source unknown" in reason_c,
+    # honesty pin: the probe here IS this test process's plain os.kill — no
+    # gateway was touched. sys-nseyz4: the sigwaitinfo capture sees siginfo, so
+    # the tag now NAMES the sender — but only as measured si_pid/si_uid
+    # evidence: the pid must be OURS (the actual sender) and no unproven prose
+    # sender may appear (the "gateway restart" false-provenance finding,
+    # signal_probe.py 2026-10-06, stays banned).
+    m = re.search(r"\(external: pid (\d+) uid (-?\d+) ", reason_c)
+    check("C: the reason names the sender from siginfo: exact pid/uid, never prose",
+          m is not None and int(m.group(1)) == os.getpid()
+          and int(m.group(2)) == os.geteuid() and "gateway restart" not in reason_c,
           repr(reason_c))
     # classification helper (the reaper/dispatcher's view): external kill =>
     # respawn-eligible, NOT a node failure.
@@ -380,6 +389,49 @@ with tempfile.TemporaryDirectory(prefix=".tmp-gwsig6226-", dir=HERE,
     child_d = (rec_d or {}).get("pid")
     if child_d:
         kill_soft(child_d)
+
+    # ---------- E. sys-nseyz4 review: children are NOT SIGTERM-blind ----------
+    # The capture arm blocks SIGTERM process-wide and the mask survives
+    # fork+exec; every runner spawn must carry a preexec_fn that unblocks it
+    # (sys-nseyz4 review finding 1: quarantine killpg, the pool SIGTERM grace
+    # and _kill_aux_tree all degrade to grace-then-SIGKILL on a blind child).
+    import threading as _th6226
+    sig_before = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    runner_e = load("gws6226_wf_e", ROOT / "wf.py")
+    armed_e = runner_e._arm_sigterm_sender_capture({"_run": rc})
+    if not armed_e:                                # same mask, capture-less
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    _child_out = Path(td) / "maskchild.json"
+    _th_done = _th6226.Event()
+    def _spawn_maskchild():
+        cp = runner_e._aux_run(
+            [sys.executable, str(HERE / "stub_sigterm_maskchild_6226.py"),
+             str(_child_out)], timeout=30)
+        globals()["_cp_rc"] = cp.returncode
+        _th_done.set()
+    _t = _th6226.Thread(target=_spawn_maskchild, daemon=True)
+    _t.start()
+    _deadline = time.time() + 25
+    _kid = None
+    while time.time() < _deadline and _kid is None:
+        try:
+            _kid = json.loads(_child_out.read_text()).get("pid")
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    check("E setup: aux child announced its pid after the capture arm",
+          bool(_kid), f"out={_child_out.exists()}")
+    if _kid:
+        _t0 = time.time()
+        os.kill(int(_kid), signal.SIGTERM)         # the plain quarantine kill
+        _th_done.wait(10)
+        _dt = time.time() - _t0
+        check("E: a plain SIGTERM kills a runner-spawned child (not SIGTERM-blind)",
+              globals().get("_cp_rc") == -int(signal.SIGTERM),
+              f"returncode {globals().get('_cp_rc')}")
+        check(f"E: it dies inside the {runner_e.PROCREE_TERM_GRACE_S}s quarantine "
+              "grace — no SIGKILL fallback needed",
+              _dt < runner_e.PROCREE_TERM_GRACE_S, f"{_dt:.2f}s to death")
+    signal.pthread_sigmask(signal.SIG_SETMASK, sig_before)   # leave the mask as we found it
 
 print(f"\ngateway_sigterm_detach_6226: {checks} checks, {failures} failure(s)")
 sys.exit(1 if failures else 0)
