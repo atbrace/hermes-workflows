@@ -722,6 +722,66 @@ def _ready_pid(rd):
             return int(tok) if tok.isdigit() else None
 
 
+# sys-5yocl2: transient systemd user scope for the daemonize hop. The double-
+# fork/setsid hop escapes the CALLER TREE but never the CGROUP (claim boundary
+# in _spawn_runner's docstring), so runners sat in whichever hermes-*.service
+# launched them and every unit restart (the 6h swap-reclaim timer, gateway
+# restarts, desktop handoffs) SIGTERM'd the fleet's in-flight lanes. --scope,
+# NOT service mode: the command stays the spawner's own descendant — env, cwd,
+# the ready-pipe fd and the double-fork hop all unchanged, and the admitted
+# runner still stamps wf.pid alone (sole-owner law). The scope's lifetime is
+# the run's; --collect drops it when the run exits; children inherit it.
+def _user_manager_reachable():
+    """user@.service alive: its private socket exists under XDG_RUNTIME_DIR."""
+    xrd = os.environ.get("XDG_RUNTIME_DIR")
+    return bool(xrd) and os.path.exists(os.path.join(xrd, "systemd", "private"))
+
+def _scope_prefix(rid):
+    """argv prefix for the daemonize hop; [] = today's plain double-fork."""
+    if shutil.which("systemd-run") and _user_manager_reachable():
+        unit = "wf-" + re.sub(r"[^A-Za-z0-9_.@:-]", "-", str(rid))
+        return ["systemd-run", "--user", "--scope", "--collect", f"--unit={unit}"]
+    return []
+
+def _scope_unit_reset(prefix, r):
+    """Best-effort reclaim of a stale same-named transient scope unit. A run
+    respawn re-creates wf-<run_id>.scope while the FIRST attempt's unit may
+    still be loaded — and a mid-wave-crashed runner leaves its wave children
+    in the scope cgroup, keeping the unit ACTIVE where reset-failed alone is
+    a no-op (systemd refuses the re-create with 'Unit ... was already loaded
+    or has a fragment file'; test_review_fixes R6 red on gate-open hosts).
+    Guard: an active unit may belong to a LIVE runner of this same run (the
+    concurrent-spawn shape test_daemonize_8 T3a locks) — if the unit is still
+    active AND wf.pid names a live pid, the unit is NOT ours to stop: refuse
+    and let the caller's existing chain run (the flock makes the race a
+    WORKFLOW_BUSY loser, today's behavior). With the stamped runner gone, an
+    active unit can only hold dead-attempt stragglers: stop purges them,
+    reset-failed unloads the unit, the name is free again — proven end to
+    end. Best-effort: True if reclaimed (or at least attempted with
+    systemctl); False = caller must not retry."""
+    unit = next((a[len("--unit="):] for a in prefix if a.startswith("--unit=")), "")
+    if not unit:
+        return False
+    try:
+        state = subprocess.run(["systemctl", "--user", "is-active", unit + ".scope"],
+                               capture_output=True, timeout=5).stdout.decode().strip()
+        if state in ("active", "activating", "reloading"):
+            try:
+                pid = int((r / "wf.pid").read_text().strip())
+            except (OSError, ValueError):
+                pid = None
+            if pid and os.path.exists(f"/proc/{pid}"):
+                return False                   # live runner owns an active unit: never stop it
+        subprocess.run(["systemctl", "--user", "stop", unit + ".scope"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=5)                       # no-op unless stragglers live
+        subprocess.run(["systemctl", "--user", "reset-failed", unit + ".scope"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=5)                       # unload the dead unit
+    except Exception:
+        return False
+    return True
+
 def _spawn_runner(r):
     """Spawn the run's runner process — DAEMONIZED out of the caller's tree (#8).
 
@@ -738,8 +798,11 @@ def _spawn_runner(r):
     double-fork/setsid does NOT change cgroup membership — a sweep that kills by
     cgroup membership (e.g. the unit-cgroup ExecStopPost SIGKILL a gateway
     restart runs) still reaches caller, runner and children alike. Surviving an
-    enclosing service/cgroup cleanup is external supervision's job (a mitigation
-    outside this diff), not what this hop claims.
+    enclosing service/cgroup cleanup is not this hop's claim: sys-5yocl2 supplies
+    the mitigation one level up — _scope_prefix wraps the hop in a transient
+    `wf-<run_id>.scope` unit (systemd-run --user --scope --collect) so the run
+    leaves every hermes-*.service cgroup. Without systemd-run or a reachable
+    user manager the prefix is empty and unit cleanup still reaches the runner.
 
     Admission stays the runner-side kernel flock (loser exits WORKFLOW_BUSY
     before touching any state). SOLE-OWNER stamp law (#8 review, findings 3+4):
@@ -789,17 +852,41 @@ def _spawn_runner(r):
             rd = wd = None
             try:
                 rd, wd = os.pipe()
-                proc = subprocess.Popen(
-                    [sys.executable, "-c", _DAEMON_INTERMEDIATE,
-                     str(HERE / "wf.py"), r.name, str(wd)],
-                    stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                    env=env, pass_fds=(wd,), start_new_session=True, cwd=str(HERE))
-                os.close(wd); wd = None        # the transient parent must not hold the write end
+                prefix = _scope_prefix(r.name)
+
+                def _hop(fd):
+                    p = subprocess.Popen(
+                        [*prefix, sys.executable, "-c", _DAEMON_INTERMEDIATE,
+                         str(HERE / "wf.py"), r.name, str(fd)],
+                        stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                        env=env, pass_fds=(fd,), start_new_session=True, cwd=str(HERE))
+                    os.close(fd)               # the transient must not hold the write end
+                    return p
+
+                proc = _hop(wd); wd = None
                 pid = _ready_pid(rd)
                 try:
                     rc = proc.wait(timeout=5)
                 except Exception:
                     rc = 0                     # hung transient: trust the ready line
+                if pid is None and rc not in (0, None) and prefix:
+                    # Respawn collision on our own unit name (see _scope_unit_reset):
+                    # a same-run respawn re-creates wf-<run_id>.scope while the dead
+                    # first-attempt unit may still be loaded; 'already loaded' is
+                    # THAT, not a refused fork. Purge and retry the hop ONCE on a
+                    # fresh pipe before the non-daemonized fallback, which would
+                    # violate the caller-tree law (#8) for the whole life of the run.
+                    if _scope_unit_reset(prefix, r):
+                        rd2, wd2 = os.pipe()
+                        try:
+                            proc = _hop(wd2)
+                            try:
+                                rc = proc.wait(timeout=5)
+                            except Exception:
+                                rc = 0
+                            pid = _ready_pid(rd2)
+                        finally:
+                            os.close(rd2)
                 if pid is None and rc not in (0, None):
                     pid = _spawn_runner_legacy(argv, env, log)   # fork refused pre-fork: direct spawn
             except Exception:
